@@ -1,0 +1,36 @@
+# Secrets — never include in image
+.env
+.env.local
+.env.*.local
+
+# Development artifacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git and editor metadata
+.git/
+.gitignore
+.claude/
+*.md
+README*
+
+# Test suite (not needed at runtime)
+tests/
+
+# Local data (ephemeral — use /data in container)
+data/
+
+# Frontend build artifacts and node_modules
+frontend/node_modules/
+frontend/dist/
+
+# Docker files themselves (avoid recursion)
+Dockerfile
+.dockerignore
+docker-compose.yml

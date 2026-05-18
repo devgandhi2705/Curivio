@@ -1,0 +1,211 @@
+// Inline parser: bold (**text**), links ([text](url)), inline code (`text`)
+export function renderInline(text) {
+  const parts = []
+  let remaining = text
+  let key = 0
+
+  while (remaining.length > 0) {
+    const linkMatch = remaining.match(/^(.*?)\[([^\]]+)\]\(([^)]+)\)(.*)$/)
+    if (linkMatch) {
+      if (linkMatch[1]) parts.push(<span key={key++}>{renderInline(linkMatch[1])}</span>)
+      parts.push(
+        <a key={key++} href={linkMatch[3]} target="_blank" rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline underline-offset-[3px] decoration-blue-400/40 hover:decoration-blue-300/60 transition-colors">
+          {linkMatch[2]}
+        </a>
+      )
+      remaining = linkMatch[4]
+      continue
+    }
+
+    const boldMatch = remaining.match(/^(.*?)\*\*(.+?)\*\*(.*)$/)
+    if (boldMatch) {
+      if (boldMatch[1]) parts.push(<span key={key++}>{renderInline(boldMatch[1])}</span>)
+      parts.push(<strong key={key++} className="font-semibold text-slate-100">{boldMatch[2]}</strong>)
+      remaining = boldMatch[3]
+      continue
+    }
+
+    const codeMatch = remaining.match(/^(.*?)`([^`]+)`(.*)$/)
+    if (codeMatch) {
+      if (codeMatch[1]) parts.push(<span key={key++}>{renderInline(codeMatch[1])}</span>)
+      parts.push(
+        <code key={key++} className="bg-slate-800/80 border border-slate-700/50 rounded-md px-[5px] py-[1.5px] text-[12.5px] font-mono text-violet-300 leading-none">
+          {codeMatch[2]}
+        </code>
+      )
+      remaining = codeMatch[3]
+      continue
+    }
+
+    parts.push(<span key={key++}>{remaining}</span>)
+    break
+  }
+
+  return parts.length === 1 && typeof parts[0].props?.children === "string"
+    ? parts[0].props.children
+    : parts
+}
+
+// Line-by-line markdown renderer
+export default function MarkdownText({ text }) {
+  const lines = text.split("\n")
+  const elements = []
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    if (line.startsWith("### ")) {
+      elements.push(
+        <h3 key={i} className="text-[11.5px] font-semibold text-slate-400 mt-6 mb-2 first:mt-0 uppercase tracking-widest">
+          {renderInline(line.slice(4))}
+        </h3>
+      )
+      i++
+      continue
+    }
+
+    if (line.startsWith("## ")) {
+      elements.push(
+        <h2 key={i} className="text-[15.5px] font-semibold text-slate-100 mt-7 mb-2.5 first:mt-0 leading-snug tracking-tight">
+          {renderInline(line.slice(3))}
+        </h2>
+      )
+      i++
+      continue
+    }
+
+    if (line.startsWith("# ")) {
+      elements.push(
+        <h1 key={i} className="text-[18px] font-bold text-slate-50 mt-8 mb-3 first:mt-0 leading-tight tracking-tight">
+          {renderInline(line.slice(2))}
+        </h1>
+      )
+      i++
+      continue
+    }
+
+    if (line.startsWith("```")) {
+      const lang = line.slice(3).trim()
+      const codeLines = []
+      i++
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i])
+        i++
+      }
+      elements.push(
+        <pre key={i} className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-x-scroll-touch my-4">
+          <div className="px-4 pt-3 pb-3">
+            {lang && <div className="text-slate-500 text-[10.5px] mb-2.5 font-medium uppercase tracking-widest">{lang}</div>}
+            <code className="text-[13px] font-mono text-slate-200 leading-[1.68] block whitespace-pre">{codeLines.join("\n")}</code>
+          </div>
+        </pre>
+      )
+      i++
+      continue
+    }
+
+    if (line.startsWith("**") && line.endsWith("**") && !line.slice(2, -2).includes("**")) {
+      elements.push(
+        <p key={i} className="font-semibold text-slate-100 text-[15px] mt-6 mb-2.5 first:mt-0 leading-snug">
+          {line.slice(2, -2)}
+        </p>
+      )
+      i++
+      continue
+    }
+
+    if (line.startsWith("|") && line.endsWith("|")) {
+      const tableLines = []
+      while (i < lines.length && lines[i].startsWith("|")) {
+        tableLines.push(lines[i])
+        i++
+      }
+      const headerCells = tableLines[0].split("|").filter(Boolean).map(c => c.trim())
+      const dataRows = tableLines.slice(2).map(row =>
+        row.split("|").filter(Boolean).map(c => c.trim())
+      )
+      elements.push(
+        <div key={i} className="overflow-x-scroll-touch my-4 rounded-xl border border-slate-700/50">
+          <table className="w-full text-[13.5px] border-collapse">
+            <thead>
+              <tr className="border-b border-slate-700/70">
+                {headerCells.map((cell, ci) => (
+                  <th key={ci} className="text-left px-3.5 py-2.5 bg-slate-800/60 text-slate-200 font-semibold text-[12px] uppercase tracking-wide">
+                    {renderInline(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dataRows.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? "bg-transparent" : "bg-slate-800/20"}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="px-3.5 py-2.5 text-slate-300 border-b border-slate-800/60 leading-relaxed">
+                      {renderInline(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
+
+    if (line.startsWith("- ") || line.startsWith("* ") || line.startsWith("• ")) {
+      const items = []
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("* ") || lines[i].startsWith("• "))) {
+        items.push(lines[i].replace(/^[-*•] /, ""))
+        i++
+      }
+      elements.push(
+        <ul key={i} className="my-3.5 space-y-2.5 pl-0">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex gap-2.5 text-[15px] text-slate-300 leading-[1.75]">
+              <span className="text-blue-400/50 flex-shrink-0 mt-[3px] select-none text-[14px]">•</span>
+              <span>{renderInline(item)}</span>
+            </li>
+          ))}
+        </ul>
+      )
+      continue
+    }
+
+    if (/^\d+\.\s/.test(line)) {
+      const items = []
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\d+\.\s/, ""))
+        i++
+      }
+      elements.push(
+        <ol key={i} className="my-3.5 space-y-2.5 pl-0 list-none">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex gap-2.5 text-[15px] text-slate-300 leading-[1.75]">
+              <span className="text-blue-400/60 flex-shrink-0 tabular-nums text-[13px] font-semibold mt-[2px] min-w-[1.4em] text-right">{idx + 1}.</span>
+              <span>{renderInline(item)}</span>
+            </li>
+          ))}
+        </ol>
+      )
+      continue
+    }
+
+    if (!line.trim()) {
+      elements.push(<div key={i} className="h-4" />)
+      i++
+      continue
+    }
+
+    elements.push(
+      <p key={i} className="text-slate-300 leading-[1.78] text-[15px]">
+        {renderInline(line)}
+      </p>
+    )
+    i++
+  }
+
+  return <div className="reading-text prose-wrap space-y-1.5">{elements}</div>
+}

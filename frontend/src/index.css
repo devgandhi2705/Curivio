@@ -1,0 +1,810 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   MOBILE BASELINE
+   Prevents horizontal overflow, enables smooth scroll,
+   and wires up safe-area-inset support.
+   ============================================================ */
+
+html {
+  overflow-x: hidden;
+  /* Prevent tap highlight on mobile */
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  overflow-x: hidden;
+  /* Smooth momentum scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Root #root gets full viewport height aware of notch */
+#root {
+  min-height: 100vh;
+  min-height: 100dvh; /* Dynamic viewport height — avoids iOS URL-bar jank */
+}
+
+/* ── Safe-area utilities ─────────────────────────────────── */
+/* Use these on bottom-fixed bars to avoid iPhone notch overlap */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+/* ── Overflow-x scroll containers ────────────────────────── */
+.overflow-x-scroll-touch {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.overflow-x-scroll-touch::-webkit-scrollbar { display: none; }
+
+/* ── Prose word-break ─────────────────────────────────────── */
+/* Applied to any long-form content to prevent horizontal blowout */
+.prose-wrap {
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+/* ============================================================
+   BASE TYPOGRAPHY
+   ============================================================ */
+
+/* ── Workspace height vars (mobile: subtract bottom nav, desktop: 0) ── */
+:root {
+  --mobile-nav-h: calc(56px + env(safe-area-inset-bottom, 0px));
+  --header-h: 52px;
+}
+@media (min-width: 768px) {
+  :root { --mobile-nav-h: 0px; }
+}
+
+/* ── Tonal scale design tokens ────────────────────────────── */
+:root {
+  /* Font stacks */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', Consolas, monospace;
+
+  /* Reading rhythm */
+  --reading-lh:    1.78;
+  --heading-lh:    1.28;
+  --para-gap:      1.05em;
+
+  /* ── Dark mode surface palette (Linear/ChatGPT-inspired charcoal) ── */
+  --dk-bg-page:       #0f1117;    /* deep charcoal — not void black        */
+  --dk-bg-card:       #161b27;    /* card surface — clear step above page  */
+  --dk-bg-elevated:   #1d2438;    /* modals, active states, dropdowns      */
+  --dk-bg-hover:      #232b42;    /* interactive hover feedback            */
+  --dk-border:        rgba(255,255,255,0.07);  /* clean on dark surfaces   */
+  --dk-border-strong: rgba(255,255,255,0.11);  /* card edges               */
+
+  /* ── Dark mode text hierarchy (engineered for long sessions) ── */
+  --dk-heading:    #d8e2f0;    /* softer than pure white — no glare      */
+  --dk-body:       #a8b8cc;    /* comfortable warm-gray — low eye strain */
+  --dk-secondary:  #677d93;    /* labels and secondary info              */
+  --dk-muted:      #3d5066;    /* very muted, decorative only            */
+  --dk-accent:     #93c5fd;    /* blue-300                               */
+
+  /* ── Light mode surface palette (Notion/Linear-inspired) ── */
+  --lt-bg-page:       #edf0f6;    /* cool soft neutral — not harsh white   */
+  --lt-bg-secondary:  #f5f7fb;    /* sidebar, secondary panels             */
+  --lt-bg-card:       #ffffff;    /* clean card elevation                  */
+  --lt-bg-elevated:   #eaecf3;    /* hover, active, subtle depth           */
+  --lt-border:        #d8dfe8;    /* clear surface edges                   */
+  --lt-border-soft:   #e7ebf2;    /* subtle dividers                       */
+
+  /* ── Light mode text hierarchy (calibrated for daylight reading) ── */
+  --lt-heading:    #0c1829;    /* anchored near-black with blue tint     */
+  --lt-body:       #1c2b3a;    /* primary body text                      */
+  --lt-secondary:  #445568;    /* secondary, descriptive                 */
+  --lt-muted:      #7a8ea0;    /* labels, timestamps                     */
+}
+
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  letter-spacing: -0.011em;
+  font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-feature-settings: 'liga' 1, 'calt' 1;
+}
+
+/* ============================================================
+   SCROLLBAR — thin and subtle in both modes
+   ============================================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.25) transparent;
+}
+
+*::-webkit-scrollbar          { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track    { background: transparent; }
+*::-webkit-scrollbar-thumb    { background-color: rgba(100,116,139,0.25); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background-color: rgba(100,116,139,0.4); }
+
+/* scrollbar-none utility for horizontal strips */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* ============================================================
+   SMOOTH THEME TRANSITION
+   ============================================================ */
+
+.theme-transitioning,
+.theme-transitioning * {
+  transition:
+    background-color 0.18s ease,
+    border-color     0.18s ease,
+    color            0.12s ease,
+    box-shadow       0.18s ease !important;
+}
+
+/* ============================================================
+   DARK MODE — CODE BLOCKS & MARKDOWN
+   ============================================================ */
+
+/* Inline code in dark mode */
+:not(.theme-light) .inline-code,
+:not(.theme-light) code:not(pre code) {
+  background-color: rgba(148,163,184,0.12);
+  color: #93c5fd;
+  border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.82em;
+}
+
+/* Code blocks in dark mode */
+:not(.theme-light) pre {
+  background-color: #0a0d14 !important;
+  border: 1px solid rgba(255,255,255,0.07) !important;
+  border-radius: 12px;
+}
+
+:not(.theme-light) pre code {
+  background: transparent !important;
+  color: #c9d8e8 !important;
+  font-size: 0.83em;
+  line-height: 1.65;
+}
+
+/* ============================================================
+   LIGHT MODE — FULL OVERRIDE SYSTEM
+   ============================================================
+   Surface hierarchy (see :root tokens):
+     Page bg      var(--lt-bg-page)       cool soft neutral
+     Cards        var(--lt-bg-card)       clean white elevation
+     Elevated     var(--lt-bg-elevated)   depth layer
+     Border       var(--lt-border)        clear edges
+     Text-1       var(--lt-heading)       anchored near-black
+     Text-2       var(--lt-body)          comfortable body
+     Text-3       var(--lt-secondary)     secondary labels
+     Text-4       var(--lt-muted)         muted/placeholder
+   ============================================================ */
+
+/* ── Root ─────────────────────────────────────────────────── */
+.theme-light {
+  background-color: var(--lt-bg-page);
+  color: var(--lt-body);
+}
+
+/* ── Text hierarchy ──────────────────────────────────────── */
+.theme-light .text-slate-100,
+.theme-light .text-slate-200  { color: var(--lt-heading); }
+.theme-light .text-slate-300  { color: var(--lt-body); }
+.theme-light .text-slate-400  { color: var(--lt-secondary); }
+.theme-light .text-slate-500  { color: #637d96; }
+.theme-light .text-slate-600  { color: var(--lt-muted); }
+.theme-light .text-slate-700  { color: #b8c8d8; }
+
+/* Hover text */
+.theme-light .hover\:text-slate-100:hover,
+.theme-light .hover\:text-slate-200:hover { color: #111827; }
+.theme-light .hover\:text-slate-300:hover { color: #1f2937; }
+
+/* Group-hover text — Tailwind generates .group:hover .group-hover\:text-* */
+.theme-light .group:hover .group-hover\:text-slate-100,
+.theme-light .group:hover .group-hover\:text-slate-200 { color: #111827; }
+.theme-light .group:hover .group-hover\:text-slate-300 { color: #1f2937; }
+.theme-light .group:hover .group-hover\:text-slate-400 { color: #374151; }
+
+/* ── Backgrounds — neutrals ───────────────────────────────── */
+.theme-light .bg-slate-950              { background-color: var(--lt-bg-page); }
+.theme-light .bg-slate-950\/95          { background-color: rgba(237,240,246,0.97); }
+.theme-light .bg-slate-900              { background-color: var(--lt-bg-card); }
+.theme-light .bg-slate-900\/80          { background-color: rgba(255,255,255,0.88); }
+.theme-light .bg-slate-900\/60          { background-color: rgba(255,255,255,0.72); }
+.theme-light .bg-slate-900\/50          { background-color: rgba(255,255,255,0.62); }
+.theme-light .bg-slate-900\/40          { background-color: rgba(255,255,255,0.52); }
+.theme-light .bg-slate-900\/30          { background-color: rgba(255,255,255,0.42); }
+.theme-light .bg-slate-800              { background-color: var(--lt-bg-elevated); }
+.theme-light .bg-slate-800\/70          { background-color: rgba(234,236,243,0.80); }
+.theme-light .bg-slate-800\/60          { background-color: rgba(234,236,243,0.70); }
+.theme-light .bg-slate-800\/50          { background-color: rgba(234,236,243,0.60); }
+.theme-light .bg-slate-800\/40          { background-color: rgba(234,236,243,0.50); }
+.theme-light .bg-slate-800\/30          { background-color: rgba(234,236,243,0.40); }
+.theme-light .bg-slate-800\/20          { background-color: rgba(234,236,243,0.28); }
+.theme-light .bg-slate-700              { background-color: #dde2ec; }
+.theme-light .bg-slate-700\/60          { background-color: rgba(221,226,236,0.70); }
+.theme-light .bg-slate-700\/50          { background-color: rgba(221,226,236,0.60); }
+.theme-light .bg-slate-700\/40          { background-color: rgba(221,226,236,0.50); }
+
+/* ── Hover backgrounds — neutrals ────────────────────────── */
+.theme-light .hover\:bg-slate-900:hover      { background-color: var(--lt-bg-page); }
+.theme-light .hover\:bg-slate-900\/70:hover  { background-color: rgba(237,240,246,0.82); }
+.theme-light .hover\:bg-slate-800:hover      { background-color: var(--lt-bg-elevated); }
+.theme-light .hover\:bg-slate-800\/60:hover  { background-color: rgba(234,236,243,0.72); }
+.theme-light .hover\:bg-slate-800\/40:hover  { background-color: rgba(234,236,243,0.52); }
+.theme-light .hover\:bg-slate-700:hover      { background-color: #d8dde8; }
+.theme-light .hover\:bg-slate-700\/60:hover  { background-color: rgba(216,221,232,0.72); }
+
+/* ── Borders — neutrals ──────────────────────────────────── */
+.theme-light .border-slate-800,
+.theme-light .border-slate-800\/80,
+.theme-light .border-slate-800\/60,
+.theme-light .border-slate-800\/50        { border-color: var(--lt-border); }
+.theme-light .border-slate-700,
+.theme-light .border-slate-700\/60,
+.theme-light .border-slate-700\/50,
+.theme-light .border-slate-700\/40,
+.theme-light .border-slate-700\/30        { border-color: #c8d0dc; }
+.theme-light .border-slate-600            { border-color: #9aacbd; }
+
+/* Hover borders */
+.theme-light .hover\:border-slate-700:hover { border-color: #c8d0dc; }
+.theme-light .hover\:border-slate-600:hover { border-color: #9aacbd; }
+
+/* ── Backgrounds — accent dark variants → light tints ────── */
+
+/* Blue / Indigo */
+.theme-light .bg-blue-950\/20            { background-color: rgba(239,246,255,0.60); }
+.theme-light .bg-blue-900\/50            { background-color: rgba(219,234,254,0.65); }
+.theme-light .bg-blue-900\/30            { background-color: rgba(219,234,254,0.45); }
+.theme-light .bg-blue-500\/10            { background-color: rgba(59,130,246,0.07); }
+.theme-light .bg-blue-500\/15            { background-color: rgba(59,130,246,0.10); }
+.theme-light .bg-blue-600\/20            { background-color: rgba(37,99,235,0.08); }
+.theme-light .hover\:bg-blue-500\/10:hover  { background-color: rgba(59,130,246,0.08); }
+.theme-light .hover\:bg-blue-600\/30:hover  { background-color: rgba(37,99,235,0.10); }
+.theme-light .bg-indigo-900\/50          { background-color: rgba(224,231,255,0.65); }
+
+/* Violet / Purple */
+.theme-light .bg-violet-900\/50          { background-color: rgba(237,233,254,0.65); }
+.theme-light .bg-violet-900\/30          { background-color: rgba(237,233,254,0.45); }
+.theme-light .bg-violet-950\/30          { background-color: rgba(245,243,255,0.60); }
+.theme-light .bg-violet-500\/10          { background-color: rgba(139,92,246,0.07); }
+.theme-light .bg-violet-500\/40          { background-color: rgba(139,92,246,0.15); }
+.theme-light .hover\:bg-violet-500\/10:hover { background-color: rgba(139,92,246,0.08); }
+
+/* Emerald / Green */
+.theme-light .bg-emerald-900\/50         { background-color: rgba(209,250,229,0.65); }
+.theme-light .bg-emerald-900\/30         { background-color: rgba(209,250,229,0.45); }
+.theme-light .bg-emerald-950\/30         { background-color: rgba(240,253,244,0.60); }
+.theme-light .bg-emerald-500\/10         { background-color: rgba(16,185,129,0.07); }
+.theme-light .bg-emerald-500\/15         { background-color: rgba(16,185,129,0.10); }
+.theme-light .hover\:bg-emerald-500\/10:hover { background-color: rgba(16,185,129,0.08); }
+
+/* Amber / Yellow */
+.theme-light .bg-amber-950\/40           { background-color: rgba(255,251,235,0.80); }
+.theme-light .bg-amber-900\/30           { background-color: rgba(254,243,199,0.55); }
+.theme-light .bg-amber-500\/10           { background-color: rgba(245,158,11,0.07); }
+.theme-light .hover\:bg-amber-500\/10:hover { background-color: rgba(245,158,11,0.08); }
+
+/* Rose / Red */
+.theme-light .bg-rose-500\/10            { background-color: rgba(244,63,94,0.07); }
+.theme-light .bg-rose-500\/\[0\.04\]     { background-color: rgba(244,63,94,0.04); }
+.theme-light .bg-red-900\/50             { background-color: rgba(254,226,226,0.65); }
+.theme-light .bg-red-950\/30             { background-color: rgba(255,241,242,0.60); }
+.theme-light .bg-rose-950\/20            { background-color: rgba(255,241,242,0.50); }
+.theme-light .hover\:bg-red-950\/40:hover   { background-color: rgba(254,226,226,0.50); }
+
+/* Cyan / Teal */
+.theme-light .bg-cyan-900\/50            { background-color: rgba(207,250,254,0.65); }
+.theme-light .bg-cyan-500\/10            { background-color: rgba(6,182,212,0.07); }
+
+/* Slate accents */
+.theme-light .bg-slate-500\/10           { background-color: rgba(100,116,139,0.08); }
+.theme-light .bg-slate-800\/80           { background-color: rgba(240,242,245,0.85); }
+
+/* ── Borders — accent dark variants → light tints ─────────── */
+.theme-light .border-blue-500\/20        { border-color: rgba(59,130,246,0.25); }
+.theme-light .border-blue-500\/30        { border-color: rgba(59,130,246,0.30); }
+.theme-light .border-blue-800\/40        { border-color: rgba(30,64,175,0.20); }
+.theme-light .border-violet-500\/20      { border-color: rgba(139,92,246,0.22); }
+.theme-light .border-violet-500\/40      { border-color: rgba(139,92,246,0.30); }
+.theme-light .border-emerald-700\/40     { border-color: rgba(4,120,87,0.25); }
+.theme-light .border-emerald-500\/20     { border-color: rgba(16,185,129,0.22); }
+.theme-light .border-emerald-500\/30     { border-color: rgba(16,185,129,0.28); }
+.theme-light .border-amber-500\/20       { border-color: rgba(245,158,11,0.22); }
+.theme-light .border-rose-700\/30        { border-color: rgba(190,18,60,0.20); }
+.theme-light .border-rose-900\/40        { border-color: rgba(190,18,60,0.18); }
+.theme-light .border-red-900\/40         { border-color: rgba(185,28,28,0.18); }
+.theme-light .border-cyan-500\/20        { border-color: rgba(6,182,212,0.22); }
+.theme-light .border-slate-700\/30       { border-color: #dde0e6; }
+.theme-light .border-slate-700\/20       { border-color: #e8ebf0; }
+
+/* Dashed borders */
+.theme-light .border-dashed.border-slate-700 { border-color: #cdd2da; }
+
+/* ── Code blocks — light mode ────────────────────────────── */
+.theme-light pre {
+  background-color: #f6f8fa !important;
+  border: 1px solid #e2e5ea !important;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.theme-light pre code {
+  background: transparent !important;
+  color: #1f2937 !important;
+  font-size: 0.83em;
+  line-height: 1.65;
+}
+
+/* Inline code in light mode */
+.theme-light code:not(pre code) {
+  background-color: rgba(100,116,139,0.10) !important;
+  color: #0550ae !important;
+  border: 1px solid rgba(100,116,139,0.18) !important;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.82em;
+}
+
+/* ── Shadows — light mode ────────────────────────────────── */
+.theme-light .shadow-2xl                { box-shadow: 0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06); }
+.theme-light .shadow-2xl.shadow-black\/60 { box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+.theme-light .shadow-xl                 { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.theme-light .shadow-lg                 { box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
+.theme-light .shadow-md                 { box-shadow: 0 1px 6px rgba(0,0,0,0.05); }
+
+/* ── Placeholder text ────────────────────────────────────── */
+.theme-light ::placeholder              { color: #9ca3af; }
+.theme-light .placeholder-slate-500::placeholder { color: #9ca3af; }
+.theme-light .placeholder-slate-600::placeholder { color: #bcc3ce; }
+
+/* ── Ring / focus ─────────────────────────────────────────── */
+.theme-light .focus\:border-blue-500\/60:focus { border-color: rgba(59,130,246,0.55); }
+.theme-light .focus\:border-slate-600:focus    { border-color: #9ca3af; }
+
+/* ── Divide ──────────────────────────────────────────────── */
+.theme-light .divide-slate-800 > * + *  { border-color: #e2e5ea; }
+.theme-light .divide-slate-700 > * + *  { border-color: #cdd2da; }
+
+/* ── Gradient overlays ───────────────────────────────────── */
+.theme-light .from-slate-950            { --tw-gradient-from: #f4f6f8; }
+.theme-light .to-transparent            { --tw-gradient-to: transparent; }
+
+/* ── Animated pulse ─────────────────────────────────────── */
+.theme-light .animate-pulse.bg-slate-800\/40 { background-color: rgba(230,233,238,0.60); }
+.theme-light .animate-pulse.bg-slate-800\/30 { background-color: rgba(230,233,238,0.45); }
+.theme-light .animate-pulse.bg-slate-800\/60 { background-color: rgba(230,233,238,0.75); }
+
+/* ── Accent text — stays vivid in both modes ─────────────── */
+/* (These are already good but ensure light bg behind them works) */
+.theme-light .text-blue-400             { color: #2563eb; }
+.theme-light .text-blue-300             { color: #3b82f6; }
+.theme-light .text-violet-400           { color: #7c3aed; }
+.theme-light .text-violet-300           { color: #8b5cf6; }
+.theme-light .text-emerald-400          { color: #059669; }
+.theme-light .text-emerald-300          { color: #10b981; }
+.theme-light .text-amber-400            { color: #d97706; }
+.theme-light .text-amber-500            { color: #b45309; }
+.theme-light .text-amber-500\/70        { color: rgba(180,83,9,0.80); }
+.theme-light .text-cyan-400             { color: #0891b2; }
+.theme-light .text-rose-400             { color: #e11d48; }
+.theme-light .text-rose-300             { color: #f43f5e; }
+.theme-light .text-red-400              { color: #dc2626; }
+.theme-light .text-green-400            { color: #16a34a; }
+
+/* Muted accent text */
+.theme-light .text-blue-400\/80         { color: rgba(37,99,235,0.85); }
+.theme-light .text-emerald-400\/70      { color: rgba(5,150,105,0.80); }
+.theme-light .text-amber-400\/80        { color: rgba(217,119,6,0.85); }
+.theme-light .text-rose-400\/70         { color: rgba(225,29,72,0.80); }
+.theme-light .text-violet-400\/80       { color: rgba(124,58,237,0.85); }
+.theme-light .text-emerald-500\/70      { color: rgba(5,150,105,0.80); }
+
+/* Specific accent label colors */
+.theme-light .text-blue-400\/80         { color: rgba(37,99,235,0.80); }
+
+/* ── Navigation header — light mode ─────────────────────── */
+.theme-light header {
+  background-color: rgba(237,240,246,0.97) !important;
+  border-bottom-color: var(--lt-border) !important;
+  box-shadow: 0 1px 0 var(--lt-border-soft);
+}
+
+/* Project card edit/delete action buttons */
+.theme-light .project-card-actions {
+  background-color: rgba(226, 232, 240, 0.95);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.theme-light .project-card-actions button {
+  color: #64748b;
+}
+.theme-light .project-card-actions button:hover {
+  color: #1e293b;
+  background-color: #e2e8f0;
+}
+.theme-light .project-card-actions button:hover.text-red-400,
+.theme-light .project-card-actions button:last-child:hover {
+  color: #dc2626;
+  background-color: #fee2e2;
+}
+
+/* Active nav tab */
+.theme-light .bg-slate-800.text-slate-100 {
+  background-color: var(--lt-bg-elevated);
+  color: var(--lt-heading);
+}
+
+/* Divider in nav */
+.theme-light .bg-slate-800.w-px { background-color: var(--lt-border); }
+
+/* ── Backdrop (modals, overlays) ─────────────────────────── */
+.theme-light .bg-black\/60              { background-color: rgba(15,23,42,0.45); }
+.theme-light .bg-black\/40              { background-color: rgba(15,23,42,0.30); }
+
+/* ── Backdrop blur ────────────────────────────────────────── */
+.theme-light .backdrop-blur-sm { backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+/* ── Opacity-modified backgrounds not covered by Tailwind ── */
+.theme-light .bg-emerald-500\/\[0\.06\] { background-color: rgba(16,185,129,0.06); }
+.theme-light .bg-emerald-500\/8         { background-color: rgba(16,185,129,0.06); }
+.theme-light .bg-blue-500\/\[0\.08\]    { background-color: rgba(59,130,246,0.06); }
+.theme-light .bg-rose-500\/\[0\.04\]    { background-color: rgba(244,63,94,0.04); }
+
+/* ============================================================
+   DARK MODE — SURFACE GRADING SYSTEM
+   Replaces Tailwind's near-black (#020617) with layered charcoal.
+   Target: Linear / Claude / ChatGPT dark aesthetics.
+   Surface scale: page → card → elevated → hover (visible steps)
+   ============================================================ */
+
+/* ── Page background — deep charcoal, not void black ─────── */
+:not(.theme-light) .bg-slate-950     { background-color: var(--dk-bg-page); }
+:not(.theme-light) .bg-slate-950\/95 { background-color: rgba(15,17,23,0.97); }
+
+/* ── Card surfaces — visible step above page ─────────────── */
+:not(.theme-light) .bg-slate-900     { background-color: var(--dk-bg-card); }
+:not(.theme-light) .bg-slate-900\/80 { background-color: rgba(22,27,39,0.85); }
+:not(.theme-light) .bg-slate-900\/60 { background-color: rgba(22,27,39,0.65); }
+:not(.theme-light) .bg-slate-900\/50 { background-color: rgba(22,27,39,0.55); }
+:not(.theme-light) .bg-slate-900\/40 { background-color: rgba(22,27,39,0.45); }
+:not(.theme-light) .bg-slate-900\/30 { background-color: rgba(22,27,39,0.35); }
+
+/* ── Elevated surfaces — modals, active states ───────────── */
+:not(.theme-light) .bg-slate-800     { background-color: var(--dk-bg-elevated); }
+:not(.theme-light) .bg-slate-800\/80 { background-color: rgba(29,36,56,0.85); }
+:not(.theme-light) .bg-slate-800\/70 { background-color: rgba(29,36,56,0.75); }
+:not(.theme-light) .bg-slate-800\/60 { background-color: rgba(29,36,56,0.65); }
+:not(.theme-light) .bg-slate-800\/50 { background-color: rgba(29,36,56,0.55); }
+:not(.theme-light) .bg-slate-800\/40 { background-color: rgba(29,36,56,0.45); }
+:not(.theme-light) .bg-slate-800\/30 { background-color: rgba(29,36,56,0.35); }
+:not(.theme-light) .bg-slate-800\/20 { background-color: rgba(29,36,56,0.25); }
+
+/* ── Hover states — clear interactive feedback ───────────── */
+:not(.theme-light) .bg-slate-700     { background-color: var(--dk-bg-hover); }
+:not(.theme-light) .bg-slate-700\/60 { background-color: rgba(35,43,66,0.65); }
+:not(.theme-light) .bg-slate-700\/50 { background-color: rgba(35,43,66,0.55); }
+:not(.theme-light) .bg-slate-700\/40 { background-color: rgba(35,43,66,0.45); }
+
+/* ── Hover bg interactions ───────────────────────────────── */
+:not(.theme-light) .hover\:bg-slate-900:hover     { background-color: var(--dk-bg-card); }
+:not(.theme-light) .hover\:bg-slate-900\/70:hover { background-color: rgba(22,27,39,0.75); }
+:not(.theme-light) .hover\:bg-slate-800:hover     { background-color: var(--dk-bg-elevated); }
+:not(.theme-light) .hover\:bg-slate-800\/70:hover { background-color: rgba(29,36,56,0.78); }
+:not(.theme-light) .hover\:bg-slate-800\/60:hover { background-color: rgba(29,36,56,0.68); }
+:not(.theme-light) .hover\:bg-slate-800\/40:hover { background-color: rgba(29,36,56,0.48); }
+:not(.theme-light) .hover\:bg-slate-700:hover     { background-color: var(--dk-bg-hover); }
+:not(.theme-light) .hover\:bg-slate-700\/60:hover { background-color: rgba(35,43,66,0.68); }
+
+/* ── Border calibration — visible on new charcoal surfaces ── */
+/* Tailwind's border-slate-800 (#1e293b) is near-invisible on  */
+/* the new bg-slate-900 (#161b27) — replace with white alpha   */
+:not(.theme-light) .border-slate-800            { border-color: var(--dk-border); }
+:not(.theme-light) .border-slate-800\/80        { border-color: rgba(255,255,255,0.08); }
+:not(.theme-light) .border-slate-800\/60        { border-color: rgba(255,255,255,0.06); }
+:not(.theme-light) .border-slate-800\/50        { border-color: rgba(255,255,255,0.05); }
+
+/* Keep slate-700 borders slightly stronger */
+:not(.theme-light) .border-slate-700            { border-color: rgba(255,255,255,0.12); }
+:not(.theme-light) .border-slate-700\/60        { border-color: rgba(255,255,255,0.08); }
+:not(.theme-light) .border-slate-700\/50        { border-color: rgba(255,255,255,0.07); }
+:not(.theme-light) .border-slate-700\/40        { border-color: rgba(255,255,255,0.06); }
+:not(.theme-light) .border-slate-700\/30        { border-color: rgba(255,255,255,0.05); }
+
+/* Hover borders */
+:not(.theme-light) .hover\:border-slate-700:hover { border-color: rgba(255,255,255,0.14); }
+:not(.theme-light) .hover\:border-slate-600:hover { border-color: rgba(255,255,255,0.18); }
+
+/* ── Text softening — reduce eye strain, not readability ─── */
+/* Avoid glowing pure-white text (#f1f5f9) on dark backgrounds */
+:not(.theme-light) .text-slate-100 { color: var(--dk-heading); }
+:not(.theme-light) .text-slate-200 { color: #bccbdc; }
+
+/* ── Navigation header ───────────────────────────────────── */
+:not(.theme-light) header {
+  background-color: rgba(15,17,23,0.97) !important;
+  border-bottom-color: rgba(255,255,255,0.07) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* ── Dark mode scrollbar ─────────────────────────────────── */
+:not(.theme-light) *::-webkit-scrollbar-thumb {
+  background-color: rgba(100,116,139,0.3);
+}
+
+/* ── Dark mode code blocks — calibrated for new bg ───────── */
+:not(.theme-light) pre {
+  background-color: rgba(8,10,16,0.70) !important;
+  border-color: rgba(255,255,255,0.07) !important;
+}
+
+/* ── Card surface depth — subtle but present ─────────────── */
+:not(.theme-light) .rounded-2xl.border,
+:not(.theme-light) .rounded-xl.border {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+/* Modal refinements */
+:not(.theme-light) .shadow-2xl.shadow-black\/60 {
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* ── Light mode card elevation ───────────────────────────── */
+.theme-light .rounded-2xl.border,
+.theme-light .rounded-xl.border {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03);
+}
+
+/* ============================================================
+   READING TYPOGRAPHY SYSTEM
+   Covers: chat messages, AI responses, long-form content
+   Design targets: Claude / Substack / Medium reading comfort
+   ============================================================ */
+
+/* ── Core reading container ──────────────────────────────── */
+.reading-text {
+  font-size: 0.9375rem;       /* 15px — optimal screen reading size */
+  line-height: var(--reading-lh);
+  word-spacing: 0.008em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Paragraph rhythm ────────────────────────────────────── */
+.reading-text p,
+.reading-text > p {
+  line-height: var(--reading-lh);
+  margin-bottom: var(--para-gap);
+  color: var(--dk-body);
+}
+.reading-text > p:last-child,
+.reading-text p:last-child { margin-bottom: 0; }
+
+/* ── Heading hierarchy ───────────────────────────────────── */
+.reading-text h1 {
+  font-size: 1.175rem;
+  font-weight: 700;
+  line-height: var(--heading-lh);
+  letter-spacing: -0.025em;
+  margin-top: 2em;
+  margin-bottom: 0.6em;
+  color: var(--dk-heading);
+}
+.reading-text h2 {
+  font-size: 1.0rem;
+  font-weight: 600;
+  line-height: var(--heading-lh);
+  letter-spacing: -0.015em;
+  margin-top: 1.85em;
+  margin-bottom: 0.5em;
+  color: var(--dk-heading);
+}
+.reading-text h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  margin-top: 1.6em;
+  margin-bottom: 0.45em;
+  color: var(--dk-secondary);
+}
+
+/* First/last child margin reset */
+.reading-text > *:first-child { margin-top: 0 !important; }
+.reading-text > *:last-child  { margin-bottom: 0 !important; }
+
+/* ── Emphasis ────────────────────────────────────────────── */
+.reading-text strong { font-weight: 600; color: var(--dk-heading); }
+.reading-text em { font-style: italic; color: var(--dk-body); }
+
+/* ── Blockquote ──────────────────────────────────────────── */
+.reading-text blockquote {
+  margin: 1.3em 0;
+  padding: 0.7em 0 0.7em 1.2em;
+  border-left: 3px solid rgba(99, 130, 246, 0.4);
+  border-radius: 0 6px 6px 0;
+  font-style: italic;
+  color: var(--dk-secondary);
+  background: rgba(99, 130, 246, 0.04);
+}
+
+/* ── HR ──────────────────────────────────────────────────── */
+.reading-text hr {
+  border: none;
+  border-top: 1px solid rgba(100, 116, 139, 0.2);
+  margin: 1.75em 0;
+}
+
+/* ── Tables ──────────────────────────────────────────────── */
+.reading-text table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.35em 0;
+  font-size: 0.9em;
+}
+.reading-text th,
+.reading-text td {
+  padding: 0.6em 0.9em;
+  border: 1px solid rgba(100, 116, 139, 0.22);
+  text-align: left;
+  line-height: 1.55;
+  color: var(--dk-body);
+}
+.reading-text th {
+  font-weight: 600;
+  font-size: 0.85em;
+  letter-spacing: 0.02em;
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--dk-heading);
+}
+.reading-text td:first-child { font-weight: 500; }
+
+/* ── Light mode reading overrides ────────────────────────── */
+.theme-light .reading-text { color: var(--lt-body); }
+.theme-light .reading-text p,
+.theme-light .reading-text > p    { color: var(--lt-body); }
+.theme-light .reading-text h1,
+.theme-light .reading-text h2     { color: var(--lt-heading); }
+.theme-light .reading-text h3     { color: var(--lt-secondary); }
+.theme-light .reading-text strong { color: var(--lt-heading); }
+.theme-light .reading-text em     { color: var(--lt-body); }
+.theme-light .reading-text blockquote {
+  color: var(--lt-secondary);
+  background: rgba(37, 99, 235, 0.03);
+  border-left-color: rgba(37, 99, 235, 0.35);
+}
+.theme-light .reading-text th {
+  background: rgba(100, 116, 139, 0.07);
+  color: var(--lt-heading);
+}
+.theme-light .reading-text td { color: var(--lt-body); }
+.theme-light .reading-text hr { border-top-color: rgba(100, 116, 139, 0.18); }
+
+/* ── Legacy alias ────────────────────────────────────────── */
+.ai-response-content {
+  font-size: 0.9375rem;
+  line-height: var(--reading-lh);
+}
+
+/* ============================================================
+   DARK MODE TEXT CALIBRATION
+   Reduces eye strain for long reading sessions.
+   Uses layered grays instead of pure-white-on-black.
+   ============================================================ */
+
+/* Reading content — calibrated for both modes */
+:not(.theme-light) .reading-text strong { color: var(--dk-heading); }
+:not(.theme-light) .reading-text p      { color: var(--dk-body); }
+:not(.theme-light) .reading-text li     { color: var(--dk-body); }
+:not(.theme-light) .reading-text h1,
+:not(.theme-light) .reading-text h2     { color: var(--dk-heading); }
+:not(.theme-light) .reading-text h3     { color: var(--dk-secondary); }
+
+/* ============================================================
+   FEED CARD READABILITY IMPROVEMENTS
+   Article titles, descriptions, "why it matters" sections
+   ============================================================ */
+
+/* Feed article titles — better weight and tracking */
+.feed-article-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.012em;
+}
+
+/* Feed article descriptions */
+.feed-article-body {
+  font-size: 0.875rem;
+  line-height: 1.72;
+  word-spacing: 0.005em;
+}
+
+/* Feed meta text — source, date, category */
+.feed-meta {
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+}
+
+/* "Why it matters" section — slightly larger, better leading */
+.feed-why-matters {
+  font-size: 0.875rem;
+  line-height: 1.68;
+  font-style: italic;
+}
+
+/* ── Section divider in light mode ───────────────────────── */
+.theme-light .bg-slate-600\/60    { background-color: rgba(107,114,128,0.35); }
+.theme-light .bg-slate-600\/40    { background-color: rgba(107,114,128,0.25); }
+
+/* Violet accent line (used in card AI notes) */
+.theme-light .bg-violet-500\/40   { background-color: rgba(139,92,246,0.30); }
+
+/* ── Gradient text — keep vivid ──────────────────────────── */
+.from-blue-400.to-violet-400 {
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* ── Skeleton loaders — light mode ───────────────────────── */
+.theme-light .h-12.bg-slate-800\/60.animate-pulse { background-color: rgba(226,229,234,0.70); }
+.theme-light .h-8.bg-slate-800\/40.animate-pulse  { background-color: rgba(226,229,234,0.55); }
+.theme-light .h-48.bg-slate-800\/30.animate-pulse { background-color: rgba(226,229,234,0.45); }
+
+/* ── Ring colors — focus states ─────────────────────────── */
+.theme-light .ring-blue-500\/50  { --tw-ring-color: rgba(59,130,246,0.40); }
+.theme-light .ring-white\/60     { --tw-ring-color: rgba(255,255,255,0.80); }
+
+/* ── Disabled states ─────────────────────────────────────── */
+.theme-light .disabled\:opacity-40:disabled { opacity: 0.35; }
+
+/* ── Collection dot colors — stay vivid ─────────────────── */
+/* (bg-blue-500, bg-violet-500, etc. are already fine) */
+
+/* ── Chat input area — light mode ────────────────────────── */
+.theme-light textarea.bg-slate-900,
+.theme-light input.bg-slate-900 {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e2e5ea !important;
+}
+
+.theme-light textarea.bg-slate-800,
+.theme-light input.bg-slate-800 {
+  background-color: #f0f2f5 !important;
+  color: #111827 !important;
+  border-color: #cdd2da !important;
+}
+
+/* ── Cursor line (chat input) ────────────────────────────── */
+.theme-light textarea { caret-color: #2563eb; }
+
+/* ── Selection highlight ─────────────────────────────────── */
+.theme-light ::selection {
+  background-color: rgba(37,99,235,0.15);
+  color: inherit;
+}
+
+::selection {
+  background-color: rgba(59,130,246,0.25);
+  color: inherit;
+}
