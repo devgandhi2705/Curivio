@@ -1,3 +1,13 @@
+---
+title: Curivio
+emoji: 📖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
 # Research Agent
 
 An AI-powered daily learning companion — curates structured intelligence briefs from live web sources, lets you dive deep through conversational AI, and tracks your learning progress over time. Fully responsive for mobile and desktop.
