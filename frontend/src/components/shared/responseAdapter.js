@@ -35,11 +35,15 @@ export function srToMarkdown(sr) {
 export function tryParseStructuredResponse(content) {
   if (!content) return null
   try {
-    const cleaned = content.trim()
+    // Strip [TITLE: ...] prefix and any code fences the LLM may have added
+    let cleaned = content.replace(TITLE_RE, "").trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "")
-      .trimStart()
-    if (!cleaned.startsWith("{")) return null
+      .trim()
+    // Find the first { so any stray leading text doesn't block parsing
+    const start = cleaned.indexOf("{")
+    if (start === -1) return null
+    cleaned = cleaned.slice(start)
     const parsed = JSON.parse(cleaned)
     if (typeof parsed.response_type !== "string") return null
     return parsed

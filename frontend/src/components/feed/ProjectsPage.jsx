@@ -140,8 +140,9 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   const loadingRelated = useRef(new Set())
 
   // Sidebar
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [visitedOrder,     setVisitedOrder]     = useState([])
+  const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
+  const [mobileSidebarOpen,   setMobileSidebarOpen]   = useState(false)
+  const [visitedOrder,        setVisitedOrder]        = useState([])
 
   // Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -526,33 +527,129 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
         </div>
 
         {/* Mobile project selector strip — mobile only */}
-        {projects.length > 0 && (
-          <div className="flex md:hidden overflow-x-auto gap-2 pb-2 mb-3 -mx-3 px-3 scrollbar-none">
-            {sortedProjects.map(project => {
-              const isActive = project.project_id === activeId
-              const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
-              return (
-                <button
-                  key={project.project_id}
-                  onClick={() => handleSelect(project)}
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    isActive
-                      ? `bg-gradient-to-r ${grad} text-white shadow-sm`
-                      : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {project.name}
-                </button>
-              )
-            })}
-            <button
-              onClick={() => setShowCreate(true)}
-              className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-slate-700/60 text-slate-600 hover:text-slate-400 transition-all"
-            >
-              <PlusIcon className="w-3 h-3" />
-              New
-            </button>
-          </div>
+        <div className="flex md:hidden items-center gap-2 mb-3 -mx-3 px-3">
+          {/* Sidebar trigger */}
+          <button
+            onClick={() => setMobileSidebarOpen(true)}
+            className="flex-shrink-0 p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            title="All projects"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          {/* Project chips */}
+          {projects.length > 0 && (
+            <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-none flex-1">
+              {sortedProjects.map(project => {
+                const isActive = project.project_id === activeId
+                const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
+                return (
+                  <button
+                    key={project.project_id}
+                    onClick={() => handleSelect(project)}
+                    className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                      isActive
+                        ? `bg-gradient-to-r ${grad} text-white shadow-sm`
+                        : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {project.name}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => setShowCreate(true)}
+                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-slate-700/60 text-slate-600 hover:text-slate-400 transition-all"
+              >
+                <PlusIcon className="w-3 h-3" />
+                New
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Mobile slide-out project sidebar */}
+        {mobileSidebarOpen && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+              onClick={() => setMobileSidebarOpen(false)}
+            />
+            <div className="fixed left-0 top-0 bottom-0 w-72 bg-slate-950 border-r border-slate-800/60 z-50 flex flex-col md:hidden">
+              {/* Drawer header */}
+              <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800/60">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Projects</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => { setShowCreate(true); setMobileSidebarOpen(false) }}
+                    className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+                    title="New project"
+                  >
+                    <PlusIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setMobileSidebarOpen(false)}
+                    className="p-1.5 rounded-md text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.06 1.06L9.06 8l3.22 3.22a.749.749 0 0 1-1.06 1.06L8 9.06l-3.22 3.22a.751.751 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Project list */}
+              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
+                {sortedProjects.map(project => {
+                  const isActive = project.project_id === activeId
+                  const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
+                  return (
+                    <div
+                      key={project.project_id}
+                      className={`group flex items-center gap-2 px-3 py-2.5 rounded-xl transition-all ${
+                        isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                      }`}
+                    >
+                      <button
+                        onClick={() => { handleSelect(project); setMobileSidebarOpen(false) }}
+                        className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 bg-gradient-to-br ${grad} text-white`}>
+                          {project.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate leading-snug">{project.name}</p>
+                          <p className="text-[10px] text-slate-600 mt-0.5">Day {project.insight_count ?? 1}</p>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                        <button
+                          onClick={() => { setActiveId(project.project_id); setShowEdit(true); setMobileSidebarOpen(false) }}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-700 transition-colors"
+                          title="Edit"
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => { handleDeleteRequest(project.project_id); setMobileSidebarOpen(false) }}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-colors"
+                          title="Delete"
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </>
         )}
 
         {!activeProject ? (

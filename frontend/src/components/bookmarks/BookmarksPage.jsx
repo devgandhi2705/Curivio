@@ -185,27 +185,56 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
 
 // ── Collection sidebar item ───────────────────────────────────────────────────
 
-function CollectionItem({ col, isActive, onClick }) {
+function CollectionItem({ col, isActive, onClick, onDelete, onEdit }) {
+  const [deleting, setDeleting] = useState(false)
+
+  async function handleDelete(e) {
+    e.stopPropagation()
+    if (!window.confirm(`Delete "${col.name}"? All bookmarks inside will be unassigned.`)) return
+    setDeleting(true)
+    try { await onDelete(col.collection_id) } finally { setDeleting(false) }
+  }
+
   return (
-    <button
-      onClick={() => onClick(col.collection_id)}
-      className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all group ${
-        isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-      }`}
-    >
-      <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-sm font-medium truncate">{col.name}</span>
-          <span className="text-[10px] text-slate-600 flex-shrink-0">{col.bookmark_count}</span>
+    <div className={`group flex items-start gap-2.5 px-3 py-2.5 rounded-lg transition-all ${
+      isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+    }`}>
+      <button onClick={() => onClick(col.collection_id)} className="flex items-start gap-2.5 flex-1 min-w-0 text-left">
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-sm font-medium truncate">{col.name}</span>
+            <span className="text-[10px] text-slate-600 flex-shrink-0">{col.bookmark_count}</span>
+          </div>
+          {col.description && (
+            <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-600'}`}>
+              {col.description}
+            </p>
+          )}
         </div>
-        {col.description && (
-          <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-600'}`}>
-            {col.description}
-          </p>
-        )}
+      </button>
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5 transition-opacity">
+        <button
+          onClick={e => { e.stopPropagation(); onEdit(col) }}
+          className="p-1 rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700 transition-colors"
+          title="Edit"
+        >
+          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Z" />
+          </svg>
+        </button>
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-colors"
+          title="Delete"
+        >
+          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
+          </svg>
+        </button>
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -280,6 +309,52 @@ function NewCollectionModal({ onClose, onCreate }) {
   )
 }
 
+function EditCollectionModal({ col, onClose, onSave }) {
+  const [name,  setName]  = useState(col.name || '')
+  const [desc,  setDesc]  = useState(col.description || '')
+  const [color, setColor] = useState(col.color || 'blue')
+  const [busy,  setBusy]  = useState(false)
+
+  async function handleSave() {
+    if (!name.trim()) return
+    setBusy(true)
+    try { await onSave({ name: name.trim(), description: desc.trim(), color }) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-semibold text-slate-100">Edit collection</h2>
+        <input
+          autoFocus value={name} onChange={e => setName(e.target.value)}
+          placeholder="Collection name"
+          className="w-full bg-slate-800 text-sm text-slate-100 placeholder-slate-500 px-3 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-blue-500/60"
+          onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+        />
+        <input
+          value={desc} onChange={e => setDesc(e.target.value)}
+          placeholder="Description (optional)"
+          className="w-full bg-slate-800 text-sm text-slate-100 placeholder-slate-500 px-3 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-blue-500/60"
+        />
+        <div className="flex gap-2">
+          {COLOR_OPTIONS.map(c => (
+            <button key={c.key} onClick={() => setColor(c.key)}
+              className={`w-6 h-6 rounded-full ${c.cls} transition-transform ${color === c.key ? 'ring-2 ring-white/60 scale-110' : 'opacity-50 hover:opacity-80'}`} />
+          ))}
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={!name.trim() || busy}
+            className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function BookmarksPage({ onOpenChat }) {
@@ -292,6 +367,7 @@ export default function BookmarksPage({ onOpenChat }) {
   const [typeFilter,     setTypeFilter]     = useState('')
   const [showNewCol,     setShowNewCol]     = useState(false)
   const [colsOpen,       setColsOpen]       = useState(() => window.innerWidth >= 768)
+  const [editingCol,     setEditingCol]     = useState(null) // collection object being edited
 
   // Load collections on mount
   useEffect(() => {
@@ -352,6 +428,14 @@ export default function BookmarksPage({ onOpenChat }) {
     } catch {}
   }
 
+  async function handleEditCollection(col, fields) {
+    try {
+      const updated = await updateCollection(col.collection_id, fields)
+      setCollections(prev => prev.map(c => c.collection_id === col.collection_id ? { ...c, ...updated } : c))
+    } catch {}
+    setEditingCol(null)
+  }
+
   return (
     <div className="relative flex" style={{ height: 'calc(100dvh - var(--header-h) - var(--mobile-nav-h))' }}>
 
@@ -364,7 +448,7 @@ export default function BookmarksPage({ onOpenChat }) {
       )}
 
       {/* ── Collections sidebar ── */}
-      <aside className={`flex-shrink-0 flex flex-col border-r border-slate-800/60 overflow-y-auto transition-all duration-200 ${colsOpen ? 'fixed left-0 top-0 bottom-0 z-30 md:static md:inset-auto w-56 py-6 px-3' : 'w-10 py-6 px-0 items-center'}`}>
+      <aside className={`flex-shrink-0 flex flex-col border-r border-slate-800/60 overflow-y-auto transition-all duration-200 ${colsOpen ? 'fixed left-0 top-0 bottom-0 z-30 bg-slate-950 md:static md:inset-auto md:bg-transparent w-56 py-6 px-3' : 'w-10 py-6 px-0 items-center'}`}>
         {colsOpen ? (
           <>
             <div className="flex items-center justify-between px-1 mb-3">
@@ -403,6 +487,7 @@ export default function BookmarksPage({ onOpenChat }) {
                     isActive={activeId === col.collection_id}
                     onClick={setActiveId}
                     onDelete={handleDeleteCollection}
+                    onEdit={setEditingCol}
                   />
                 ))
               )}
@@ -462,6 +547,14 @@ export default function BookmarksPage({ onOpenChat }) {
         <NewCollectionModal
           onClose={() => setShowNewCol(false)}
           onCreate={handleCollectionCreated}
+        />
+      )}
+
+      {editingCol && (
+        <EditCollectionModal
+          col={editingCol}
+          onClose={() => setEditingCol(null)}
+          onSave={(fields) => handleEditCollection(editingCol, fields)}
         />
       )}
     </div>

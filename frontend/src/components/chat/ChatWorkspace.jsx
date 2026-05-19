@@ -341,7 +341,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       <div className="flex-1 flex flex-col min-w-0">
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800/50 flex-shrink-0">
+        <div className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 border-b border-slate-800/50 flex-shrink-0">
           <button
             onClick={() => setSidebarOpen(o => !o)}
             className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors flex-shrink-0"
@@ -366,8 +366,8 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
 
         {/* Messages — scrollable, no visible scrollbar */}
-        <div className="flex-1 overflow-y-auto py-6 px-4">
-          <div className="max-w-4xl mx-auto space-y-6">
+        <div className="flex-1 overflow-y-auto py-3 px-3 sm:py-5 sm:px-4">
+          <div className="max-w-4xl mx-auto space-y-4">
             {messages.length === 0 && !isLoading && (
               <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} />
             )}
@@ -633,46 +633,46 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, userName }) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center px-4">
-      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-xl shadow-violet-950/50 mb-5">
-        <svg className="w-6 h-6 text-white" viewBox="0 0 16 16" fill="currentColor">
+    <div className="flex flex-col items-center justify-center h-full min-h-[35vh] text-center px-4 py-4">
+      <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-950/50 mb-3">
+        <svg className="w-5 h-5 text-white" viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
       </div>
-      <h2 className="text-lg font-semibold text-slate-200 mb-0.5">{getGreeting(userName)}</h2>
-      <p className="text-xs text-slate-500 mb-3">Your research companion is ready</p>
-      <p className="text-slate-500 text-sm mb-2 max-w-sm leading-relaxed">
-        Ask anything. Use <span className="text-blue-400/80">Web Search</span> for live data or{" "}
-        <span className="text-violet-400/80">Deep Research</span> for analysis — or open an article from the{" "}
-        <span className="text-slate-400">Feed</span> to start a focused session.
+      <h2 className="text-base font-semibold text-slate-200 mb-0.5">{getGreeting(userName)}</h2>
+      <p className="text-xs text-slate-500 mb-2">Your research companion is ready</p>
+      <p className="text-xs text-slate-500 mb-3 max-w-xs leading-relaxed">
+        Use <span className="text-blue-400/80">Web Search</span> for live data or{" "}
+        <span className="text-violet-400/80">Deep Research</span> for analysis.
       </p>
 
       {recentSessions.length > 0 ? (
-        <div className="w-full max-w-lg mt-5">
+        <div className="w-full max-w-lg mt-2">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2 text-left">Recent</p>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1">
             {recentSessions.map(s => (
-              <div
+              <button
                 key={s.session_id}
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-left"
+                onClick={() => onSend && onSelectSession?.(s)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800/80 text-left hover:border-slate-700 hover:bg-slate-900 transition-all"
               >
-                <svg className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                <svg className="w-3 h-3 text-slate-600 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12Z" />
                 </svg>
-                <span className="text-sm text-slate-400 truncate leading-snug">{s.title || "Untitled session"}</span>
-              </div>
+                <span className="text-xs text-slate-400 truncate leading-snug">{s.title || "Untitled session"}</span>
+              </button>
             ))}
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-2">
           {SUGGESTIONS.map((s, i) => (
             <button
               key={i}
               onClick={() => onSend(s.text)}
-              className="group text-left px-4 py-3 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/70 transition-all"
+              className="group text-left px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/70 transition-all"
             >
-              <span className="text-sm text-slate-400 group-hover:text-slate-200 transition-colors leading-snug block">
+              <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors leading-snug block">
                 {s.text}
               </span>
               <span className="text-[10px] text-slate-600 group-hover:text-slate-500 mt-0.5 block">

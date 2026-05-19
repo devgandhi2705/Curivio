@@ -168,8 +168,8 @@ def save_session_title(session_id: str, title: str) -> None:
     """
     Persist an auto-generated title.
 
-    Uses INSERT OR IGNORE + conditional UPDATE so a manual rename is never
-    overwritten by a subsequent auto-generation attempt.
+    Creates the row if absent; updates title only when it is still NULL so a
+    manual rename is never overwritten by a subsequent auto-generation attempt.
     """
     if not title or not title.strip():
         return
@@ -177,12 +177,13 @@ def save_session_title(session_id: str, title: str) -> None:
         from ..utils.db import get_connection
         with get_connection() as conn:
             conn.execute(
-                "INSERT INTO chat_sessions (session_id, title) VALUES (?, ?)",
+                """INSERT INTO chat_sessions (session_id, title) VALUES (?, ?)
+                   ON CONFLICT(session_id) DO UPDATE
+                   SET title = excluded.title WHERE chat_sessions.title IS NULL""",
                 (session_id, title.strip()),
             )
     except Exception:
-        # Row already exists (session re-used) — do not overwrite existing title
-        logger.debug("[title] session %r already has a title, skipping auto-save", session_id)
+        logger.debug("[title] save_session_title failed for %r", session_id)
 
 
 def ensure_session_owner(session_id: str, user_id: str) -> None:

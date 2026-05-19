@@ -8,10 +8,18 @@ from pathlib import Path
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 MODEL_NAME = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
-API_KEY    = os.getenv("GROQ_API_KEY")
 BASE_URL   = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
-client = OpenAI(api_key=API_KEY, base_url=BASE_URL, timeout=120.0)
+_client: OpenAI | None = None
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY environment variable is not set")
+        _client = OpenAI(api_key=api_key, base_url=BASE_URL, timeout=120.0)
+    return _client
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +44,7 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
         kwargs["response_format"] = {"type": "json_object"}
 
     try:
-        response = client.chat.completions.create(**kwargs)
+        response = _get_client().chat.completions.create(**kwargs)
     except Exception as exc:
         raise RuntimeError(
             f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."
@@ -77,7 +85,7 @@ def ask_grok_chat(messages: list[dict]) -> str:
 
     t0 = time.monotonic()
     try:
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.7,
@@ -124,7 +132,7 @@ def ask_grok_chat_stream(messages: list[dict]):
 
     t0 = time.monotonic()
     try:
-        stream = client.chat.completions.create(
+        stream = _get_client().chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.7,

@@ -263,15 +263,21 @@ function SettingsPanel({ isDark, onToggleTheme }) {
 
           <div className="px-4 py-3 border-b border-slate-800/60">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2.5">Appearance</p>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-300">{isDark ? "Night Mode" : "Day Mode"}</span>
-              <button
-                onClick={onToggleTheme}
-                className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${isDark ? "bg-blue-600" : "bg-slate-600"}`}
-              >
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${isDark ? "translate-x-4" : "translate-x-0.5"}`} />
-              </button>
-            </div>
+            <button
+              onClick={onToggleTheme}
+              className="w-full flex items-center justify-between group"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-base leading-none">{isDark ? "🌙" : "☀️"}</span>
+                <div className="text-left">
+                  <p className="text-sm font-medium text-slate-200 leading-tight">{isDark ? "Night Mode" : "Day Mode"}</p>
+                  <p className="text-[11px] text-slate-500 leading-tight mt-0.5">{isDark ? "Switch to light" : "Switch to dark"}</p>
+                </div>
+              </div>
+              <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 flex-shrink-0 ${isDark ? "bg-blue-600" : "bg-slate-600"}`}>
+                <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? "translate-x-6" : "translate-x-1"}`} />
+              </div>
+            </button>
           </div>
 
           <div className="px-4 py-2">
