@@ -274,8 +274,8 @@ function SettingsPanel({ isDark, onToggleTheme }) {
                   <p className="text-[11px] text-slate-500 leading-tight mt-0.5">{isDark ? "Switch to light" : "Switch to dark"}</p>
                 </div>
               </div>
-              <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 flex-shrink-0 ${isDark ? "bg-blue-600" : "bg-slate-600"}`}>
-                <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? "translate-x-6" : "translate-x-1"}`} />
+              <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 flex-shrink-0 overflow-hidden ${isDark ? "bg-blue-600" : "bg-slate-600"}`}>
+                <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? "translate-x-5" : "translate-x-0"}`} />
               </div>
             </button>
           </div>

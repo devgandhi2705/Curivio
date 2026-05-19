@@ -178,7 +178,7 @@ function ExportButton({ pkg, project, dayLabel }) {
 function PackageHeader({ pkg, dayLabel, actions }) {
   const contentMix = buildContentMix(pkg)
   return (
-    <div className="mb-7">
+    <div className="mb-4 md:mb-7">
       {/* Meta row */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mb-3">
         <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -192,7 +192,7 @@ function PackageHeader({ pkg, dayLabel, actions }) {
       </div>
 
       {/* Headline */}
-      <h2 className="text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-4 break-words">
+      <h2 className="text-lg md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-2 md:mb-4 break-words">
         {pkg.package_headline}
       </h2>
 
@@ -209,7 +209,7 @@ function PackageHeader({ pkg, dayLabel, actions }) {
 
 function SectionDivider({ label }) {
   return (
-    <div className="flex items-center gap-3 my-5">
+    <div className="flex items-center gap-3 my-3 md:my-5">
       <div className="flex-1 h-px bg-slate-800" />
       <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">{label}</span>
       <div className="flex-1 h-px bg-slate-800" />
@@ -219,7 +219,7 @@ function SectionDivider({ label }) {
 
 function ActionItem({ text }) {
   return (
-    <div className="mt-6 flex gap-3 px-4 py-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
+    <div className="mt-4 md:mt-6 flex gap-3 px-3 md:px-4 py-3 md:py-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
       <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mt-0.5">
         <svg className="w-3 h-3 text-blue-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M2 6l3 3 5-5" />
@@ -241,7 +241,7 @@ function DayProgressBar({ readCount, totalCount }) {
   const allDone = readCount >= totalCount
 
   return (
-    <div className="flex items-center gap-3 mb-5 px-4 py-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
+    <div className="flex items-center gap-3 mb-3 md:mb-5 px-4 py-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
       <div className="flex-1">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[11px] font-semibold text-slate-400">Day progress</span>
@@ -476,7 +476,7 @@ function PackageContent({
       {newsCards.length > 0 && (
         <>
           <SectionDivider label="Current Events" />
-          <div className="space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {newsCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -493,7 +493,7 @@ function PackageContent({
       {eduCards.length > 0 && (
         <>
           <SectionDivider label="Deep Learning" />
-          <div className="space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {eduCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -530,7 +530,7 @@ function PackageContent({
           <p className="text-[11px] text-slate-600 mb-3 leading-relaxed">
             Optional side trails — intellectually stimulating, not on the critical path.
           </p>
-          <div className="space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {curiosityCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -544,7 +544,7 @@ function PackageContent({
       )}
 
       {/* Generate next package */}
-      <div className="mt-6 pt-5 border-t border-slate-800">
+      <div className="mt-4 md:mt-6 pt-4 md:pt-5 border-t border-slate-800">
         <GenerateButton
           generating={generating}
           onGenerate={onGenerate}
@@ -722,26 +722,35 @@ export default function DailyPackageView({
       {/* Left: main package content */}
       <div className="flex-1 min-w-0">
 
-        {/* Mobile package history strip — visible only on mobile when > 1 package */}
+        {/* Mobile package timeline — scrollable snap strip, desktop hidden */}
         {packages.length > 1 && (
-          <div className="flex md:hidden overflow-x-auto gap-2 pb-2 mb-4 -mx-3 px-3 scrollbar-none">
-            {[...packages].reverse().map(pkg => {
-              const label = displayLabels.get(pkg.id)
-              const isSel = pkg.id === selected?.id
-              return (
-                <button
-                  key={pkg.id}
-                  onClick={() => setSelectedId(pkg.id)}
-                  className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                    isSel
-                      ? 'bg-slate-700 text-slate-100 border border-slate-600'
-                      : 'bg-slate-800/60 text-slate-500 hover:text-slate-300 border border-transparent'
-                  }`}
-                >
-                  {label}
-                </button>
-              )
-            })}
+          <div className="relative flex md:hidden mb-3 -mx-3">
+            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-slate-950 to-transparent z-10 pointer-events-none" />
+            <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-slate-950 to-transparent z-10 pointer-events-none" />
+            <div className="flex overflow-x-auto scrollbar-none snap-x snap-mandatory px-4 w-full">
+              {[...packages].reverse().map(pkg => {
+                const label = displayLabels.get(pkg.id)
+                const isSel = pkg.id === selected?.id
+                return (
+                  <button
+                    key={pkg.id}
+                    onClick={() => setSelectedId(pkg.id)}
+                    className={`flex-shrink-0 snap-start flex flex-col items-center px-3 py-2 gap-1.5 border-b-2 transition-all duration-150 group ${
+                      isSel ? 'border-blue-500' : 'border-slate-800/60 hover:border-slate-700'
+                    }`}
+                  >
+                    <span className={`text-[11px] font-medium whitespace-nowrap leading-none transition-colors ${
+                      isSel ? 'text-slate-100' : 'text-slate-600 group-hover:text-slate-400'
+                    }`}>
+                      {label}
+                    </span>
+                    <span className={`w-1.5 h-1.5 rounded-full transition-all ${
+                      isSel ? 'bg-blue-400' : 'bg-slate-700'
+                    }`} />
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 

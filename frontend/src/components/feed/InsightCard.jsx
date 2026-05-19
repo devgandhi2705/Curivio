@@ -114,6 +114,14 @@ function ClockIcon({ className }) {
   )
 }
 
+function DotsIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
+      <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+    </svg>
+  )
+}
+
 // ─── Card type config ─────────────────────────────────────────────────────────
 
 const TYPE_CONFIG = {
@@ -266,6 +274,7 @@ export default function InsightCard({
 
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState(note ?? "")
+  const [moreOpen, setMoreOpen] = useState(false)
   const noteTimerRef = useRef(null)
 
   useEffect(() => { setNoteDraft(note ?? "") }, [note])
@@ -297,7 +306,7 @@ export default function InsightCard({
     }`}>
 
       {/* Card header */}
-      <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3">
+      <div className="px-3 pt-3 pb-2 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <div className={`flex-shrink-0 w-7 h-7 rounded-lg border flex items-center justify-center mt-0.5 ${type.iconBg}`}>
             <Icon className={`w-3.5 h-3.5 ${type.iconColor}`} />
@@ -330,20 +339,20 @@ export default function InsightCard({
       </div>
 
       {/* Summary */}
-      <div className="px-4 pb-3">
-        <p className="text-sm text-slate-400 leading-relaxed">{card.summary}</p>
+      <div className="px-3 pb-2 md:px-4 md:pb-3">
+        <p className="text-[13px] md:text-sm text-slate-400 leading-relaxed">{card.summary}</p>
       </div>
 
       {/* Educational explanation (always open) */}
       {card.educational_explanation && (
         <div className="border-t border-slate-800/80">
-          <div className="flex items-center gap-2 px-4 py-2.5">
+          <div className="flex items-center gap-2 px-3 md:px-4 py-2">
             <LightbulbIcon className="w-3 h-3 text-slate-500" />
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
               {card.content_type === "educational" ? "Deep Dive" : "Why This Works"}
             </span>
           </div>
-          <div className="px-4 pb-3.5 bg-slate-800/20">
+          <div className="px-3 md:px-4 pb-3 md:pb-3.5 bg-slate-800/20">
             <p className="text-xs text-slate-400 leading-relaxed">{card.educational_explanation}</p>
           </div>
         </div>
@@ -351,7 +360,7 @@ export default function InsightCard({
 
       {/* Why it matters */}
       {card.why_it_matters && (
-        <div className="mx-4 mb-3 px-3 py-2.5 bg-slate-800/50 rounded-xl border border-slate-700/40">
+        <div className="mx-3 mb-2 md:mx-4 md:mb-3 px-3 py-2 md:py-2.5 bg-slate-800/50 rounded-xl border border-slate-700/40">
           <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Why it matters</p>
           <p className="text-xs text-slate-300 leading-relaxed">{card.why_it_matters}</p>
         </div>
@@ -359,7 +368,7 @@ export default function InsightCard({
 
       {/* Source links */}
       {card.source_links?.length > 0 && (
-        <div className="px-4 pb-4 flex flex-wrap gap-2">
+        <div className="px-3 pb-3 md:px-4 md:pb-4 flex flex-wrap gap-2">
           {card.source_links.slice(0, 3).map((link, i) => (
             <a
               key={i}
@@ -375,101 +384,167 @@ export default function InsightCard({
         </div>
       )}
 
-      {/* Bottom action bar: chat actions (left) + read toggle (right) */}
+      {/* Bottom action bar */}
       {(hasChatActions || onMarkRead || onMarkUnread) && (
-        <div className="border-t border-slate-800/80 px-4 py-2.5 flex items-center gap-1.5 flex-wrap">
-          {onAskAbout && (
-            <button
-              onClick={() => onAskAbout(card)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
-            >
-              <ChatIcon className="w-3 h-3" />
-              Ask About This
-            </button>
-          )}
-          {onDeepResearch && (
-            <button
-              onClick={() => onDeepResearch(card)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/40 hover:bg-violet-500/10 border border-slate-700/40 hover:border-violet-500/30 transition-all"
-            >
-              <MicroscopeIcon className="w-3 h-3" />
-              Deep Research
-            </button>
-          )}
-          {onExplainSimply && (
-            <button
-              onClick={() => onExplainSimply(card)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/40 hover:bg-amber-500/10 border border-slate-700/40 hover:border-amber-500/30 transition-all"
-            >
-              <LightbulbIcon className="w-3 h-3" />
-              Explain Simply
-            </button>
-          )}
-          {onToggleQueue && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                isQueued
-                  ? "text-amber-400 bg-amber-500/10 border-amber-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
-                  : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
-              }`}
-            >
-              <ClockIcon className="w-3 h-3" />
-              {isQueued ? "Queued" : "Read Later"}
-            </button>
-          )}
-
-          {/* Add note — right side, before save */}
-          {(onSaveNote || onDeleteNote || note) && (
-            <button
-              onClick={() => setNoteOpen(o => !o)}
-              className={`ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                noteOpen || hasNote
-                  ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                  : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
-              }`}
-            >
-              <PencilIcon className="w-3 h-3" />
-              {hasNote ? "My note" : "Add note"}
-              {hasNote && !noteOpen && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+        <div className="border-t border-slate-800/80 px-3 md:px-4 py-2 md:py-2.5">
+          {/* Primary + secondary row — always visible */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* PRIMARY: Ask About */}
+            {onAskAbout && (
+              <button
+                onClick={() => onAskAbout(card)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
+              >
+                <ChatIcon className="w-3 h-3" />
+                Ask About
+              </button>
+            )}
+            {/* PRIMARY: Explain Simply */}
+            {onExplainSimply && (
+              <button
+                onClick={() => onExplainSimply(card)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/40 hover:bg-amber-500/10 border border-slate-700/40 hover:border-amber-500/30 transition-all"
+              >
+                <LightbulbIcon className="w-3 h-3" />
+                Explain Simply
+              </button>
+            )}
+            {/* SECONDARY: Deep Research — icon only on mobile */}
+            {onDeepResearch && (
+              <button
+                onClick={() => onDeepResearch(card)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/40 hover:bg-violet-500/10 border border-slate-700/40 hover:border-violet-500/30 transition-all"
+              >
+                <MicroscopeIcon className="w-3 h-3" />
+                <span className="hidden md:inline">Deep Research</span>
+              </button>
+            )}
+            {/* SECONDARY: Read Later — desktop main row only */}
+            {onToggleQueue && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
+                className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  isQueued
+                    ? "text-amber-400 bg-amber-500/10 border-amber-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
+                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                }`}
+              >
+                <ClockIcon className="w-3 h-3" />
+                {isQueued ? "Queued" : "Read Later"}
+              </button>
+            )}
+            {/* Add note — desktop main row only (ml-auto) */}
+            {(onSaveNote || onDeleteNote || note) && (
+              <button
+                onClick={() => setNoteOpen(o => !o)}
+                className={`hidden md:inline-flex ml-auto items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  noteOpen || hasNote
+                    ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                }`}
+              >
+                <PencilIcon className="w-3 h-3" />
+                {hasNote ? "My note" : "Add note"}
+                {hasNote && !noteOpen && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+                )}
+              </button>
+            )}
+            {/* Bookmark — always visible */}
+            <BookmarkButton
+              className={(onSaveNote || onDeleteNote || note) ? "" : "md:ml-auto"}
+              label
+              bookmarkData={{
+                title:              card.title,
+                summary:            card.summary || '',
+                content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
+                source_url:         card.source_links?.[0]?.url || '',
+                project_id:         projectId,
+                project_name:       projectName,
+                ai_generated_notes: note?.trim() || card.why_it_matters || '',
+                related_topics:     card.related_topics || [],
+                source_type:        'feed',
+                tags:               [card.category, card.content_type].filter(Boolean),
+              }}
+            />
+            {/* Read / Unread — desktop main row only */}
+            {(onMarkRead || onMarkUnread) && (
+              <button
+                onClick={handleReadToggle}
+                className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  isRead
+                    ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
+                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                }`}
+              >
+                {isRead
+                  ? <><CheckCircleIcon className="w-3 h-3" /> Read</>
+                  : <><CircleIcon className="w-3 h-3" /> Mark as Read</>
+                }
+              </button>
+            )}
+            {/* More toggle — mobile only, reveals tertiary actions */}
+            {(onToggleQueue || onSaveNote || onDeleteNote || note || onMarkRead || onMarkUnread) && (
+              <button
+                onClick={() => setMoreOpen(o => !o)}
+                className={`md:hidden ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  moreOpen
+                    ? "text-slate-300 bg-slate-800 border-slate-700"
+                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-slate-300"
+                }`}
+              >
+                <DotsIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {/* Tertiary row — mobile only, shown when More is open */}
+          {moreOpen && (
+            <div className="md:hidden flex items-center gap-1.5 flex-wrap mt-1.5 pt-1.5 border-t border-slate-800/50">
+              {onToggleQueue && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                    isQueued
+                      ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                  }`}
+                >
+                  <ClockIcon className="w-3 h-3" />
+                  {isQueued ? "Queued" : "Read Later"}
+                </button>
               )}
-            </button>
-          )}
-
-          {/* Bookmark — right side */}
-          <BookmarkButton
-            className={(onSaveNote || onDeleteNote || note) ? "" : "ml-auto"}
-            label
-            bookmarkData={{
-              title:              card.title,
-              summary:            card.summary || '',
-              content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
-              source_url:         card.source_links?.[0]?.url || '',
-              project_id:         projectId,
-              project_name:       projectName,
-              ai_generated_notes: note?.trim() || card.why_it_matters || '',
-              related_topics:     card.related_topics || [],
-              source_type:        'feed',
-              tags:               [card.category, card.content_type].filter(Boolean),
-            }}
-          />
-
-          {/* Read / Unread */}
-          {(onMarkRead || onMarkUnread) && (
-            <button
-              onClick={handleReadToggle}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                isRead
-                  ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
-                  : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
-              }`}
-            >
-              {isRead
-                ? <><CheckCircleIcon className="w-3 h-3" /> Read</>
-                : <><CircleIcon className="w-3 h-3" /> Mark as Read</>
-              }
-            </button>
+              {(onSaveNote || onDeleteNote || note) && (
+                <button
+                  onClick={() => setNoteOpen(o => !o)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                    noteOpen || hasNote
+                      ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                  }`}
+                >
+                  <PencilIcon className="w-3 h-3" />
+                  {hasNote ? "My note" : "Add note"}
+                  {hasNote && !noteOpen && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+                  )}
+                </button>
+              )}
+              {(onMarkRead || onMarkUnread) && (
+                <button
+                  onClick={handleReadToggle}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                    isRead
+                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                  }`}
+                >
+                  {isRead
+                    ? <><CheckCircleIcon className="w-3 h-3" /> Read</>
+                    : <><CircleIcon className="w-3 h-3" /> Mark as Read</>
+                  }
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
