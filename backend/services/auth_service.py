@@ -276,8 +276,12 @@ def create_reset_token(email: str) -> dict:
         logger.warning("[auth] SMTP not configured — returning code inline for %s", email)
         return {"code": code, "smtp_not_configured": True}
 
-    _send_code_email(user["email"], user["name"], code)
-    return {}
+    try:
+        _send_code_email(user["email"], user["name"], code)
+        return {}
+    except Exception as exc:
+        logger.warning("[auth] SMTP send failed (%s) — returning code inline for %s", exc, email)
+        return {"code": code, "smtp_not_configured": True}
 
 
 def _send_code_email(email: str, name: str, code: str) -> None:
