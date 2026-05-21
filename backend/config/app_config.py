@@ -40,10 +40,6 @@ DEEP_RESEARCH_RECOMMEND_THRESHOLD = 3
 GITHUB_MAX_REPOS = 25
 GITHUB_MIN_STARS = 50
 
-# ── SMTP (non-secret host settings) ──────────────────────────────────────────
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-
 # ── Auth ──────────────────────────────────────────────────────────────────────
 AUTH_TOKEN_EXPIRE_DAYS = 30
 

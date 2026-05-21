@@ -422,8 +422,8 @@ async def auth_verify_password(
 
 @app.post("/auth/forgot-password")
 async def auth_forgot_password(data: ForgotPasswordRequest):
-    result = create_reset_token(data.email)
-    return {"ok": True, **result}
+    create_reset_token(data.email)
+    return {"ok": True}
 
 
 @app.post("/auth/verify-reset-code")

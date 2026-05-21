@@ -5,11 +5,8 @@ Auth service — user registration, login, JWT issuance, and FastAPI dependency.
 import logging
 import os
 import secrets
-import smtplib
 import uuid
 from datetime import datetime, timedelta, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +21,7 @@ from ..utils.db import get_connection
 
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me-in-production-use-a-long-random-string")
 ALGORITHM  = "HS256"
-from ..config import AUTH_TOKEN_EXPIRE_DAYS as TOKEN_EXPIRE_DAYS, SMTP_HOST, SMTP_PORT
+from ..config import AUTH_TOKEN_EXPIRE_DAYS as TOKEN_EXPIRE_DAYS
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -245,17 +242,11 @@ def check_current_password(user_id: str, password: str) -> bool:
 _RESET_EXPIRY_MINUTES = 15
 
 
-def create_reset_token(email: str) -> dict:
-    """
-    Generate a 6-digit code, store it, and email it. Silent on unknown email.
-
-    Returns:
-      {}                                  — email sent (or unknown email, silenced)
-      {"code": "123456", "smtp_not_configured": True}  — SMTP not set up; code shown inline
-    """
+def create_reset_token(email: str) -> None:
+    """Generate, store, and email a 6-digit reset code. Silent on unknown email."""
     user = get_user_by_email(email.lower().strip())
     if not user:
-        return {}
+        return
 
     code = str(secrets.randbelow(1_000_000)).zfill(6)
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=_RESET_EXPIRY_MINUTES)).isoformat()
@@ -270,46 +261,21 @@ def create_reset_token(email: str) -> dict:
             (user["user_id"], code, expires_at),
         )
 
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASSWORD", "")
-    if not smtp_user or not smtp_pass:
-        logger.warning("[auth] SMTP not configured — returning code inline for %s", email)
-        return {"code": code, "smtp_not_configured": True}
-
-    try:
-        _send_code_email(user["email"], user["name"], code)
-        return {}
-    except Exception as exc:
-        logger.warning("[auth] SMTP send failed (%s) — returning code inline for %s", exc, email)
-        return {"code": code, "smtp_not_configured": True}
+    _send_code_email(user["email"], user["name"], code)
 
 
-def _send_code_email(email: str, name: str, code: str) -> None:
-    smtp_host = SMTP_HOST
-    smtp_port = SMTP_PORT
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASSWORD", "")
-    smtp_from = os.getenv("SMTP_FROM", smtp_user)
-
-    if not smtp_user or not smtp_pass:
-        logger.warning("[auth] SMTP not configured — reset code for %s: %s", email, code)
-        raise HTTPException(
-            status_code=503,
-            detail="Email service is not configured on this server. Contact the administrator.",
-        )
-
-    display_name = name or "there"
-    text_body = (
+def _build_email_bodies(display_name: str, code: str) -> tuple[str, str]:
+    text = (
         f"Hi {display_name},\n\n"
         f"Your Curivio password reset code is:\n\n  {code}\n\n"
         f"This code expires in {_RESET_EXPIRY_MINUTES} minutes. "
         "If you didn't request this, you can safely ignore this email.\n\n"
         "— The Curivio Team"
     )
-    html_body = f"""<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;max-width:480px;margin:0 auto;padding:40px 24px;background:#fff">
+    html = f"""<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;max-width:480px;margin:0 auto;padding:40px 24px;background:#fff">
 <div style="text-align:center;margin-bottom:28px">
   <div style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;background:#2563eb;margin-bottom:12px">
-    <span style="color:#fff;font-size:24px">💡</span>
+    <span style="color:#fff;font-size:24px">&#128161;</span>
   </div>
   <h1 style="font-size:22px;font-weight:800;color:#0f172a;margin:0">Curivio</h1>
 </div>
@@ -325,22 +291,35 @@ def _send_code_email(email: str, name: str, code: str) -> None:
 <hr style="border:none;border-top:1px solid #f1f5f9;margin:28px 0">
 <p style="color:#cbd5e1;font-size:11px;text-align:center">— The Curivio Team</p>
 </body></html>"""
+    return text, html
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Your Curivio password reset code"
-    msg["From"]    = f"Curivio <{smtp_from}>"
-    msg["To"]      = email
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
 
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port) as srv:
-            srv.starttls()
-            srv.login(smtp_user, smtp_pass)
-            srv.sendmail(smtp_from, email, msg.as_string())
-    except Exception as exc:
-        logger.error("[auth] Failed to send reset email to %s: %s", email, exc)
-        raise HTTPException(status_code=500, detail="Failed to send reset email. Please try again later.")
+def _send_code_email(email: str, name: str, code: str) -> None:
+    import httpx
+    display_name = name or "there"
+    text_body, html_body = _build_email_bodies(display_name, code)
+
+    resend_key = os.getenv("RESEND_API_KEY", "")
+    if not resend_key:
+        raise HTTPException(status_code=503, detail="Email service is not configured on this server.")
+
+    resend_from = os.getenv("RESEND_FROM", "Curivio <onboarding@resend.dev>")
+    resp = httpx.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+        json={
+            "from":    resend_from,
+            "to":      [email],
+            "subject": "Your Curivio password reset code",
+            "text":    text_body,
+            "html":    html_body,
+        },
+        timeout=15.0,
+    )
+    if not resp.is_success:
+        logger.error("[auth] Resend error %s: %s", resp.status_code, resp.text)
+        raise HTTPException(status_code=503, detail="Failed to send reset email. Please try again.")
+    logger.info("[auth] Reset email sent via Resend to %s", email)
 
 
 def verify_reset_code(email: str, code: str) -> None:

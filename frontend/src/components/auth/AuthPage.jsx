@@ -64,7 +64,6 @@ export default function AuthPage() {
   const [forgotErr,     setForgotErr]     = useState("")
   const [forgotLoading, setForgotLoading] = useState(false)
   const [codeVerified,  setCodeVerified]  = useState(false)
-  const [forgotInlineCode, setForgotInlineCode] = useState("")
 
   const { login, register, loading, error, clearError } = useAuth()
 
@@ -99,7 +98,6 @@ export default function AuthPage() {
     setForgotErr("")
     setForgotLoading(false)
     setCodeVerified(false)
-    setForgotInlineCode("")
     setMode("forgot")
   }
 
@@ -108,7 +106,6 @@ export default function AuthPage() {
     setForgotStep("send")
     setForgotMsg("")
     setForgotErr("")
-    setForgotInlineCode("")
     setCodeVerified(false)
   }
 
@@ -123,12 +120,7 @@ export default function AuthPage() {
     setCodeVerified(false)
     setForgotCode("")
     try {
-      const res = await forgotPassword(forgotEmail.trim())
-      if (res?.smtp_not_configured && res?.code) {
-        // Email service not set up — show the code directly in the UI
-        setForgotCode(res.code)
-        setForgotInlineCode(res.code)
-      }
+      await forgotPassword(forgotEmail.trim())
       setForgotStep("code")
     } catch (err) {
       setForgotErr(err.message || "Failed to send code.")
@@ -280,15 +272,6 @@ export default function AuthPage() {
                   <p className="text-xs text-gray-400 leading-relaxed">
                     Code sent to <span className="text-white font-medium">{forgotEmail}</span>
                   </p>
-
-                  {forgotInlineCode && (
-                    <div className="flex items-start gap-2 px-3 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                      <p className="text-xs text-amber-300 leading-relaxed">
-                        Email service not configured. Your reset code is:{" "}
-                        <span className="font-mono font-bold text-amber-200 tracking-widest">{forgotInlineCode}</span>
-                      </p>
-                    </div>
-                  )}
 
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">6-digit code</label>
