@@ -340,23 +340,6 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_feeds_generated
     ON intelligence_feeds (generated_at DESC);
 """
 
-CREATE_SCHEDULER_RUNS = """
-CREATE TABLE IF NOT EXISTS scheduler_runs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    status      TEXT    NOT NULL CHECK(status IN ('started', 'completed', 'skipped', 'failed')),
-    interests   TEXT,
-    feed_id     INTEGER,
-    error_msg   TEXT,
-    started_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    finished_at TEXT
-);
-"""
-
-CREATE_SCHEDULER_RUNS_IDX = """
-CREATE INDEX IF NOT EXISTS idx_scheduler_runs_started
-    ON scheduler_runs (started_at DESC);
-"""
-
 CREATE_FEED_ARTICLE_READS = """
 CREATE TABLE IF NOT EXISTS feed_article_reads (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,8 +553,6 @@ ALL_TABLES = [
     CREATE_PROJECT_PROGRESSION_IDX,
     CREATE_INTELLIGENCE_FEEDS,
     CREATE_INTELLIGENCE_FEEDS_IDX,
-    CREATE_SCHEDULER_RUNS,
-    CREATE_SCHEDULER_RUNS_IDX,
     CREATE_FEED_ARTICLE_READS,
     CREATE_FEED_ARTICLE_READS_IDX,
     CREATE_FEED_CHAT_LINKS,

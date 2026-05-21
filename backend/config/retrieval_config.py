@@ -71,9 +71,9 @@ class CrawlTarget:
 @dataclass(frozen=True)
 class FeedRetrievalRules:
     """Rules for the daily feed generation flow (3 news + 2 educational)."""
-    search_queries_per_package: int = 2    # Tavily search() calls per daily package
-    max_results_per_query: int = 8
-    search_depth: str = "basic"            # "basic" | "advanced"
+    search_queries_per_package: int = 4    # Tavily search() calls per daily package
+    max_results_per_query: int = 15
+    search_depth: str = "advanced"            # "basic" | "advanced"
     use_extract_for_known_urls: bool = True
     deduplicate_across_days: bool = True
 
@@ -81,7 +81,7 @@ class FeedRetrievalRules:
 @dataclass(frozen=True)
 class DeepResearchRules:
     """Rules for deep research / chat mode flows."""
-    max_search_queries: int = 4
+    max_search_queries: int = 8
     search_depth: str = "advanced"
     use_crawl: bool = False                # only crawl_primary strategy uses this
     use_map_for_discovery: bool = False

@@ -33,7 +33,7 @@ from ..prompts.topic_expansion_prompt import TOPIC_EXPANSION_PROMPT
 
 logger = logging.getLogger(__name__)
 
-TOPIC_EXPANSION_TTL_HOURS: int = int(os.getenv("TOPIC_EXPANSION_TTL_HOURS", "72"))
+from ..config import TOPIC_EXPANSION_TTL_HOURS
 
 _REQUIRED_LIST_FIELDS = (
     "prerequisites",

@@ -35,7 +35,7 @@ function formatDate(ts) {
 // Compute human-readable day labels for all packages.
 // Multiple packages on the same calendar date are sub-numbered: Day 2, Day 2.1, Day 2.2 …
 // Failed/empty packages are labelled "Day 0".
-function computeDisplayLabels(packages) {
+export function computeDisplayLabels(packages) {
   const sorted = [...packages].sort((a, b) => a.day_number - b.day_number)
   const labels = new Map()
   let calendarDay = 0
@@ -66,7 +66,7 @@ function computeDisplayLabels(packages) {
 // Compute the label for the *next* package to be generated.
 // - New calendar day  → "Day X+1"
 // - Same calendar day → "Day X.N"  (N = how many packages already exist today)
-function computeNextLabel(packages, displayLabels, generatedTodayCount) {
+export function computeNextLabel(packages, displayLabels, generatedTodayCount) {
   if (packages.length === 0) return "Day 1"
   const latestGood = packages.find(p => displayLabels.get(p.id) !== "Day 0")
   const latestLabel = latestGood ? displayLabels.get(latestGood.id) : null
@@ -451,7 +451,7 @@ function PackageContent({
   if (failed) {
     return (
       <div>
-        <FailedPackageBanner pkg={pkg} generating={generating} onRegenerate={onRegenerate} />
+        <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
         <div className="mt-4 pt-4 border-t border-slate-800">
           <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
         </div>
@@ -508,7 +508,7 @@ function PackageContent({
 
       {/* Fallback: unsorted core cards */}
       {newsCards.length === 0 && eduCards.length === 0 && allCoreCards.length > 0 && (
-        <div className="space-y-3 mt-4">
+        <div className="space-y-2 md:space-y-3 mt-4">
           {allCoreCards.map((card, i) => {
             const ak = articleKeyFromTitle(card.title || "")
             return (
@@ -566,12 +566,12 @@ function isFailedPackage(pkg) {
   )
 }
 
-function FailedPackageBanner({ pkg, generating, onRegenerate }) {
+function FailedPackageBanner({ pkg, nextLabel, generating, onRegenerate }) {
   return (
     <div className="mb-7">
       <div className="flex items-center gap-2 mb-3">
         <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-rose-950/60 border border-rose-800/50 text-[10px] font-bold uppercase tracking-wider text-rose-400">
-          Day 0
+          Generation Failed
         </span>
         <span className="text-[11px] text-slate-600">{pkg.generated_at ? new Date(pkg.generated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}</span>
       </div>
@@ -603,7 +603,7 @@ function FailedPackageBanner({ pkg, generating, onRegenerate }) {
               <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" />
               </svg>
-              Regenerate Day {pkg.day_number}
+              Retry {nextLabel}
             </>
           )}
         </button>
@@ -647,6 +647,12 @@ export default function DailyPackageView({
     window.addEventListener("queuechange", onQueueChange)
     return () => window.removeEventListener("queuechange", onQueueChange)
   }, [])
+
+  // Auto-select the newest package whenever packages[0] changes (new generation).
+  // This keeps the view, greeting, and sidebar all on the same day label.
+  useEffect(() => {
+    if (packages[0]?.id) setSelectedId(packages[0].id)
+  }, [packages[0]?.id])
 
   // When navigating from queue: select the target package
   useEffect(() => {
@@ -712,8 +718,39 @@ export default function DailyPackageView({
   ).length
   const nextLabel = computeNextLabel(packages, displayLabels, generatedTodayCount)
 
+  // Show the animated generation state any time a fetch is in progress,
+  // regardless of whether prior packages exist. Keep the history sidebar
+  // visible on desktop so the user can see how many days they already have.
+  if (generating) {
+    return (
+      <div className="flex gap-6 min-h-0">
+        <div className="flex-1 min-w-0">
+          <GeneratingPackageState project={project} nextLabel={nextLabel} />
+        </div>
+        {packages.length > 1 && (
+          <aside className="hidden md:block w-56 flex-shrink-0">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-3 px-1">
+              History
+            </p>
+            <div className="space-y-1">
+              {packages.map(pkg => (
+                <HistoryItem
+                  key={pkg.id}
+                  pkg={pkg}
+                  dayLabel={displayLabels.get(pkg.id)}
+                  isSelected={false}
+                  onClick={() => {}}
+                />
+              ))}
+            </div>
+          </aside>
+        )}
+      </div>
+    )
+  }
+
   if (packages.length === 0) {
-    return <EmptyPackageState project={project} onGenerate={onGenerate} generating={generating} />
+    return <EmptyPackageState project={project} onGenerate={onGenerate} />
   }
 
   return (
@@ -804,7 +841,102 @@ export default function DailyPackageView({
   )
 }
 
-function EmptyPackageState({ project, onGenerate, generating }) {
+const GENERATION_STEPS = [
+  { label: "Scanning today's news & research",  doneAfter: 4  },
+  { label: "Selecting the most relevant articles", doneAfter: 10 },
+  { label: "Generating educational insights",   doneAfter: 18 },
+  { label: "Personalising to your level",        doneAfter: 26 },
+]
+
+function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(s => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Progress 0→100 over ~32s, then stays at 95 until done
+  const progress = Math.min(95, Math.round((elapsed / 32) * 100))
+
+  return (
+    <div className="flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto">
+      {/* Animated logo ring */}
+      <div className="relative w-16 h-16 mb-6">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 animate-pulse shadow-lg shadow-violet-950/60" />
+        <div className="absolute inset-0 rounded-2xl flex items-center justify-center">
+          <svg style={{ width: '26px', height: '26px' }} viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
+            <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
+            <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
+          </svg>
+        </div>
+        {/* Spinning ring */}
+        <svg className="absolute inset-0 w-16 h-16 -rotate-90 animate-[spin_2s_linear_infinite]" viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="28" fill="none" stroke="white" strokeOpacity="0.08" strokeWidth="3" />
+          <circle cx="32" cy="32" r="28" fill="none" stroke="url(#gen-ring)" strokeWidth="3"
+            strokeDasharray="60 116" strokeLinecap="round" />
+          <defs>
+            <linearGradient id="gen-ring" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#60a5fa" />
+              <stop offset="100%" stopColor="#a78bfa" />
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+
+      <h3 className="text-base font-semibold text-slate-100 mb-1">
+        Building your {nextLabel} package
+      </h3>
+      <p className="text-[13px] text-slate-500 mb-6">
+        Curating <span className="text-slate-400">{project.name}</span> insights from today's web
+      </p>
+
+      {/* Step list */}
+      <div className="w-full space-y-2.5 mb-6 text-left">
+        {GENERATION_STEPS.map((step, i) => {
+          const done    = elapsed >= step.doneAfter
+          const active  = !done && elapsed >= (GENERATION_STEPS[i - 1]?.doneAfter ?? 0)
+          return (
+            <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-500 ${
+              done   ? "bg-emerald-950/30 border border-emerald-900/30" :
+              active ? "bg-blue-950/40 border border-blue-900/30" :
+                       "bg-slate-900/40 border border-slate-800/30"
+            }`}>
+              <div className={`w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center transition-all duration-300 ${
+                done ? "bg-emerald-500/20" : active ? "bg-blue-500/20" : "bg-slate-800"
+              }`}>
+                {done ? (
+                  <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 12 12" fill="currentColor">
+                    <path d="M10.28 2.28a.75.75 0 0 0-1.06 0L4.5 6.99 2.78 5.27a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.06 0l5.25-5.25a.75.75 0 0 0 0-1.05Z" />
+                  </svg>
+                ) : active ? (
+                  <SpinnerIcon className="w-3 h-3 text-blue-400 animate-spin" />
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                )}
+              </div>
+              <span className={`text-[13px] transition-colors duration-300 ${
+                done ? "text-emerald-400" : active ? "text-slate-200" : "text-slate-600"
+              }`}>{step.label}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mb-3">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500 transition-all duration-1000 ease-out"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+      <p className="text-[11px] text-slate-600">Usually takes 15–30 seconds</p>
+    </div>
+  )
+}
+
+function EmptyPackageState({ project, onGenerate }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4">
@@ -821,17 +953,9 @@ function EmptyPackageState({ project, onGenerate, generating }) {
       </p>
       <button
         onClick={onGenerate}
-        disabled={generating}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium disabled:opacity-40 transition-colors"
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
       >
-        {generating ? (
-          <>
-            <SpinnerIcon className="w-3.5 h-3.5 animate-spin" />
-            Generating…
-          </>
-        ) : (
-          "Generate Day 1"
-        )}
+        Generate Day 1
       </button>
     </div>
   )

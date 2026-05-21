@@ -36,7 +36,7 @@ from ..prompts.learning_path_prompt import LEARNING_PATH_PROMPT
 
 logger = logging.getLogger(__name__)
 
-LEARNING_PATH_TTL_HOURS: int = int(os.getenv("LEARNING_PATH_TTL_HOURS", "48"))
+from ..config import LEARNING_PATH_TTL_HOURS
 
 _TIERS = ("beginner", "intermediate", "advanced")
 _STEP_FIELDS = ("concept", "explanation", "why_it_matters", "resources")

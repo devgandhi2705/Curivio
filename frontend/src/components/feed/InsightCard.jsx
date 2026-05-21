@@ -155,7 +155,7 @@ const TYPE_CONFIG = {
 
 function NoteArea({ draft, onChange }) {
   return (
-    <div className="px-4 py-3 border-t border-slate-800/80 bg-slate-800/20">
+    <div className="px-3 py-2 md:px-4 md:py-3 border-t border-slate-800/80 bg-slate-800/20">
       <textarea
         className="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-amber-500/40 focus:bg-slate-800/70 resize-none transition-colors"
         rows={3}
@@ -202,7 +202,7 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
     <div className="border-t border-slate-800/80">
       <button
         onClick={handleToggle}
-        className="w-full flex items-center justify-between px-4 py-2 hover:bg-slate-800/30 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-2 md:px-4 hover:bg-slate-800/30 transition-colors text-left"
       >
         <div className="flex items-center gap-1.5">
           <ChatIcon className="w-3 h-3 text-slate-600" />
@@ -218,7 +218,7 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
       </button>
 
       {open && (
-        <div className="px-4 pb-3 space-y-1.5">
+        <div className="px-3 pb-2 md:px-4 md:pb-3 space-y-1.5">
           {relatedChats === null ? (
             <p className="text-[11px] text-slate-600 animate-pulse">Loading…</p>
           ) : relatedChats.length === 0 ? (

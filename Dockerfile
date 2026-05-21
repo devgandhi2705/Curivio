@@ -58,7 +58,7 @@ RUN mkdir -p /data /tmp/curivio
 # Secrets (GROQ_API_KEY, TAVILY_API_KEY, AUTH_SECRET_KEY) must be set
 # via HF Spaces secrets — never baked into the image.
 
-ENV DB_PATH=/data/memory.db
+ENV DB_PATH=/data/curivio.db
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 

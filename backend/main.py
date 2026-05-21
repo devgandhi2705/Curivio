@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
+from . import config as cfg
+
 import logging
 from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
@@ -77,8 +79,7 @@ from .services.chat_service import (
     clear_history as clear_chat_history,
     list_sessions as list_chat_sessions,
 )
-from .utils.db import init_db
-from .services.scheduler_service import init_scheduler, shutdown_scheduler, get_scheduler_status
+from .utils.db import init_db, DB_PATH
 from .services.digest_storage_service import (
     get_latest_digest,
     get_digest_by_id,
@@ -86,11 +87,11 @@ from .services.digest_storage_service import (
     list_digests,
 )
 
-# --- Rate limits (edit in .env) ---
-GENERATE_FEED_RATE_LIMIT = os.getenv("GENERATE_FEED_RATE_LIMIT", "3/minute")
-SEARCH_RATE_LIMIT        = os.getenv("SEARCH_RATE_LIMIT",        "5/minute")
-FEEDBACK_RATE_LIMIT      = os.getenv("FEEDBACK_RATE_LIMIT",      "10/minute")
-MEMORY_RATE_LIMIT        = os.getenv("MEMORY_RATE_LIMIT",        "30/minute")
+# --- Rate limits (edit in backend/config.py) ---
+GENERATE_FEED_RATE_LIMIT = cfg.GENERATE_FEED_RATE_LIMIT
+SEARCH_RATE_LIMIT        = cfg.SEARCH_RATE_LIMIT
+FEEDBACK_RATE_LIMIT      = cfg.FEEDBACK_RATE_LIMIT
+MEMORY_RATE_LIMIT        = cfg.MEMORY_RATE_LIMIT
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -101,32 +102,40 @@ async def lifespan(_app: FastAPI):
     if _missing:
         logger.warning("[startup] Missing env vars: %s — some features will not work", _missing)
 
-    # Ensure the DB and temp directories exist
+    # Ensure temp and data directories exist
     Path("/tmp/curivio").mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # One-time migration: rename legacy memory.db → curivio.db (same /data dir)
+    _legacy_db = DB_PATH.parent / "memory.db"
+    if _legacy_db.exists() and not DB_PATH.exists() and _legacy_db != DB_PATH:
+        import shutil
+        shutil.copy2(_legacy_db, DB_PATH)
+        logger.info("[db] Migrated existing DB: %s → %s", _legacy_db, DB_PATH)
+
+    # Log DB state before init so issues are visible in HF Spaces logs
+    _db_existed = DB_PATH.exists()
+    _db_size    = DB_PATH.stat().st_size if _db_existed else 0
+    logger.info("[db] path=%s  pre-exists=%s  size=%d bytes", DB_PATH, _db_existed, _db_size)
+    if str(DB_PATH).startswith("/data"):
+        logger.info("[db] Persistent storage confirmed — data will survive container restarts")
+    else:
+        logger.warning("[db] DB is NOT under /data — data will be LOST on rebuild/restart! "
+                       "Set DB_PATH=/data/curivio.db in HF Spaces variables.")
+
     init_db()
 
-    try:
-        init_scheduler()
-    except Exception as _sched_err:
-        logger.error("[startup] Scheduler init failed (non-fatal): %s", _sched_err)
+    _db_size_after = DB_PATH.stat().st_size if DB_PATH.exists() else 0
+    logger.info("[db] init_db() complete — size now %d bytes", _db_size_after)
 
     yield
-
-    try:
-        shutdown_scheduler()
-    except Exception:
-        pass
 
 app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- CORS (edit in .env: CORS_ORIGINS) ---
-CORS_ORIGINS = [
-    o.strip()
-    for o in os.getenv("CORS_ORIGINS", "*").split(",")
-    if o.strip()
-]
+# --- CORS (edit APP_URL / CORS_ORIGINS in backend/config.py or as env vars) ---
+CORS_ORIGINS = [o.strip() for o in cfg.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -311,8 +320,15 @@ def home():
 
 class RegisterRequest(BaseModel):
     email: str
-    name:  str = ""
+    name:  str
     password: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Name is required")
+        return v.strip()
 
 
 class LoginRequest(BaseModel):
@@ -406,8 +422,8 @@ async def auth_verify_password(
 
 @app.post("/auth/forgot-password")
 async def auth_forgot_password(data: ForgotPasswordRequest):
-    create_reset_token(data.email)
-    return {"ok": True}
+    result = create_reset_token(data.email)
+    return {"ok": True, **result}
 
 
 @app.post("/auth/verify-reset-code")
@@ -901,41 +917,9 @@ async def inspect_exploration(request: Request, topic: str):
     )
 
 
-# --- Scheduler models ---
-
-class SchedulerJobInfo(BaseModel):
-    job_id:   str
-    name:     str
-    next_run: str | None
-    running:  bool
-
-class SchedulerRunRecord(BaseModel):
-    status:      str
-    interests:   str | None = None
-    feed_id:     int | None = None
-    error_msg:   str | None = None
-    started_at:  str
-    finished_at: str | None = None
-
-class SchedulerStatusResponse(BaseModel):
-    running:  bool
-    timezone: str
-    jobs:     list[SchedulerJobInfo]
-    last_run: SchedulerRunRecord | None = None
-
-
-# --- Scheduler route ---
-
-@app.get("/scheduler/status", response_model=SchedulerStatusResponse)
-@limiter.limit(MEMORY_RATE_LIMIT)
-async def scheduler_status_endpoint(request: Request):
-    """Return the scheduler's running state, job schedule, and last run outcome."""
-    return SchedulerStatusResponse(**get_scheduler_status())
-
-
 # --- Chat models ---
 
-CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "20/minute")
+CHAT_RATE_LIMIT = cfg.CHAT_RATE_LIMIT
 
 
 class FeedContext(BaseModel):
@@ -1211,8 +1195,8 @@ async def delete_last_turn_endpoint(
 # Learning Projects
 # ─────────────────────────────────────────────────────────────────────────────
 
-PROJECTS_RATE_LIMIT = os.getenv("PROJECTS_RATE_LIMIT", "30/minute")
-INSIGHT_GEN_RATE    = os.getenv("INSIGHT_GEN_RATE",    "5/minute")
+PROJECTS_RATE_LIMIT = cfg.PROJECTS_RATE_LIMIT
+INSIGHT_GEN_RATE    = cfg.INSIGHT_GEN_RATE
 
 
 class CreateProjectRequest(BaseModel):
@@ -1373,7 +1357,7 @@ async def list_insights_endpoint(
 
 
 @app.post("/projects/generate-all")
-@limiter.limit("2/minute")
+@limiter.limit(cfg.TRIGGER_ALL_PROJECTS_RATE)
 async def trigger_all_projects_endpoint(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -1624,7 +1608,7 @@ from .services.bookmark_service import (
     delete_bookmark,
 )
 
-BOOKMARKS_RATE_LIMIT = os.getenv("BOOKMARKS_RATE_LIMIT", "60/minute")
+BOOKMARKS_RATE_LIMIT = cfg.BOOKMARKS_RATE_LIMIT
 
 
 class CreateCollectionRequest(BaseModel):
@@ -1809,13 +1793,6 @@ async def health_check():
         checks["db"] = "ok"
     except Exception as e:
         checks["db"] = f"error: {e}"
-
-    # Scheduler
-    try:
-        sched = get_scheduler_status()
-        checks["scheduler"] = "ok" if sched.get("running") else "not_running"
-    except Exception:
-        checks["scheduler"] = "unknown"
 
     # API keys present (not validated, just present)
     checks["groq"]   = "configured" if os.getenv("GROQ_API_KEY")   else "missing"

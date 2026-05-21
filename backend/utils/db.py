@@ -15,10 +15,10 @@ from pathlib import Path
 from ..database.schema import ALL_TABLES, MIGRATIONS
 
 # DB_PATH is configurable via environment variable for deployment portability.
-# Docker/HF Spaces: set DB_PATH=/data/memory.db for persistent storage.
+# HF Spaces: set DB_PATH=/data/curivio.db — /data is the only persistent volume.
 # Default falls back to the project root data/ directory for local development.
 _db_path_env = os.getenv("DB_PATH", "")
-DB_PATH = Path(_db_path_env) if _db_path_env else Path(__file__).resolve().parents[2] / "data" / "memory.db"
+DB_PATH = Path(_db_path_env) if _db_path_env else Path(__file__).resolve().parents[2] / "data" / "curivio.db"
 
 
 def init_db() -> None:

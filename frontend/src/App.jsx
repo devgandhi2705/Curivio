@@ -5,6 +5,7 @@ import BookmarksPage from './components/bookmarks/BookmarksPage.jsx'
 import DashboardPage from './components/dashboard/DashboardPage.jsx'
 import GlobalSearch from './components/GlobalSearch.jsx'
 import AuthPage from './components/auth/AuthPage.jsx'
+import LandingPage from './components/landing/LandingPage.jsx'
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
 
@@ -99,6 +100,13 @@ function SettingsPanel({ isDark, onToggleTheme }) {
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
   const [profileEmail, setProfileEmail] = useState(user?.email || "")
+
+  // Keep form fields in sync with the auth context user (e.g. after getMe() refreshes)
+  useEffect(() => {
+    if (user?.name  !== undefined) setProfileName(user.name)
+    if (user?.email !== undefined) setProfileEmail(user.email)
+  }, [user?.name, user?.email])
+
   const [profileMsg, setProfileMsg]     = useState("")
   const [profileErr, setProfileErr]     = useState("")
   const [savingProfile, setSavingProfile] = useState(false)
@@ -645,6 +653,7 @@ export default function App() {
 function AppContent() {
   const { isAuthenticated, authChecked, user } = useAuth()
   const [view, setView] = useState('feed')
+  const [showAuth, setShowAuth] = useState(false)
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme')
     if (saved) return saved === 'dark'
@@ -787,17 +796,36 @@ function AppContent() {
   // While verifying the stored token, show a branded loading screen so we never
   // render protected content against an invalid or expired JWT.
   if (!authChecked) return <AuthLoadingScreen />
-  if (!isAuthenticated) return <AuthPage />
+
+  if (!isAuthenticated) {
+    if (showAuth) {
+      return (
+        <div className="relative min-h-screen min-h-dvh bg-slate-950">
+          <button
+            onClick={() => setShowAuth(false)}
+            className="absolute top-4 left-4 z-50 flex items-center gap-1.5 px-3 py-1.5 text-[13px] text-slate-400 hover:text-slate-200 bg-slate-900/80 border border-slate-800 rounded-xl backdrop-blur-sm transition-all"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+              <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
+            </svg>
+            Back
+          </button>
+          <AuthPage />
+        </div>
+      )
+    }
+    return <LandingPage onShowAuth={() => setShowAuth(true)} />
+  }
 
   return (
     <div className={`min-h-screen min-h-dvh bg-slate-950 text-slate-100 ${isDark ? "" : "theme-light"}`}>
 
-      {/* Sticky top nav */}
-      <header className="sticky top-0 z-20 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm">
+      {/* Sticky top nav — hidden on landing view */}
+      <header className={`sticky top-0 z-20 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm ${view === 'landing' ? 'hidden' : ''}`}>
         <div className="px-5 h-13 flex items-center gap-5 relative" style={{ height: '52px' }}>
 
-          {/* Brand — far left, prominent */}
-          <div className="flex items-center gap-2.5 flex-shrink-0">
+          {/* Brand — far left, prominent; click returns to landing on authenticated app */}
+          <button onClick={() => setView('landing')} className="flex items-center gap-2.5 flex-shrink-0 hover:opacity-80 transition-opacity">
             <div className="relative w-8 h-8 flex-shrink-0">
               <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
               <div className="absolute inset-0 rounded-xl flex items-center justify-center">
@@ -816,7 +844,7 @@ function AppContent() {
             <span className="font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent">
               Curivio
             </span>
-          </div>
+          </button>
 
           {/* Divider — desktop only */}
           <div className="hidden md:block w-px h-5 bg-slate-800 flex-shrink-0" />
@@ -920,8 +948,17 @@ function AppContent() {
 
       <main
         className={`md:pb-0 ${view === 'feed' || view === 'dashboard' ? 'px-3 py-4 md:px-5 md:py-6' : ''}`}
-        style={{ paddingBottom: 'var(--mobile-nav-h)' }}
+        style={view === 'landing' ? {} : { paddingBottom: 'var(--mobile-nav-h)' }}
       >
+
+        {/* ── Landing view — authenticated users can visit the about/marketing page ── */}
+        {view === 'landing' && (
+          <LandingPage
+            isAuthenticated
+            onEnterApp={() => setView('feed')}
+            onShowAuth={() => setView('feed')}
+          />
+        )}
 
         {/* ── Chat workspace view ── */}
         {view === 'chat' && (
@@ -968,8 +1005,8 @@ function AppContent() {
         />
       )}
 
-      {/* ── Mobile bottom navigation — md:hidden ── */}
-      <nav className="fixed bottom-0 left-0 right-0 z-20 md:hidden border-t border-slate-800/80 bg-slate-950/95 backdrop-blur-sm">
+      {/* ── Mobile bottom navigation — md:hidden, also hidden on landing ── */}
+      <nav className={`fixed bottom-0 left-0 right-0 z-20 md:hidden border-t border-slate-800/80 bg-slate-950/95 backdrop-blur-sm ${view === 'landing' ? 'hidden' : ''}`}>
         <div className="flex items-center pb-safe">
           {/* Feed */}
           <button

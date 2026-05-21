@@ -64,6 +64,7 @@ export default function AuthPage() {
   const [forgotErr,     setForgotErr]     = useState("")
   const [forgotLoading, setForgotLoading] = useState(false)
   const [codeVerified,  setCodeVerified]  = useState(false)
+  const [forgotInlineCode, setForgotInlineCode] = useState("")
 
   const { login, register, loading, error, clearError } = useAuth()
 
@@ -98,6 +99,7 @@ export default function AuthPage() {
     setForgotErr("")
     setForgotLoading(false)
     setCodeVerified(false)
+    setForgotInlineCode("")
     setMode("forgot")
   }
 
@@ -106,6 +108,7 @@ export default function AuthPage() {
     setForgotStep("send")
     setForgotMsg("")
     setForgotErr("")
+    setForgotInlineCode("")
     setCodeVerified(false)
   }
 
@@ -120,7 +123,12 @@ export default function AuthPage() {
     setCodeVerified(false)
     setForgotCode("")
     try {
-      await forgotPassword(forgotEmail.trim())
+      const res = await forgotPassword(forgotEmail.trim())
+      if (res?.smtp_not_configured && res?.code) {
+        // Email service not set up — show the code directly in the UI
+        setForgotCode(res.code)
+        setForgotInlineCode(res.code)
+      }
       setForgotStep("code")
     } catch (err) {
       setForgotErr(err.message || "Failed to send code.")
@@ -169,6 +177,10 @@ export default function AuthPage() {
     }
 
     if (mode === "signup") {
+      if (!name.trim()) {
+        setLocalError("Please enter your name.")
+        return
+      }
       if (password !== confirm) {
         setLocalError("Passwords do not match.")
         return
@@ -269,6 +281,15 @@ export default function AuthPage() {
                     Code sent to <span className="text-white font-medium">{forgotEmail}</span>
                   </p>
 
+                  {forgotInlineCode && (
+                    <div className="flex items-start gap-2 px-3 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                      <p className="text-xs text-amber-300 leading-relaxed">
+                        Email service not configured. Your reset code is:{" "}
+                        <span className="font-mono font-bold text-amber-200 tracking-widest">{forgotInlineCode}</span>
+                      </p>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">6-digit code</label>
                     <input
@@ -366,6 +387,7 @@ export default function AuthPage() {
                     <label className="block text-sm text-gray-400 mb-1">Name</label>
                     <input
                       type="text"
+                      required
                       value={name}
                       onChange={e => setName(e.target.value)}
                       placeholder="Your name"
@@ -432,6 +454,15 @@ export default function AuthPage() {
                 {displayError && (
                   <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
                     {displayError}
+                    {mode === "signup" && displayError.toLowerCase().includes("already exists") && (
+                      <button
+                        type="button"
+                        onClick={() => switchMode("login")}
+                        className="block mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+                      >
+                        Sign in instead →
+                      </button>
+                    )}
                   </div>
                 )}
 

@@ -7,8 +7,7 @@ from pathlib import Path
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
-MODEL_NAME = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
-BASE_URL   = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+from ..config import GROQ_MODEL as MODEL_NAME, GROQ_BASE_URL as BASE_URL
 
 _client: OpenAI | None = None
 

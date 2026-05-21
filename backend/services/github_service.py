@@ -45,9 +45,11 @@ logger = logging.getLogger(__name__)
 _GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
 _TIMEOUT_SECONDS   = 10
 
-GITHUB_TTL_HOURS = int(os.getenv("GITHUB_REPOS_TTL_HOURS", "24"))
-GITHUB_MAX_REPOS = int(os.getenv("GITHUB_MAX_REPOS",       "5"))
-GITHUB_MIN_STARS = int(os.getenv("GITHUB_MIN_STARS",       "50"))
+from ..config import (
+    GITHUB_REPOS_TTL_HOURS as GITHUB_TTL_HOURS,
+    GITHUB_MAX_REPOS,
+    GITHUB_MIN_STARS,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

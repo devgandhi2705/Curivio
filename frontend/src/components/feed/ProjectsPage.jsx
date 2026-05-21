@@ -33,6 +33,7 @@ import ProjectCard from "./ProjectCard.jsx"
 import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
+import { computeDisplayLabels, computeNextLabel } from "./DailyPackageView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 
 // ── Shared style maps ─────────────────────────────────────────────────────────
@@ -152,6 +153,20 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   const [creating,       setCreating]       = useState(false)
   const [showEdit,       setShowEdit]       = useState(false)
   const [pendingDelete,  setPendingDelete]  = useState(null) // project object awaiting confirmation
+
+  // ── Derived display labels (calendar-based, same system as DailyPackageView) ──
+  // Computed inline so they stay in sync whenever `insights` changes.
+  const _todayStr            = new Date().toLocaleDateString("en-CA")
+  const _activeDisplayLabels = computeDisplayLabels(insights)
+  const _generatedTodayCount = insights.filter(p =>
+    p.generated_at && new Date(p.generated_at).toLocaleDateString("en-CA") === _todayStr
+  ).length
+  // Label of the latest (newest) successfully-fetched package
+  const activeLatestLabel = insights.length > 0
+    ? (_activeDisplayLabels.get(insights[0].id) ?? null)
+    : null
+  // Label that the *next* generation will produce
+  const activeNextLabel = computeNextLabel(insights, _activeDisplayLabels, _generatedTodayCount)
 
   // ── Auto-select project when navigated from global search ─────────────────
   useEffect(() => {
@@ -509,6 +524,7 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
                 onSelect={handleSelect}
                 onDelete={handleDeleteRequest}
                 onEdit={(id) => { setActiveId(id); setShowEdit(true) }}
+                displayLabel={project.project_id === activeId ? activeLatestLabel : undefined}
               />
             ))}
           </div>
@@ -521,9 +537,6 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
         {/* Greeting banner — always visible at the top */}
         <div className="mb-4 px-1">
           <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{getGreeting(userName)}</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {activeProject ? `Day ${activeProject.insight_count ?? 1} · ${activeProject.name}` : "Here's your intelligence workspace"}
-          </p>
         </div>
 
         {/* Mobile project selector strip — mobile only */}
@@ -621,7 +634,11 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate leading-snug">{project.name}</p>
-                          <p className="text-[10px] text-slate-600 mt-0.5">Day {project.insight_count ?? 1}</p>
+                          <p className="text-[10px] text-slate-600 mt-0.5">
+                            {project.project_id === activeId
+                              ? (activeLatestLabel ?? `Day ${project.insight_count ?? 1}`)
+                              : `Day ${project.insight_count ?? 1}`}
+                          </p>
                         </div>
                       </button>
                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
@@ -662,7 +679,7 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
               </div>
             )}
 
-            {loadingContent ? (
+            {loadingContent && !generating ? (
               <WorkspaceSkeleton />
             ) : (
               <ProjectInsightView

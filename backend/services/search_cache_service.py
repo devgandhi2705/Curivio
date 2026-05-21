@@ -22,12 +22,11 @@ purge_expired()                → int   (rows deleted)
 
 import hashlib
 import json
-import os
 from datetime import datetime, timedelta, timezone
 
 from ..utils.db import get_connection
 
-SEARCH_CACHE_TTL_HOURS: int = int(os.getenv("SEARCH_CACHE_TTL_HOURS", "6"))
+from ..config import SEARCH_CACHE_TTL_HOURS
 
 
 # ── Key building ───────────────────────────────────────────────────────────────

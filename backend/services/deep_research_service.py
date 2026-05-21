@@ -39,11 +39,13 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-DEEP_RESEARCH_TTL_HOURS: int  = int(os.getenv("DEEP_RESEARCH_TTL_HOURS",       "48"))
-DEEP_RESEARCH_SEARCH_COUNT    = int(os.getenv("DEEP_RESEARCH_SEARCH_COUNT",    "2"))
-IMPORTANCE_LIKE_THRESHOLD     = int(os.getenv("DEEP_RESEARCH_LIKE_THRESHOLD",  "1"))
-IMPORTANCE_SCORE_THRESHOLD    = float(os.getenv("DEEP_RESEARCH_SCORE_THRESHOLD", "0.5"))
-IMPORTANCE_RECOMMEND_THRESHOLD = int(os.getenv("DEEP_RESEARCH_RECOMMEND_THRESHOLD", "3"))
+from ..config import (
+    DEEP_RESEARCH_TTL_HOURS,
+    DEEP_RESEARCH_SEARCH_COUNT,
+    DEEP_RESEARCH_LIKE_THRESHOLD      as IMPORTANCE_LIKE_THRESHOLD,
+    DEEP_RESEARCH_SCORE_THRESHOLD     as IMPORTANCE_SCORE_THRESHOLD,
+    DEEP_RESEARCH_RECOMMEND_THRESHOLD as IMPORTANCE_RECOMMEND_THRESHOLD,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

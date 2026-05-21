@@ -24,7 +24,7 @@ from ..utils.db import get_connection
 
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me-in-production-use-a-long-random-string")
 ALGORITHM  = "HS256"
-TOKEN_EXPIRE_DAYS = int(os.getenv("AUTH_TOKEN_EXPIRE_DAYS", "30"))
+from ..config import AUTH_TOKEN_EXPIRE_DAYS as TOKEN_EXPIRE_DAYS, SMTP_HOST, SMTP_PORT
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -245,11 +245,17 @@ def check_current_password(user_id: str, password: str) -> bool:
 _RESET_EXPIRY_MINUTES = 15
 
 
-def create_reset_token(email: str) -> None:
-    """Generate a 6-digit code, store it, and email it. Silent on unknown email."""
+def create_reset_token(email: str) -> dict:
+    """
+    Generate a 6-digit code, store it, and email it. Silent on unknown email.
+
+    Returns:
+      {}                                  — email sent (or unknown email, silenced)
+      {"code": "123456", "smtp_not_configured": True}  — SMTP not set up; code shown inline
+    """
     user = get_user_by_email(email.lower().strip())
     if not user:
-        return
+        return {}
 
     code = str(secrets.randbelow(1_000_000)).zfill(6)
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=_RESET_EXPIRY_MINUTES)).isoformat()
@@ -264,12 +270,19 @@ def create_reset_token(email: str) -> None:
             (user["user_id"], code, expires_at),
         )
 
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASSWORD", "")
+    if not smtp_user or not smtp_pass:
+        logger.warning("[auth] SMTP not configured — returning code inline for %s", email)
+        return {"code": code, "smtp_not_configured": True}
+
     _send_code_email(user["email"], user["name"], code)
+    return {}
 
 
 def _send_code_email(email: str, name: str, code: str) -> None:
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_host = SMTP_HOST
+    smtp_port = SMTP_PORT
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASSWORD", "")
     smtp_from = os.getenv("SMTP_FROM", smtp_user)

@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-INDUSTRY_BRIEF_TTL_HOURS: int = int(os.getenv("INDUSTRY_BRIEF_TTL_HOURS", "12"))
+from ..config import INDUSTRY_BRIEF_TTL_HOURS
 
 # ── Industry configuration ────────────────────────────────────────────────────
 
