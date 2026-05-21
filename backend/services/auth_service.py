@@ -299,27 +299,27 @@ def _send_code_email(email: str, name: str, code: str) -> None:
     display_name = name or "there"
     text_body, html_body = _build_email_bodies(display_name, code)
 
-    resend_key = os.getenv("RESEND_API_KEY", "")
-    if not resend_key:
+    brevo_key = os.getenv("BREVO_API_KEY", "")
+    if not brevo_key:
         raise HTTPException(status_code=503, detail="Email service is not configured on this server.")
 
-    resend_from = os.getenv("RESEND_FROM", "Curivio <onboarding@resend.dev>")
+    brevo_from = os.getenv("BREVO_FROM", "studywallahdev@gmail.com")
     resp = httpx.post(
-        "https://api.resend.com/emails",
-        headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+        "https://api.brevo.com/v3/smtp/email",
+        headers={"api-key": brevo_key, "Content-Type": "application/json"},
         json={
-            "from":    resend_from,
-            "to":      [email],
-            "subject": "Your Curivio password reset code",
-            "text":    text_body,
-            "html":    html_body,
+            "sender":      {"name": "Curivio", "email": brevo_from},
+            "to":          [{"email": email}],
+            "subject":     "Your Curivio password reset code",
+            "textContent": text_body,
+            "htmlContent": html_body,
         },
         timeout=15.0,
     )
     if not resp.is_success:
-        logger.error("[auth] Resend error %s: %s", resp.status_code, resp.text)
+        logger.error("[auth] Brevo error %s: %s", resp.status_code, resp.text)
         raise HTTPException(status_code=503, detail="Failed to send reset email. Please try again.")
-    logger.info("[auth] Reset email sent via Resend to %s", email)
+    logger.info("[auth] Reset email sent via Brevo to %s", email)
 
 
 def verify_reset_code(email: str, code: str) -> None:
