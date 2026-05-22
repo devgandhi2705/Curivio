@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useAuth } from "../../contexts/AuthContext"
-import { forgotPassword, verifyResetCode, resetPassword } from "../../api/auth"
+import { forgotPassword, verifyResetCode, resetPassword, sendVerifyEmail } from "../../api/auth"
 
 function EyeIcon({ open }) {
   return open ? (
@@ -53,6 +53,12 @@ export default function AuthPage() {
   const [confirm, setConfirm]       = useState("")
   const [localError, setLocalError] = useState("")
 
+  // signup email verification state
+  const [signupStep,    setSignupStep]    = useState("form")  // "form" | "verify"
+  const [signupCode,    setSignupCode]    = useState("")
+  const [signupErr,     setSignupErr]     = useState("")
+  const [signupLoading, setSignupLoading] = useState(false)
+
   // forgot password state
   const [forgotStep,    setForgotStep]    = useState("send") // "send" | "code"
   const [forgotEmail,   setForgotEmail]   = useState("")
@@ -65,7 +71,7 @@ export default function AuthPage() {
   const [forgotLoading, setForgotLoading] = useState(false)
   const [codeVerified,  setCodeVerified]  = useState(false)
 
-  const { login, register, loading, error, clearError } = useAuth()
+  const { login, register, finalizeSignup, loading, error, clearError } = useAuth()
 
   const inputCls = "w-full bg-[#0f1117] border border-white/10 rounded-lg px-4 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
@@ -84,6 +90,9 @@ export default function AuthPage() {
     setMode(m)
     setLocalError("")
     setEmailError("")
+    setSignupStep("form")
+    setSignupCode("")
+    setSignupErr("")
     clearError()
   }
 
@@ -158,6 +167,67 @@ export default function AuthPage() {
     }
   }
 
+  async function handleSendSignupCode(e) {
+    e.preventDefault()
+    setLocalError("")
+    clearError()
+
+    if (!EMAIL_RE.test(email.trim())) {
+      setEmailError("Enter a valid email address.")
+      return
+    }
+    if (!name.trim()) {
+      setLocalError("Please enter your name.")
+      return
+    }
+    if (password !== confirm) {
+      setLocalError("Passwords do not match.")
+      return
+    }
+    if (password.length < 8) {
+      setLocalError("Password must be at least 8 characters.")
+      return
+    }
+
+    setSignupLoading(true)
+    try {
+      await sendVerifyEmail(email.trim(), name.trim(), password)
+      setSignupStep("verify")
+      setSignupCode("")
+      setSignupErr("")
+    } catch (err) {
+      setLocalError(err.message || "Failed to send verification code. Please try again.")
+    } finally {
+      setSignupLoading(false)
+    }
+  }
+
+  async function handleCompleteSignup() {
+    if (signupCode.length !== 6) { setSignupErr("Enter the 6-digit code from your email."); return }
+    setSignupLoading(true)
+    setSignupErr("")
+    try {
+      await finalizeSignup(email.trim(), signupCode)
+    } catch (err) {
+      setSignupErr(err.message || "Incorrect code. Please try again.")
+    } finally {
+      setSignupLoading(false)
+    }
+  }
+
+  async function handleResendSignupCode() {
+    setSignupLoading(true)
+    setSignupErr("")
+    setSignupCode("")
+    try {
+      await sendVerifyEmail(email.trim(), name.trim(), password)
+    } catch (err) {
+      setSignupErr(err.message || "Failed to resend code. Please try again.")
+    } finally {
+      setSignupLoading(false)
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setLocalError("")
@@ -168,30 +238,10 @@ export default function AuthPage() {
       return
     }
 
-    if (mode === "signup") {
-      if (!name.trim()) {
-        setLocalError("Please enter your name.")
-        return
-      }
-      if (password !== confirm) {
-        setLocalError("Passwords do not match.")
-        return
-      }
-      if (password.length < 8) {
-        setLocalError("Password must be at least 8 characters.")
-        return
-      }
-      try {
-        await register(email.trim(), name.trim(), password)
-      } catch {
-        // error shown via context
-      }
-    } else {
-      try {
-        await login(email.trim(), password)
-      } catch {
-        // error shown via context
-      }
+    try {
+      await login(email.trim(), password)
+    } catch {
+      // error shown via context
     }
   }
 
@@ -364,103 +414,162 @@ export default function AuthPage() {
                 ))}
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {mode === "signup" && (
+              {/* ── Signup email verification step ── */}
+              {mode === "signup" && signupStep === "verify" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <button
+                      type="button"
+                      onClick={() => { setSignupStep("form"); setSignupErr("") }}
+                      className="text-gray-500 hover:text-gray-300 transition-colors"
+                      aria-label="Back to signup form"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                        <path fillRule="evenodd" d="M14 8a.75.75 0 0 1-.75.75H4.56l3.22 3.22a.75.75 0 1 1-1.06 1.06l-4.5-4.5a.75.75 0 0 1 0-1.06l4.5-4.5a.75.75 0 0 1 1.06 1.06L4.56 7.25h8.69A.75.75 0 0 1 14 8Z" clipRule="evenodd"/>
+                      </svg>
+                    </button>
+                    <h2 className="text-sm font-semibold text-white">Verify your email</h2>
+                  </div>
+
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Code sent to <span className="text-white font-medium">{email.trim()}</span>
+                  </p>
+
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Name</label>
+                    <label className="block text-xs text-gray-500 mb-1">6-digit code</label>
                     <input
                       type="text"
-                      required
-                      value={name}
-                      onChange={e => setName(e.target.value)}
-                      placeholder="Your name"
-                      className={inputCls}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength="6"
+                      value={signupCode}
+                      onChange={e => { setSignupCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setSignupErr("") }}
+                      onKeyDown={e => e.key === "Enter" && handleCompleteSignup()}
+                      placeholder="000000"
+                      className={`${inputCls} tracking-widest text-center`}
+                      autoFocus
                     />
                   </div>
-                )}
 
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Email</label>
-                  <input
-                    type="text"
-                    value={email}
-                    onChange={handleEmailChange}
-                    onBlur={handleEmailChange}
-                    placeholder="you@example.com"
-                    required
-                    className={`w-full bg-[#0f1117] border rounded-lg px-4 py-2.5 text-white placeholder-gray-600 focus:outline-none text-sm transition-colors ${
-                      emailError
-                        ? "border-red-500/60 focus:border-red-500"
-                        : "border-white/10 focus:border-blue-500"
-                    }`}
-                  />
-                  {emailError && (
-                    <p className="text-xs text-red-400 mt-1">{emailError}</p>
+                  {signupErr && <p className="text-xs text-red-400">{signupErr}</p>}
+
+                  <button
+                    type="button"
+                    onClick={handleCompleteSignup}
+                    disabled={signupLoading || signupCode.length < 6}
+                    className={`${btnPrimary} mt-1`}
+                  >
+                    {signupLoading ? "Verifying…" : "Verify & Create Account"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResendSignupCode}
+                    disabled={signupLoading}
+                    className="w-full text-center text-xs text-gray-600 hover:text-gray-400 transition-colors pt-1"
+                  >
+                    Resend code
+                  </button>
+                </div>
+
+              ) : (
+                /* ── Login form + Signup form ── */
+                <form onSubmit={mode === "signup" ? handleSendSignupCode : handleSubmit} className="space-y-4">
+                  {mode === "signup" && (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        placeholder="Your name"
+                        className={inputCls}
+                      />
+                    </div>
                   )}
-                </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-sm text-gray-400">Password</label>
-                    {mode === "login" && (
-                      <button
-                        type="button"
-                        onClick={openForgot}
-                        className="text-xs text-gray-500 hover:text-blue-400 transition-colors"
-                      >
-                        Forgot password?
-                      </button>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Email</label>
+                    <input
+                      type="text"
+                      value={email}
+                      onChange={handleEmailChange}
+                      onBlur={handleEmailChange}
+                      placeholder="you@example.com"
+                      required
+                      className={`w-full bg-[#0f1117] border rounded-lg px-4 py-2.5 text-white placeholder-gray-600 focus:outline-none text-sm transition-colors ${
+                        emailError
+                          ? "border-red-500/60 focus:border-red-500"
+                          : "border-white/10 focus:border-blue-500"
+                      }`}
+                    />
+                    {emailError && (
+                      <p className="text-xs text-red-400 mt-1">{emailError}</p>
                     )}
                   </div>
-                  <PasswordInput
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
-                    required
-                  />
-                </div>
 
-                {mode === "signup" && (
                   <div>
-                    <label className="block text-sm text-gray-400 mb-1">Confirm Password</label>
-                    <input
-                      type="password"
-                      value={confirm}
-                      onChange={e => setConfirm(e.target.value)}
-                      placeholder="Repeat password"
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm text-gray-400">Password</label>
+                      {mode === "login" && (
+                        <button
+                          type="button"
+                          onClick={openForgot}
+                          className="text-xs text-gray-500 hover:text-blue-400 transition-colors"
+                        >
+                          Forgot password?
+                        </button>
+                      )}
+                    </div>
+                    <PasswordInput
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
                       required
-                      className={inputCls}
                     />
                   </div>
-                )}
 
-                {displayError && (
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
-                    {displayError}
-                    {mode === "signup" && displayError.toLowerCase().includes("already exists") && (
-                      <button
-                        type="button"
-                        onClick={() => switchMode("login")}
-                        className="block mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
-                      >
-                        Sign in instead →
-                      </button>
-                    )}
-                  </div>
-                )}
+                  {mode === "signup" && (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Confirm Password</label>
+                      <input
+                        type="password"
+                        value={confirm}
+                        onChange={e => setConfirm(e.target.value)}
+                        placeholder="Repeat password"
+                        required
+                        className={inputCls}
+                      />
+                    </div>
+                  )}
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className={`${btnPrimary} mt-2`}
-                >
-                  {loading
-                    ? "Please wait…"
-                    : mode === "login"
-                    ? "Sign In"
-                    : "Create Account"}
-                </button>
-              </form>
+                  {displayError && (
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-red-400 text-sm">
+                      {displayError}
+                      {mode === "signup" && displayError.toLowerCase().includes("already exists") && (
+                        <button
+                          type="button"
+                          onClick={() => switchMode("login")}
+                          className="block mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+                        >
+                          Sign in instead →
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={mode === "signup" ? signupLoading : loading}
+                    className={`${btnPrimary} mt-2`}
+                  >
+                    {mode === "signup"
+                      ? (signupLoading ? "Sending code…" : "Continue")
+                      : (loading ? "Please wait…" : "Sign In")}
+                  </button>
+                </form>
+              )}
             </>
           )}
         </div>

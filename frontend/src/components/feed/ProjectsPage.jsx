@@ -104,6 +104,11 @@ function WorkspaceSkeleton() {
   )
 }
 
+// ── Generation state: persists across tab switches (component remounts) ──────
+// Stores the projectId of any in-progress generation so the UI can be restored
+// if the user leaves and immediately returns to the feed tab.
+const _generatingNow = new Set()
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 function getGreeting(name) {
@@ -224,6 +229,26 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
+  // Restore generating UI if user switched tabs mid-generation and just came back
+  useEffect(() => {
+    if (!activeId) return
+    if (_generatingNow.has(activeId)) setGenerating(true)
+  }, [activeId])
+
+  // When generation finishes (possibly in a background/old instance), refresh insights
+  useEffect(() => {
+    if (!activeId) return
+    function onDone(e) {
+      if (e.detail.projectId !== activeId) return
+      setGenerating(false)
+      listProjectInsights(activeId)
+        .then(data => setInsights(data))
+        .catch(() => {})
+    }
+    window.addEventListener('feed-generation-done', onDone)
+    return () => window.removeEventListener('feed-generation-done', onDone)
+  }, [activeId])
+
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleSelect = useCallback((project) => {
@@ -234,17 +259,19 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
 
   const handleGenerate = useCallback(async () => {
     if (!activeId || generating) return
+    _generatingNow.add(activeId)
     setGenerating(true)
     setGenError(null)
+    const pid = activeId
     try {
-      const pkg = await generateProjectInsight(activeId)
+      const pkg = await generateProjectInsight(pid)
       setInsights(prev => {
         if (prev.some(p => p.id === pkg.id)) return prev
         return [pkg, ...prev]
       })
       setProjects(prev =>
         prev.map(p =>
-          p.project_id === activeId
+          p.project_id === pid
             ? {
                 ...p,
                 insight_count:         pkg.day_number,
@@ -256,41 +283,47 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
       )
       setReadKeys(new Set())
       setRelatedChatsMap(new Map())
-      getProgression(activeId)
-        .then(prog => setProgressions(prev => ({ ...prev, [activeId]: prog })))
+      getProgression(pid)
+        .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
         .catch(() => {})
     } catch (e) {
       setGenError(e.message || "Generation failed. Please try again.")
     } finally {
+      _generatingNow.delete(pid)
       setGenerating(false)
+      window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
     }
   }, [activeId, generating])
 
   const handleRegenerate = useCallback(async (insightId) => {
     if (!activeId || generating) return
+    _generatingNow.add(activeId)
     setGenerating(true)
     setGenError(null)
+    const pid = activeId
     try {
-      await deleteProjectInsight(activeId, insightId)
+      await deleteProjectInsight(pid, insightId)
       setInsights(prev => prev.filter(p => p.id !== insightId))
-      const pkg = await generateProjectInsight(activeId)
+      const pkg = await generateProjectInsight(pid)
       setInsights(prev => [pkg, ...prev])
       setProjects(prev =>
         prev.map(p =>
-          p.project_id === activeId
+          p.project_id === pid
             ? { ...p, last_package_headline: pkg.package_headline ?? p.last_package_headline }
             : p
         )
       )
       setReadKeys(new Set())
       setRelatedChatsMap(new Map())
-      getProgression(activeId)
-        .then(prog => setProgressions(prev => ({ ...prev, [activeId]: prog })))
+      getProgression(pid)
+        .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
         .catch(() => {})
     } catch (e) {
       setGenError(e.message || "Regeneration failed. Please try again.")
     } finally {
+      _generatingNow.delete(pid)
       setGenerating(false)
+      window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
     }
   }, [activeId, generating])
 
@@ -314,13 +347,15 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
       setActiveId(project.project_id)
       setShowOnboarding(false)
       // Auto-generate Day 1 so the user lands on content, not an empty state
+      _generatingNow.add(project.project_id)
       setGenerating(true)
+      const pid = project.project_id
       try {
-        const pkg = await generateProjectInsight(project.project_id)
+        const pkg = await generateProjectInsight(pid)
         setInsights([pkg])
         setProjects(prev =>
           prev.map(p =>
-            p.project_id === project.project_id
+            p.project_id === pid
               ? { ...p, insight_count: pkg.day_number, last_insight_at: pkg.generated_at, last_package_headline: pkg.package_headline ?? p.last_package_headline }
               : p
           )
@@ -329,7 +364,9 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
       } catch (e) {
         setGenError(e.message || "Generation failed. Please try again.")
       } finally {
+        _generatingNow.delete(pid)
         setGenerating(false)
+        window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
       }
     } catch (_) {}
     finally { setCreating(false) }

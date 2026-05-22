@@ -125,6 +125,16 @@ export async function verifyCurrentPassword(password) {
   })
 }
 
+export async function sendVerifyEmail(email, name, password) {
+  return authPost("/auth/send-verify-email", { email, name, password })
+}
+
+export async function completeSignup(email, code) {
+  const data = await authPost("/auth/complete-signup", { email, code })
+  storeSession(data.access_token, data.user)
+  return data.user
+}
+
 export async function forgotPassword(email) {
   return authPost("/auth/forgot-password", { email })
 }

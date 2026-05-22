@@ -294,23 +294,19 @@ def _build_email_bodies(display_name: str, code: str) -> tuple[str, str]:
     return text, html
 
 
-def _send_code_email(email: str, name: str, code: str) -> None:
+def _brevo_send(to_email: str, subject: str, text_body: str, html_body: str) -> None:
     import httpx
-    display_name = name or "there"
-    text_body, html_body = _build_email_bodies(display_name, code)
-
     brevo_key = os.getenv("BREVO_API_KEY", "")
     if not brevo_key:
         raise HTTPException(status_code=503, detail="Email service is not configured on this server.")
-
     brevo_from = os.getenv("BREVO_FROM", "studywallahdev@gmail.com")
     resp = httpx.post(
         "https://api.brevo.com/v3/smtp/email",
         headers={"api-key": brevo_key, "Content-Type": "application/json"},
         json={
             "sender":      {"name": "Curivio", "email": brevo_from},
-            "to":          [{"email": email}],
-            "subject":     "Your Curivio password reset code",
+            "to":          [{"email": to_email}],
+            "subject":     subject,
             "textContent": text_body,
             "htmlContent": html_body,
         },
@@ -318,8 +314,14 @@ def _send_code_email(email: str, name: str, code: str) -> None:
     )
     if not resp.is_success:
         logger.error("[auth] Brevo error %s: %s", resp.status_code, resp.text)
-        raise HTTPException(status_code=503, detail="Failed to send reset email. Please try again.")
-    logger.info("[auth] Reset email sent via Brevo to %s", email)
+        raise HTTPException(status_code=503, detail="Failed to send email. Please try again.")
+    logger.info("[auth] Email sent via Brevo to %s", to_email)
+
+
+def _send_code_email(email: str, name: str, code: str) -> None:
+    display_name = name or "there"
+    text_body, html_body = _build_email_bodies(display_name, code)
+    _brevo_send(email, "Your Curivio password reset code", text_body, html_body)
 
 
 def verify_reset_code(email: str, code: str) -> None:
@@ -374,6 +376,108 @@ def consume_reset_token(email: str, code: str, new_password: str) -> None:
             "UPDATE password_reset_tokens SET used = 1 WHERE id = ?",
             (latest["id"],),
         )
+
+
+# ── Email verification for signup ────────────────────────────────────────────
+
+_SIGNUP_EXPIRY_MINUTES = 15
+
+# in-memory store: email_lower → {name, hashed_pw, code, expires_at}
+_pending_signups: dict = {}
+
+
+def _build_signup_email_bodies(display_name: str, code: str) -> tuple[str, str]:
+    text = (
+        f"Hi {display_name},\n\n"
+        f"Your Curivio email verification code is:\n\n  {code}\n\n"
+        f"This code expires in {_SIGNUP_EXPIRY_MINUTES} minutes. "
+        "If you did not create a Curivio account, you can safely ignore this email.\n\n"
+        "— The Curivio Team"
+    )
+    html = f"""<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;max-width:480px;margin:0 auto;padding:40px 24px;background:#fff">
+<div style="text-align:center;margin-bottom:28px">
+  <div style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;background:#2563eb;margin-bottom:12px">
+    <span style="color:#fff;font-size:24px">&#128161;</span>
+  </div>
+  <h1 style="font-size:22px;font-weight:800;color:#0f172a;margin:0">Curivio</h1>
+</div>
+<h2 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:6px">Verify your email</h2>
+<p style="color:#475569;margin-bottom:24px">Hi {display_name}, use the code below to verify your email address and complete your Curivio account setup.</p>
+<div style="text-align:center;margin:32px 0">
+  <div style="display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:20px 36px">
+    <span style="font-size:36px;font-weight:800;letter-spacing:0.25em;color:#1e3a5f;font-family:monospace">{code}</span>
+  </div>
+  <p style="color:#64748b;font-size:12px;margin-top:10px">Expires in {_SIGNUP_EXPIRY_MINUTES} minutes</p>
+</div>
+<p style="color:#94a3b8;font-size:12px;text-align:center">If you did not create a Curivio account, you can safely ignore this email.</p>
+<hr style="border:none;border-top:1px solid #f1f5f9;margin:28px 0">
+<p style="color:#cbd5e1;font-size:11px;text-align:center">— The Curivio Team</p>
+</body></html>"""
+    return text, html
+
+
+def create_signup_verification(email: str, name: str, password: str) -> None:
+    """Validate signup data, store a pending record, and email a 6-digit code."""
+    email = email.lower().strip()
+
+    if get_user_by_email(email):
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    if len(password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+
+    # Clean up any expired entries for this email
+    _pending_signups.pop(email, None)
+
+    code       = str(secrets.randbelow(1_000_000)).zfill(6)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_SIGNUP_EXPIRY_MINUTES)
+
+    _pending_signups[email] = {
+        "name":       name.strip(),
+        "hashed_pw":  hash_password(password),
+        "code":       code,
+        "expires_at": expires_at,
+    }
+
+    display_name = name.strip() or "there"
+    text_body, html_body = _build_signup_email_bodies(display_name, code)
+    _brevo_send(email, "Verify your Curivio email", text_body, html_body)
+    logger.info("[auth] Signup verification email sent to %s", email)
+
+
+def complete_signup_verification(email: str, code: str) -> dict:
+    """Verify the 6-digit code and create the user account. Returns token + user."""
+    email = email.lower().strip()
+    pending = _pending_signups.get(email)
+
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending signup for this email. Please start over.")
+
+    if pending["code"] != code.strip():
+        raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
+
+    if datetime.now(timezone.utc) > pending["expires_at"]:
+        _pending_signups.pop(email, None)
+        raise HTTPException(status_code=400, detail="This code has expired. Please request a new one.")
+
+    # Check again in case email was registered by someone else during the window
+    if get_user_by_email(email):
+        _pending_signups.pop(email, None)
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    user_id = str(uuid.uuid4())
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO users (user_id, email, name, hashed_pw) VALUES (?, ?, ?, ?)",
+            (user_id, email, pending["name"], pending["hashed_pw"]),
+        )
+
+    _pending_signups.pop(email, None)
+
+    token     = create_access_token(user_id)
+    user_dict = {"user_id": user_id, "email": email, "name": pending["name"], "created_at": None}
+    logger.info("[auth] New user registered after email verification: %s", email)
+    return {"access_token": token, "token_type": "bearer", "user": user_dict}
 
 
 # ── FastAPI dependency ────────────────────────────────────────────────────────

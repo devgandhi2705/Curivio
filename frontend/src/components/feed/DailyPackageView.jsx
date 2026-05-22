@@ -635,6 +635,33 @@ export default function DailyPackageView({
   // Set<articleKey> — synced from localStorage queue
   const [queuedKeys, setQueuedKeys] = useState(() => new Set(getQueue().map(i => i.articleKey)))
 
+  // Keep a ref so popstate handler always sees the latest packages without re-registering
+  const packagesRef = useRef(packages)
+  useEffect(() => { packagesRef.current = packages }, [packages])
+
+  // Restore selected day from browser history once packages are available (handles view-switch back)
+  const historyRestoredRef = useRef(false)
+  useEffect(() => {
+    if (historyRestoredRef.current || !packages.length) return
+    historyRestoredRef.current = true
+    const day = window.history.state?.feedDay
+    if (!day) return
+    const pkg = packages.find(p => p.id === day)
+    if (pkg) setSelectedId(pkg.id)
+  }, [packages])
+
+  // Within-feed: restore correct day when browser back/forward fires while already on feed
+  useEffect(() => {
+    function onPopState(e) {
+      const day = e.state?.feedDay
+      if (!day) return
+      const pkg = packagesRef.current.find(p => p.id === day)
+      if (pkg) setSelectedId(pkg.id)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
   const selected = packages.find(p => p.id === selectedId) ?? packages[0] ?? null
   const latestId = packages[0]?.id ?? null
   const isLatest = selected?.id === latestId
@@ -771,7 +798,7 @@ export default function DailyPackageView({
                 return (
                   <button
                     key={pkg.id}
-                    onClick={() => setSelectedId(pkg.id)}
+                    onClick={() => { setSelectedId(pkg.id); window.history.pushState({ view: 'feed', feedDay: pkg.id }, '') }}
                     className={`flex-shrink-0 snap-start flex flex-col items-center px-3 py-2 gap-1.5 border-b-2 transition-all duration-150 group ${
                       isSel ? 'border-blue-500' : 'border-slate-800/60 hover:border-slate-700'
                     }`}
@@ -831,7 +858,7 @@ export default function DailyPackageView({
                 pkg={pkg}
                 dayLabel={displayLabels.get(pkg.id)}
                 isSelected={pkg.id === selected?.id}
-                onClick={() => setSelectedId(pkg.id)}
+                onClick={() => { setSelectedId(pkg.id); window.history.pushState({ view: 'feed', feedDay: pkg.id }, '') }}
               />
             ))}
           </div>

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import {
   login as apiLogin,
   register as apiRegister,
+  completeSignup as apiCompleteSignup,
   updateProfile as apiUpdateProfile,
   changePassword as apiChangePassword,
   deleteAccount as apiDeleteAccount,
@@ -114,6 +115,12 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  const finalizeSignup = useCallback(async (email, code) => {
+    const u = await apiCompleteSignup(email, code)
+    setUser(u)
+    return u
+  }, [])
+
   const logout = useCallback(() => {
     clearSession()
     setUser(null)
@@ -148,6 +155,7 @@ export function AuthProvider({ children }) {
       clearError,
       login,
       register,
+      finalizeSignup,
       logout,
       updateProfile,
       changePassword,

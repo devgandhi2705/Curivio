@@ -71,6 +71,8 @@ from .services.auth_service import (
     create_reset_token,
     verify_reset_code,
     consume_reset_token,
+    create_signup_verification,
+    complete_signup_verification,
 )
 from .services.chat_service import (
     chat as chat_with_ai,
@@ -369,6 +371,24 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class SendVerifyEmailRequest(BaseModel):
+    email:    str
+    name:     str
+    password: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Name is required")
+        return v.strip()
+
+
+class CompleteSignupRequest(BaseModel):
+    email: str
+    code:  str
+
+
 @app.post("/auth/register", status_code=201)
 async def auth_register(data: RegisterRequest):
     return register_user(data.email, data.name, data.password)
@@ -436,6 +456,17 @@ async def auth_verify_reset_code(data: VerifyResetCodeRequest):
 async def auth_reset_password(data: ResetPasswordRequest):
     consume_reset_token(data.email, data.code, data.new_password)
     return {"ok": True}
+
+
+@app.post("/auth/send-verify-email")
+async def auth_send_verify_email(data: SendVerifyEmailRequest):
+    create_signup_verification(data.email, data.name, data.password)
+    return {"ok": True}
+
+
+@app.post("/auth/complete-signup", status_code=201)
+async def auth_complete_signup(data: CompleteSignupRequest):
+    return complete_signup_verification(data.email, data.code)
 
 
 @app.post("/generate-feed", response_model=IntelligenceFeedResponse)

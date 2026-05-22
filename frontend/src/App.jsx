@@ -99,13 +99,11 @@ function SettingsPanel({ isDark, onToggleTheme }) {
   // section: "main" | "profile" | "password" | "forgot" | "danger"
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
-  const [profileEmail, setProfileEmail] = useState(user?.email || "")
 
-  // Keep form fields in sync with the auth context user (e.g. after getMe() refreshes)
+  // Keep name in sync with the auth context user (e.g. after getMe() refreshes)
   useEffect(() => {
-    if (user?.name  !== undefined) setProfileName(user.name)
-    if (user?.email !== undefined) setProfileEmail(user.email)
-  }, [user?.name, user?.email])
+    if (user?.name !== undefined) setProfileName(user.name)
+  }, [user?.name])
 
   const [profileMsg, setProfileMsg]     = useState("")
   const [profileErr, setProfileErr]     = useState("")
@@ -137,7 +135,7 @@ function SettingsPanel({ isDark, onToggleTheme }) {
     e.preventDefault()
     setSavingProfile(true); setProfileMsg(""); setProfileErr("")
     try {
-      await updateProfile(profileName.trim(), profileEmail.trim())
+      await updateProfile(profileName.trim(), null)
       setProfileMsg("Profile updated.")
     } catch (err) {
       setProfileErr(err.message)
@@ -325,7 +323,12 @@ function SettingsPanel({ isDark, onToggleTheme }) {
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">Email</label>
-            <input type="email" value={profileEmail} onChange={e => setProfileEmail(e.target.value)} className={inputCls} required />
+            <input
+              type="email"
+              value={user?.email || ""}
+              disabled
+              className="w-full bg-[#0a0c12] border border-white/5 rounded-lg px-4 py-2.5 text-slate-600 text-sm cursor-not-allowed select-none"
+            />
           </div>
           {profileErr && <p className="text-xs text-red-400">{profileErr}</p>}
           {profileMsg && <p className="text-xs text-green-400">{profileMsg}</p>}
@@ -717,6 +720,35 @@ function AppContent() {
     return () => document.removeEventListener("mousedown", onDown)
   }, [showSettings])
 
+  // Seed the initial history entry so the browser has something to go back to
+  useEffect(() => {
+    window.history.replaceState({ view: 'feed' }, '')
+  }, [])
+
+  // Restore app state when user presses browser back / forward
+  useEffect(() => {
+    function onPopState(e) {
+      if (!e.state) return
+      const s = e.state
+      if (s.view) setView(s.view)
+      if ('feedContext'        in s) setFeedContext(s.feedContext)
+      if ('targetSessionId'   in s) setTargetSessionId(s.targetSessionId)
+      if ('targetSessionTitle' in s) setTargetSessionTitle(s.targetSessionTitle)
+      if ('targetProjectId'   in s) setTargetProjectId(s.targetProjectId)
+      if ('targetInsightId'   in s) setTargetInsightId(s.targetInsightId)
+      if ('targetArticleKey'  in s) setTargetArticleKey(s.targetArticleKey)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  // Use this instead of setView() for all user-initiated navigation so the
+  // browser history stack stays in sync and back/forward work correctly.
+  const navigateTo = useCallback((newView, extra = {}) => {
+    window.history.pushState({ view: newView, ...extra }, '')
+    setView(newView)
+  }, [])
+
   function toggleTheme() {
     const root = document.documentElement
     root.classList.add('theme-transitioning')
@@ -743,11 +775,11 @@ function AppContent() {
   const handleOpenChat = useCallback((sessionId, title = null) => {
     setTargetSessionId(sessionId)
     setTargetSessionTitle(title)
-    setView('chat')
-  }, [])
+    navigateTo('chat', { targetSessionId: sessionId, targetSessionTitle: title })
+  }, [navigateTo])
 
   const handleOpenInChat = useCallback((card, action, projectMeta = {}) => {
-    setFeedContext({
+    const ctx = {
       action,
       // explain_simply auto-triggers an immediate AI response on arrival
       auto_trigger:     action === "explain_simply",
@@ -763,17 +795,21 @@ function AppContent() {
       category:         card.category    || null,
       content_type:     card.content_type || "news",
       domain:           projectMeta.domain || "default",
-    })
-    setView('chat')
-  }, [])
+    }
+    setFeedContext(ctx)
+    navigateTo('chat', { feedContext: ctx })
+  }, [navigateTo])
 
   const handleOpenQueueItem = useCallback((item) => {
-    setTargetProjectId(item.projectId || null)
-    setTargetInsightId(item.insightId || null)
-    setTargetArticleKey(item.articleKey || null)
+    const pid  = item.projectId  || null
+    const iid  = item.insightId  || null
+    const akey = item.articleKey || null
+    setTargetProjectId(pid)
+    setTargetInsightId(iid)
+    setTargetArticleKey(akey)
     setShowQueue(false)
-    setView('feed')
-  }, [])
+    navigateTo('feed', { targetProjectId: pid, targetInsightId: iid, targetArticleKey: akey })
+  }, [navigateTo])
 
   const handleClearQueueTarget = useCallback(() => {
     setTargetInsightId(null)
@@ -782,14 +818,14 @@ function AppContent() {
 
   const handleSearchNavigate = useCallback(({ type, projectId, sessionId, sessionTitle }) => {
     if (type === 'feed') {
-      setView('feed')
       if (projectId) setTargetProjectId(projectId)
+      navigateTo('feed', { targetProjectId: projectId || null })
     } else if (type === 'bookmarks') {
-      setView('bookmarks')
+      navigateTo('bookmarks')
     } else if (type === 'chat') {
       handleOpenChat(sessionId, sessionTitle)
     }
-  }, [handleOpenChat])
+  }, [navigateTo, handleOpenChat])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -825,7 +861,7 @@ function AppContent() {
         <div className="px-5 h-13 flex items-center gap-5 relative" style={{ height: '52px' }}>
 
           {/* Brand — far left, prominent; click returns to landing on authenticated app */}
-          <button onClick={() => setView('landing')} className="flex items-center gap-2.5 flex-shrink-0 hover:opacity-80 transition-opacity">
+          <button onClick={() => navigateTo('landing')} className="flex items-center gap-2.5 flex-shrink-0 hover:opacity-80 transition-opacity">
             <div className="relative w-8 h-8 flex-shrink-0">
               <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
               <div className="absolute inset-0 rounded-xl flex items-center justify-center">
@@ -854,7 +890,7 @@ function AppContent() {
             {NAV_TABS.map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setView(tab.id)}
+                onClick={() => navigateTo(tab.id)}
                 className={`relative px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                   view === tab.id
                     ? 'bg-slate-800 text-slate-100'
@@ -960,8 +996,8 @@ function AppContent() {
           />
         )}
 
-        {/* ── Chat workspace view ── */}
-        {view === 'chat' && (
+        {/* ── Chat workspace — always mounted so in-progress AI streams survive tab switches ── */}
+        <div className={view !== 'chat' ? 'hidden' : ''}>
           <ChatWorkspace
             feedContext={feedContext}
             onClearFeedContext={() => setFeedContext(null)}
@@ -970,10 +1006,11 @@ function AppContent() {
             onClearTargetSession={() => { setTargetSessionId(null); setTargetSessionTitle(null) }}
             userName={user?.name}
           />
-        )}
+        </div>
 
         {/* ── Feed view — project-based learning streams ── */}
-        {view === 'feed' && (
+        {/* Always mounted so generating state survives tab switches */}
+        <div className={view !== 'feed' ? 'hidden' : ''}>
           <ProjectsPage
             onOpenInChat={handleOpenInChat}
             onOpenChat={handleOpenChat}
@@ -984,7 +1021,7 @@ function AppContent() {
             userId={user?.user_id}
             userName={user?.name}
           />
-        )}
+        </div>
 
         {/* ── Dashboard view ── */}
         {view === 'dashboard' && (
@@ -1010,7 +1047,7 @@ function AppContent() {
         <div className="flex items-center pb-safe">
           {/* Feed */}
           <button
-            onClick={() => setView('feed')}
+            onClick={() => navigateTo('feed')}
             className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'feed' ? 'text-blue-400' : 'text-slate-600'}`}
           >
             <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
@@ -1022,7 +1059,7 @@ function AppContent() {
           </button>
           {/* Chat */}
           <button
-            onClick={() => setView('chat')}
+            onClick={() => navigateTo('chat')}
             className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'chat' ? 'text-blue-400' : 'text-slate-600'}`}
           >
             <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
@@ -1033,7 +1070,7 @@ function AppContent() {
           </button>
           {/* Dashboard */}
           <button
-            onClick={() => setView('dashboard')}
+            onClick={() => navigateTo('dashboard')}
             className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'dashboard' ? 'text-blue-400' : 'text-slate-600'}`}
           >
             <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
@@ -1043,7 +1080,7 @@ function AppContent() {
           </button>
           {/* Bookmarks */}
           <button
-            onClick={() => setView('bookmarks')}
+            onClick={() => navigateTo('bookmarks')}
             className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'bookmarks' ? 'text-blue-400' : 'text-slate-600'}`}
           >
             <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">

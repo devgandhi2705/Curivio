@@ -22,9 +22,22 @@ function apiMessageToLocal(msg) {
   }
 }
 
-function getGreeting(name) {
-  const h = new Date().getHours()
-  const time = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : h < 21 ? "Good evening" : "Burning the midnight oil"
+const GREETINGS = {
+  morning:   ["Rise and shine", "Good morning", "Ready to go", "Fresh start", "Early bird mode", "Seize the day", "Morning momentum", "Let's get it"],
+  afternoon: ["Good afternoon", "Crushing it today", "Midday momentum", "Keep the energy up", "Still going strong", "On a roll", "Power hour", "Afternoon check-in"],
+  evening:   ["Good evening", "Golden hour", "Evening vibes", "Day well spent", "Winding down strong", "Finishing strong", "Almost there", "End of day power"],
+  night:     ["Burning the midnight oil", "Night owl mode", "Owning the night", "The night is yours", "After-hours mode", "Midnight grind", "Stars are out", "Big ideas after dark"],
+}
+
+function getGreeting(name, rand) {
+  const now  = new Date()
+  const mins = now.getHours() * 60 + now.getMinutes()
+  let pool
+  if      (mins >= 240 && mins < 660)  pool = GREETINGS.morning
+  else if (mins >= 660 && mins < 960)  pool = GREETINGS.afternoon
+  else if (mins >= 960 && mins < 1170) pool = GREETINGS.evening
+  else                                  pool = GREETINGS.night
+  const time      = pool[Math.floor(rand * pool.length)]
   const firstName = (name || "").split(" ")[0]
   return firstName ? `${time}, ${firstName}` : time
 }
@@ -53,9 +66,45 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
 
   const bottomRef      = useRef(null)
   const streamAbortRef = useRef(null)
+  const greetingRandRef = useRef(Math.random())  // stable random per session for varied greeting
+  // Keep a ref so popstate handler always sees the latest sessionId without re-registering
+  const sessionIdRef = useRef(sessionId)
+  useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
 
   // Cancel any in-flight stream on unmount
   useEffect(() => () => { streamAbortRef.current?.() }, [])
+
+  // Restore chat session from browser history (handles navigating back to chat view)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const sid = window.history.state?.chatSession
+    if (!sid) return
+    setSessionId(sid)
+    setMessages([])
+    setIsLoading(true)
+    fetchHistory(sid, 50)
+      .then(h => { setMessages(h.map(apiMessageToLocal)); setIsLoading(false) })
+      .catch(() => { setError("Could not load session history."); setIsLoading(false) })
+  }, [])
+
+  // Within-chat: restore previous session when browser back/forward fires while on chat
+  useEffect(() => {
+    function onPopState(e) {
+      const sid = e.state?.chatSession
+      if (!sid || sid === sessionIdRef.current) return
+      setSessionId(sid)
+      setMessages([])
+      setError(null)
+      setConversationMode(null)
+      setChatMode("normal")
+      setIsLoading(true)
+      fetchHistory(sid, 50)
+        .then(h => { setMessages(h.map(apiMessageToLocal)); setIsLoading(false) })
+        .catch(() => { setError("Could not load session history."); setIsLoading(false) })
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   // Load sessions list on mount
   useEffect(() => {
@@ -244,6 +293,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
 
   const handleSelectSession = useCallback(async (session) => {
     if (session.session_id === sessionId) return
+    window.history.pushState({ view: 'chat', chatSession: session.session_id }, '')
     setSessionId(session.session_id)
     setMessages([])
     setError(null)
@@ -369,7 +419,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         <div className="flex-1 overflow-y-auto py-3 px-3 sm:py-5 sm:px-4">
           <div className="max-w-4xl mx-auto space-y-4">
             {messages.length === 0 && !isLoading && (
-              <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} />
+              <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} />
             )}
 
             {messages.map((msg, idx) => {
@@ -589,7 +639,7 @@ const SUGGESTIONS = [
   { text: "Learning roadmap for machine learning",            hint: "instant answer" },
 ]
 
-function EmptyState({ onSend, sessions = [], activeFeedCtx, userName }) {
+function EmptyState({ onSend, sessions = [], activeFeedCtx, userName, greetingRand = 0.5 }) {
   const recentSessions = sessions.slice(0, 3)
 
   if (activeFeedCtx) {
@@ -639,7 +689,7 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, userName }) {
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
       </div>
-      <h2 className="text-base font-semibold text-slate-200 mb-0.5">{getGreeting(userName)}</h2>
+      <h2 className="text-base font-semibold text-slate-200 mb-0.5">{getGreeting(userName, greetingRand)}</h2>
       <p className="text-xs text-slate-500 mb-2">Your research companion is ready</p>
       <p className="text-xs text-slate-500 mb-3 max-w-xs leading-relaxed">
         Use <span className="text-blue-400/80">Web Search</span> for live data or{" "}
