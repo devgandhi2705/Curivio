@@ -32,7 +32,7 @@ function LightbulbIcon() {
 
 function ArrowUpIcon() {
   return (
-    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"
+    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 19V5M5 12l7-7 7 7" />
     </svg>
@@ -66,12 +66,12 @@ function ModeToggle({ active, onClick, disabled, icon, label, variant }) {
       disabled={disabled}
       title={label}
       className={`
-        inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+        inline-flex items-center gap-1 px-2 py-0.5 rounded-md
         text-xs font-medium border transition-colors select-none
         disabled:opacity-40 disabled:cursor-not-allowed
         ${active
           ? activeColors
-          : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/40"
+          : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/[0.05]"
         }
       `}
     >
@@ -177,17 +177,18 @@ export default function ChatInput({
         : null
 
   return (
-    <div className="px-3 sm:px-4 pb-2 pb-safe pt-1">
+    <div className="px-3 sm:px-4 pb-3 pb-safe pt-1">
       <div className="max-w-3xl mx-auto relative">
 
         {/* Unified input card */}
         <div
           className={`
-            flex flex-col rounded-2xl border bg-slate-900
-            shadow-lg shadow-black/20 transition-all duration-150
+            flex flex-col rounded-2xl border
+            bg-white/[0.04] shadow-sm shadow-black/20
+            transition-all duration-150
             ${disabled
-              ? "border-slate-800/80"
-              : "border-slate-700/60 focus-within:border-slate-600/80"
+              ? "border-white/[0.06]"
+              : "border-white/[0.07] focus-within:border-white/[0.12]"
             }
           `}
         >
@@ -201,15 +202,15 @@ export default function ChatInput({
             onInput={handleInput}
             className="
               w-full resize-none bg-transparent
-              px-4 pt-4 pb-2 text-sm text-slate-100
-              placeholder-slate-600 focus:outline-none
+              px-4 pt-3 pb-2 text-sm text-slate-100
+              placeholder-slate-500 focus:outline-none
               disabled:cursor-not-allowed leading-relaxed
             "
-            style={{ minHeight: "58px" }}
+            style={{ minHeight: "44px" }}
           />
 
           {/* Footer row */}
-          <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1 gap-2">
+          <div className="flex items-center justify-between px-2.5 pb-2 pt-0 gap-2">
 
             {/* Left: mode toggles — Explain Simply · Web Search · Deep Research */}
             <div className="flex items-center gap-0.5">
@@ -259,13 +260,13 @@ export default function ChatInput({
                 title="Send (Enter)"
                 aria-label="Send message"
                 className={`
-                  w-8 h-8 rounded-xl flex items-center justify-center
+                  w-7 h-7 rounded-lg flex items-center justify-center
                   transition-all duration-150 flex-shrink-0
                   ${disabled
-                    ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                    ? "bg-white/[0.05] text-slate-500 cursor-not-allowed"
                     : hasText
-                      ? "bg-slate-100 text-slate-900 hover:bg-white shadow-sm hover:shadow-md active:scale-95"
-                      : "bg-slate-800/60 text-slate-600 cursor-default"
+                      ? "bg-slate-100 text-slate-900 hover:bg-white shadow-sm active:scale-95"
+                      : "bg-white/[0.05] text-slate-600 cursor-default"
                   }
                 `}
               >
@@ -276,11 +277,11 @@ export default function ChatInput({
         </div>
 
         {/* Mode hint + keyboard hint */}
-        <div className="flex items-center justify-between mt-1.5 px-1">
-          <span className={`text-[11px] transition-opacity duration-200 select-none ${modeHint ? "text-slate-600 opacity-100" : "opacity-0"}`}>
+        <div className="flex items-center justify-between mt-1 px-1">
+          <span className={`text-[10px] transition-opacity duration-200 select-none ${modeHint ? "text-slate-600 opacity-100" : "opacity-0"}`}>
             {modeHint ?? "placeholder"}
           </span>
-          <span className="text-[11px] text-slate-700 select-none hidden sm:block">
+          <span className="text-[10px] text-slate-700 select-none hidden sm:block">
             ↵ send · ⇧↵ newline
           </span>
         </div>

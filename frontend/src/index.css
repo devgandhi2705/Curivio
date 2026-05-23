@@ -57,13 +57,13 @@ body {
    BASE TYPOGRAPHY
    ============================================================ */
 
-/* ── Workspace height vars (mobile: subtract bottom nav, desktop: 0) ── */
+/* ── Workspace height vars (sidebar layout: no bottom nav, mobile top bar = 48px) ── */
 :root {
-  --mobile-nav-h: calc(56px + env(safe-area-inset-bottom, 0px));
-  --header-h: 52px;
+  --mobile-nav-h: 0px;   /* no bottom navigation */
+  --header-h: 48px;      /* mobile top bar height */
 }
 @media (min-width: 768px) {
-  :root { --mobile-nav-h: 0px; }
+  :root { --header-h: 0px; }  /* no top header on desktop (sidebar layout) */
 }
 
 /* ── Tonal scale design tokens ────────────────────────────── */

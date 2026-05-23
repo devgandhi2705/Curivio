@@ -23,7 +23,7 @@ function LogoMark({ size = 8 }) {
   )
 }
 
-// ─── Icon set ─────────────────────────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
 function ChevronRight({ className }) {
   return (
@@ -65,36 +65,102 @@ function FeatureTrackIcon({ className }) {
   )
 }
 
+// ─── Feature-specific visuals ─────────────────────────────────────────────────
+
+function FeedVisual() {
+  return (
+    <div className="relative h-12 mb-4">
+      <div className="absolute bottom-0 left-0 right-4 h-7 rounded-lg bg-slate-800/35 border border-slate-700/20" />
+      <div className="absolute bottom-1.5 left-0 right-2 h-7 rounded-lg bg-slate-800/55 border border-slate-700/30" />
+      <div className="absolute bottom-3 left-0 right-0 h-7 rounded-lg bg-slate-900 border border-blue-500/20 flex items-center px-2.5">
+        <span className="w-1 h-1 rounded-full bg-blue-400 mr-1.5 animate-pulse flex-shrink-0" />
+        <span className="text-[9px] text-slate-400">AI Agents · Day 8</span>
+        <span className="ml-auto text-[9px] font-medium text-blue-400">New</span>
+      </div>
+    </div>
+  )
+}
+
+function ExplainVisual() {
+  return (
+    <div className="mb-4 rounded-xl bg-amber-500/6 border border-amber-500/12 px-3 py-2.5">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <div className="w-3 h-3 rounded bg-gradient-to-br from-blue-500 to-violet-600 flex-shrink-0" />
+        <span className="text-[9px] text-slate-500 font-medium">Curivio</span>
+        <span className="ml-auto text-[8px] text-amber-400/80">Explain Simply</span>
+      </div>
+      <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-2">
+        "Think of it like giving a capable assistant a single goal — and walking away while it handles everything."
+      </p>
+    </div>
+  )
+}
+
+function ResearchVisual() {
+  return (
+    <div className="relative h-12 mb-4 flex items-center justify-center">
+      <div className="relative z-10 px-2.5 py-1 rounded-lg bg-violet-500/12 border border-violet-500/20">
+        <span className="text-[9px] font-medium text-violet-400/80">AI Agents</span>
+      </div>
+      <span className="absolute top-0.5 left-2 text-[8px] text-slate-600 bg-slate-800/70 px-1.5 py-0.5 rounded border border-slate-700/30">Memory</span>
+      <span className="absolute bottom-0.5 right-2 text-[8px] text-slate-600 bg-slate-800/70 px-1.5 py-0.5 rounded border border-slate-700/30">Tool Use</span>
+      <span className="absolute top-0 right-10 text-[8px] text-slate-600 bg-slate-800/70 px-1.5 py-0.5 rounded border border-slate-700/30">LLMs</span>
+    </div>
+  )
+}
+
+function TrackVisual() {
+  const activity = [1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  return (
+    <div className="mb-4 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm leading-none">🔥</span>
+        <span className="text-[11px] font-semibold text-slate-300">12 day streak</span>
+        <span className="ml-auto text-[9px] text-slate-600">best 21d</span>
+      </div>
+      <div className="flex gap-0.5">
+        {activity.map((v, i) => (
+          <div key={i} className={`h-2 flex-1 rounded-sm ${v ? 'bg-emerald-500/55' : 'bg-slate-800'}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Feature data ─────────────────────────────────────────────────────────────
 
 const FEATURES = [
   {
     Icon: FeatureFeedIcon,
+    Visual: FeedVisual,
     accent: "bg-blue-500/10 border border-blue-500/20",
     iconColor: "text-blue-400",
-    title: "Daily Learning Feed",
-    description: "Fresh curated cards every day from live web sources, tuned to your topics, difficulty, and pace. News, deep dives, and curiosity picks.",
+    title: "Curated daily, just for you",
+    description: "Wake up to 3–5 fresh cards on topics you're learning — news, deep dives, and counterintuitive curiosity picks. Updated every day from the live web.",
   },
   {
     Icon: FeatureExplainIcon,
+    Visual: ExplainVisual,
     accent: "bg-amber-500/10 border border-amber-500/20",
     iconColor: "text-amber-400",
-    title: "Explain Simply",
-    description: "Tap any card to get a plain-English breakdown with analogies. Complex ideas become approachable in seconds.",
+    title: "Complexity, made approachable",
+    description: "Tap any card and get a plain-English breakdown with analogies. You never have to feel lost — complex ideas become clear in seconds.",
   },
   {
     Icon: FeatureResearchIcon,
+    Visual: ResearchVisual,
     accent: "bg-violet-500/10 border border-violet-500/20",
     iconColor: "text-violet-400",
-    title: "Go Deep When Ready",
-    description: "Switch into deep research mode, explore connected topics, generate learning roadmaps, and ask anything conversationally.",
+    title: "Depth, when you want it",
+    description: "When a headline isn't enough, research mode surfaces connected topics, multiple perspectives, and real sources — conversationally.",
   },
   {
     Icon: FeatureTrackIcon,
+    Visual: TrackVisual,
     accent: "bg-emerald-500/10 border border-emerald-500/20",
     iconColor: "text-emerald-400",
-    title: "Track Your Growth",
-    description: "Streaks, bookmarks, notes, and a personal dashboard show how your knowledge compounds over weeks and months.",
+    title: "Growth you can see",
+    description: "Streaks keep you consistent. Bookmarks and notes turn daily sessions into a personal knowledge base that compounds week by week.",
   },
 ]
 
@@ -103,8 +169,8 @@ const FEATURES = [
 const JOURNEY = [
   {
     num: "01",
-    title: "Choose your topic",
-    desc: "Add anything you want to learn — AI, finance, biology, history. Set your difficulty and preferred sources.",
+    title: "Pick what you're curious about",
+    desc: "Add any topic — AI, finance, biology, history. Set your difficulty and preferred sources. Done in under a minute.",
     color: "text-blue-400",
     border: "border-blue-500/20",
     bg: "bg-blue-500/5",
@@ -112,7 +178,7 @@ const JOURNEY = [
   {
     num: "02",
     title: "Receive your daily feed",
-    desc: "Every day, 3–5 curated cards arrive: news, educational deep dives, and curiosity picks from live web knowledge.",
+    desc: "Every day, 3–5 fresh cards arrive: news, educational deep dives, and curiosity picks from live web knowledge.",
     color: "text-indigo-400",
     border: "border-indigo-500/20",
     bg: "bg-indigo-500/5",
@@ -120,7 +186,7 @@ const JOURNEY = [
   {
     num: "03",
     title: "Learn at your own depth",
-    desc: "Skim summaries, ask about anything, get simple explanations, or dive into deep research — all from the same card.",
+    desc: "Skim summaries, ask anything, get plain-English explanations, or dive into deep research — all from the same card.",
     color: "text-violet-400",
     border: "border-violet-500/20",
     bg: "bg-violet-500/5",
@@ -128,14 +194,14 @@ const JOURNEY = [
   {
     num: "04",
     title: "Knowledge compounds",
-    desc: "Saved insights, notes, and tracked reading history turn scattered sessions into a coherent, growing knowledge base.",
+    desc: "Bookmarks, notes, and tracked reading history turn scattered sessions into a coherent, growing knowledge base.",
     color: "text-emerald-400",
     border: "border-emerald-500/20",
     bg: "bg-emerald-500/5",
   },
 ]
 
-// ─── Mock UI showcase ─────────────────────────────────────────────────────────
+// ─── Hero showcase mocks ──────────────────────────────────────────────────────
 
 function FeedCardMock() {
   return (
@@ -158,11 +224,11 @@ function FeedCardMock() {
       </div>
       <div className="border-t border-slate-800/80 px-4 py-2 flex items-center gap-1.5">
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-400 bg-slate-800/50 border border-slate-700/40">
-          <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Z"/></svg>
+          <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Z" /></svg>
           Ask About
         </span>
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20">
-          <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a6 6 0 0 1 3.479 10.907A1 1 0 0 1 13 13H7a1 1 0 0 1-.479-1.093A6 6 0 0 1 10 1ZM8.5 15.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3Zm.25 2a.25.25 0 0 0 0 .5h2.5a.25.25 0 0 0 0-.5h-2.5Z"/></svg>
+          <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a6 6 0 0 1 3.479 10.907A1 1 0 0 1 13 13H7a1 1 0 0 1-.479-1.093A6 6 0 0 1 10 1ZM8.5 15.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3Zm.25 2a.25.25 0 0 0 0 .5h2.5a.25.25 0 0 0 0-.5h-2.5Z" /></svg>
           Explain Simply
         </span>
       </div>
@@ -179,7 +245,7 @@ function ExplainMock() {
         <span className="ml-auto text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20">Explain Simply</span>
       </div>
       <p className="text-[11px] text-slate-300 leading-relaxed">
-        Think of it like hiring a very capable assistant who can use a computer on their own. You give them a goal — "build me a login page" — and they figure out every step, write the code, test it, and hand it back. No hand-holding needed.
+        Think of it like hiring a capable assistant who can use a computer on their own. You give them a goal — "build me a login page" — and they figure out every step, write the code, test it, and hand it back.
       </p>
     </div>
   )
@@ -189,8 +255,8 @@ function ProgressMock() {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/90 px-4 py-3 shadow-2xl shadow-black/40">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-semibold text-slate-400">AI Agents · Day 3 progress</span>
-        <span className="text-[11px] text-emerald-400 font-medium">4 / 5 read</span>
+        <span className="text-[11px] font-semibold text-slate-400">AI Agents · Week 1</span>
+        <span className="text-[11px] text-emerald-400 font-medium">🔥 7 day streak</span>
       </div>
       <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
         <div className="h-full w-4/5 bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full" />
@@ -199,7 +265,7 @@ function ProgressMock() {
         {['OpenAI', 'AutoGPT', 'LangChain', 'Workflows'].map((t, i) => (
           <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-600 border border-slate-700/40">{t}</span>
         ))}
-        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Day 4 →</span>
+        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Day 8 →</span>
       </div>
     </div>
   )
@@ -208,11 +274,17 @@ function ProgressMock() {
 function HeroShowcase() {
   return (
     <div className="relative">
-      <div className="absolute -inset-6 bg-gradient-to-br from-blue-500/8 to-violet-500/8 rounded-3xl blur-2xl pointer-events-none" />
+      <div className="absolute -inset-8 bg-gradient-to-br from-blue-500/6 to-violet-500/6 rounded-3xl blur-2xl pointer-events-none" />
       <div className="relative space-y-3">
-        <FeedCardMock />
-        <ExplainMock />
-        <ProgressMock />
+        <div className="hover:-translate-y-0.5 transition-transform duration-200">
+          <FeedCardMock />
+        </div>
+        <div className="hover:-translate-y-0.5 transition-transform duration-200 ml-2">
+          <ExplainMock />
+        </div>
+        <div className="hover:-translate-y-0.5 transition-transform duration-200">
+          <ProgressMock />
+        </div>
       </div>
     </div>
   )
@@ -220,11 +292,12 @@ function HeroShowcase() {
 
 // ─── Feature card ─────────────────────────────────────────────────────────────
 
-function FeatureCard({ Icon, accent, iconColor, title, description }) {
+function FeatureCard({ Icon, Visual, accent, iconColor, title, description }) {
   return (
-    <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 hover:border-slate-700/60 transition-colors group">
-      <div className={`w-10 h-10 rounded-xl ${accent} flex items-center justify-center mb-4`}>
-        <Icon className={`w-5 h-5 ${iconColor}`} />
+    <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 hover:border-slate-700/60 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
+      <Visual />
+      <div className={`w-8 h-8 rounded-lg ${accent} flex items-center justify-center mb-3`}>
+        <Icon className={`w-4 h-4 ${iconColor}`} />
       </div>
       <h3 className="text-sm font-semibold text-slate-100 mb-2">{title}</h3>
       <p className="text-[13px] text-slate-400 leading-relaxed">{description}</p>
@@ -232,10 +305,30 @@ function FeatureCard({ Icon, accent, iconColor, title, description }) {
   )
 }
 
+// ─── Progression card ─────────────────────────────────────────────────────────
+
+function ProgressionCard({ dayLabel, badge, badgeColor, title, summary, border, accentBar }) {
+  return (
+    <div className={`rounded-2xl border bg-slate-900/60 overflow-hidden hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/25 transition-all duration-200 ${border}`}>
+      <div className={`h-[2px] ${accentBar}`} />
+      <div className="px-4 py-4">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{dayLabel}</span>
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold ${badgeColor}`}>
+            {badge}
+          </span>
+        </div>
+        <h4 className="text-[13px] font-semibold text-slate-200 leading-snug mb-2">{title}</h4>
+        <p className="text-[11px] text-slate-500 leading-relaxed">{summary}</p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Landing page ─────────────────────────────────────────────────────────────
 
 export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnterApp }) {
-  const howRef  = useRef(null)
+  const howRef = useRef(null)
 
   function scrollToHow() {
     howRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -247,24 +340,22 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 overflow-x-hidden">
 
-      {/* Ambient glow — fixed so it doesn't scroll */}
+      {/* Ambient glow */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
         <div className="absolute -top-40 -left-40 w-[480px] h-[480px] bg-blue-600/6 rounded-full blur-3xl" />
         <div className="absolute top-1/3 -right-40 w-96 h-96 bg-violet-600/6 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 left-1/3 w-72 h-72 bg-indigo-600/5 rounded-full blur-3xl" />
       </div>
 
-      {/* ── Nav ─────────────────────────────────────────────────────────────── */}
+      {/* ── Nav ──────────────────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-50 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-
           <div className="flex items-center gap-2.5">
             <LogoMark size={8} />
             <span className="font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent">
               Curivio
             </span>
           </div>
-
           <div className="flex items-center gap-3">
             <button
               onClick={scrollToHow}
@@ -274,42 +365,41 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
             </button>
             <button
               onClick={ctaAction}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-[13px] font-medium text-white bg-blue-600 hover:bg-blue-500 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-[13px] font-medium text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors"
             >
               {ctaLabel}
               {isAuthenticated && <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>
-
         </div>
       </nav>
 
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
-      <section className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-10 md:pt-24 md:pb-20">
-        <div className="grid md:grid-cols-2 gap-10 md:gap-12 items-center">
+      <section className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-12 pb-10 md:pt-20 md:pb-16">
+        <div className="grid md:grid-cols-2 gap-10 md:gap-16 items-center">
 
           {/* Left: copy */}
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 mb-5">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 mb-6">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              <span className="text-[12px] font-medium text-blue-400">Personalized AI learning system</span>
+              <span className="text-[12px] font-medium text-blue-400">Daily learning for curious minds</span>
             </div>
 
-            <h1 className="text-[36px] sm:text-5xl font-bold text-slate-100 leading-[1.15] tracking-tight mb-5">
-              Learn deeply,{" "}
+            <h1 className="text-4xl sm:text-5xl md:text-[54px] font-bold text-slate-100 leading-[1.1] tracking-tight mb-5">
+              Stay curious,{" "}
               <span className="bg-gradient-to-r from-blue-400 via-indigo-400 to-violet-400 bg-clip-text text-transparent">
-                one topic at a time.
+                every day.
               </span>
             </h1>
 
             <p className="text-[15px] sm:text-base text-slate-400 leading-relaxed mb-8 max-w-md">
-              Curivio curates a fresh daily feed from live web sources on topics you choose — then lets you explore, ask questions, and go as deep as you want.
+              Curivio builds your understanding of topics you care about through short daily reading sessions — powered by live web knowledge, personalized to how you learn.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={ctaAction}
-                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-colors shadow-lg shadow-blue-600/25"
+                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 hover:shadow-blue-600/35"
               >
                 {ctaLabel}
                 <ChevronRight className="w-4 h-4" />
@@ -327,7 +417,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
             )}
           </div>
 
-          {/* Right: mock UI */}
+          {/* Right: showcase */}
           <div className="w-full max-w-sm mx-auto md:max-w-none">
             <HeroShowcase />
           </div>
@@ -340,8 +430,8 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="flex flex-wrap justify-center gap-x-8 gap-y-2">
             {[
-              "AI-curated from live web sources",
-              "Works on any device",
+              "Sourced from the live web, daily",
+              "Works beautifully on mobile",
               "Private by design",
               "Evolves with your interests",
             ].map(item => (
@@ -362,15 +452,74 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
 
           <div className="text-center mb-12">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-blue-400 mb-3">How Curivio works</p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 mb-4">Learning that fits your life</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 mb-4">Four things that make it different</h2>
             <p className="text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
-              Not a course. Not a chatbot. A personal learning system that evolves with your interests and compounds knowledge over time.
+              Not a course. Not a generic chatbot. A personal learning system that evolves with your curiosity and compounds your knowledge over time.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {FEATURES.map(f => <FeatureCard key={f.title} {...f} />)}
           </div>
+
+        </div>
+      </section>
+
+      {/* ── Knowledge Progression ────────────────────────────────────────────── */}
+      <section className="relative border-t border-slate-800/60 py-16 md:py-24">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+
+          <div className="text-center mb-10">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-indigo-400 mb-3">Knowledge that compounds</p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 mb-4">
+              Watch understanding build over time
+            </h2>
+            <p className="text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
+              Curivio doesn't dump everything at once. It layers your knowledge day by day — from foundational concepts to real-world nuance.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 mb-6">
+            <span className="text-[11px] text-slate-600 uppercase tracking-widest font-semibold">Topic</span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span className="text-[12px] font-medium text-blue-400">Quantum Computing</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <ProgressionCard
+              dayLabel="Day 1"
+              badge="Foundations"
+              badgeColor="text-slate-400 bg-slate-800/80 border border-slate-700/40"
+              title="Qubits and Superposition: The Basics"
+              summary="A qubit isn't just 0 or 1 — it can be both simultaneously until measured. This property is what makes quantum fundamentally different from classical computing."
+              border="border-slate-800"
+              accentBar="bg-slate-800"
+            />
+            <ProgressionCard
+              dayLabel="Day 7"
+              badge="Connections"
+              badgeColor="text-blue-400 bg-blue-500/10 border border-blue-500/20"
+              title="How Quantum Gates Actually Work"
+              summary="Once you understand superposition, quantum gates reveal how computers manipulate probability before collapsing state. Entanglement lets you coordinate operations at a distance."
+              border="border-blue-500/20"
+              accentBar="bg-gradient-to-r from-blue-500 to-indigo-500"
+            />
+            <ProgressionCard
+              dayLabel="Day 21"
+              badge="Real-world lens"
+              badgeColor="text-violet-400 bg-violet-500/10 border border-violet-500/20"
+              title="Why Quantum Advantage Is Still Years Away"
+              summary="Error correction remains the core unsolved challenge. Today's noisy qubits can't sustain computation long enough for practical problems — but the trajectory is becoming clear."
+              border="border-violet-500/20"
+              accentBar="bg-gradient-to-r from-violet-500 to-indigo-500"
+            />
+          </div>
+
+          <p className="text-center text-[12px] text-slate-600 mt-6">
+            One topic. Three weeks. Genuine understanding — not just familiarity.
+          </p>
 
         </div>
       </section>
@@ -389,14 +538,12 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
             </p>
           </div>
 
-          {/* Journey steps */}
           <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {JOURNEY.map((step, i) => (
               <div
                 key={step.num}
-                className={`relative p-5 rounded-2xl border ${step.border} ${step.bg}`}
+                className={`relative p-5 rounded-2xl border ${step.border} ${step.bg} hover:-translate-y-0.5 hover:shadow-md transition-all duration-200`}
               >
-                {/* Connector line — desktop only */}
                 {i < JOURNEY.length - 1 && (
                   <div className="hidden lg:block absolute top-8 -right-2 w-4 h-px bg-slate-800 z-10" />
                 )}
@@ -410,15 +557,15 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
           </div>
 
           {/* Example flow */}
-          <div className="mt-10 p-5 rounded-2xl border border-slate-800 bg-slate-900/40">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-4">Example: learning AI Agents</p>
+          <div className="mt-10 p-5 rounded-2xl border border-slate-800/80 bg-slate-900/30">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-4">Example: learning AI Agents</p>
             <div className="flex flex-wrap items-center gap-2 text-[12px]">
               {[
-                { label: "Topic added", val: "\"AI Agents\"", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
-                { label: "Day 1 feed", val: "5 curated cards", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20" },
-                { label: "Asked", val: "Explain Simply", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
-                { label: "Saved", val: "3 bookmarks", color: "text-violet-400 bg-violet-500/10 border-violet-500/20" },
-                { label: "Week 4", val: "Fluent in topic", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+                { label: "Topic added", val: "\"AI Agents\"",    color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+                { label: "Day 1 feed",  val: "5 curated cards", color: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20" },
+                { label: "Asked",       val: "Explain Simply",  color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+                { label: "Saved",       val: "3 bookmarks",     color: "text-violet-400 bg-violet-500/10 border-violet-500/20" },
+                { label: "Week 4",      val: "Fluent in topic", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
               ].map((item, i, arr) => (
                 <div key={item.label} className="flex items-center gap-2">
                   <div className={`flex flex-col items-start px-3 py-2 rounded-xl border ${item.color}`}>
@@ -442,18 +589,18 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
         <div className="relative max-w-2xl mx-auto px-4 sm:px-6 text-center">
 
           <h2 className="text-3xl sm:text-4xl font-bold text-slate-100 mb-4 leading-tight tracking-tight">
-            Small daily sessions.{" "}
+            Small consistent curiosity{" "}
             <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-              Compounding knowledge.
+              becomes real expertise.
             </span>
           </h2>
           <p className="text-slate-400 text-[15px] mb-8 leading-relaxed max-w-md mx-auto">
-            Fifteen minutes a day compounds into real expertise over months. Curivio keeps the streak effortless.
+            Fifteen minutes a day. That's all it takes for Curivio to compound your understanding of anything you care about — week after week.
           </p>
 
           <button
             onClick={ctaAction}
-            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl text-[15px] font-semibold text-white bg-blue-600 hover:bg-blue-500 transition-colors shadow-xl shadow-blue-600/25"
+            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl text-[15px] font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors shadow-xl shadow-blue-600/25 hover:shadow-blue-600/40"
           >
             {ctaLabel}
             <ChevronRight className="w-4 h-4" />
@@ -467,21 +614,35 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </section>
 
       {/* ── Footer ───────────────────────────────────────────────────────────── */}
-      <footer className="border-t border-slate-800/60 py-8">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <LogoMark size={6} />
-            <span className="text-sm font-semibold text-slate-400">Curivio</span>
+      <footer className="border-t border-slate-800/60 py-10">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-6">
+
+            <div className="flex flex-col items-center sm:items-start gap-2">
+              <div className="flex items-center gap-2">
+                <LogoMark size={6} />
+                <span className="text-sm font-semibold text-slate-300">Curivio</span>
+              </div>
+              <p className="text-[12px] text-slate-600 text-center sm:text-left max-w-[200px]">
+                Built for people who never stop being curious.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-6 text-[12px]">
+              <button onClick={scrollToHow} className="text-slate-600 hover:text-slate-400 transition-colors">
+                How it works
+              </button>
+              <button onClick={ctaAction} className="text-slate-600 hover:text-slate-400 transition-colors">
+                {isAuthenticated ? "Open app" : "Get started"}
+              </button>
+            </div>
+
           </div>
-          <p className="text-[12px] text-slate-600">
-            AI-curated learning for the curious mind.
-          </p>
-          <button
-            onClick={ctaAction}
-            className="text-[12px] text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            {ctaLabel} →
-          </button>
+          <div className="mt-8 pt-6 border-t border-slate-800/40 text-center">
+            <p className="text-[11px] text-slate-700">
+              © {new Date().getFullYear()} Curivio. AI-curated learning for the curious mind.
+            </p>
+          </div>
         </div>
       </footer>
 

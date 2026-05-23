@@ -7,6 +7,7 @@ import GlobalSearch from './components/GlobalSearch.jsx'
 import AuthPage from './components/auth/AuthPage.jsx'
 import LandingPage from './components/landing/LandingPage.jsx'
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
+import { SidebarSubsectionProvider, useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
 
 function AuthLoadingScreen() {
@@ -38,7 +39,7 @@ function AuthLoadingScreen() {
   )
 }
 
-// ── Nav panel components ──────────────────────────────────────────────────────
+// ── Icons ─────────────────────────────────────────────────────────────────────
 
 function ClockIcon({ className }) {
   return (
@@ -55,6 +56,58 @@ function GearIcon({ className }) {
     </svg>
   )
 }
+
+function FeedIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v11.75A2.75 2.75 0 0 0 16.75 18h-12A2.75 2.75 0 0 1 2 15.25V3.5Zm3.75 7a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5Zm0 3a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5ZM5 5.75A.75.75 0 0 1 5.75 5h4.5a.75.75 0 0 1 .75.75v2.5a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 8.25v-2.5Z" clipRule="evenodd" />
+      <path d="M16.5 6.5h-1v8.75a1.25 1.25 0 1 0 2.5 0V8A1.5 1.5 0 0 0 16.5 6.5Z" />
+    </svg>
+  )
+}
+
+function ChatIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902.848.138 1.705.248 2.57.33v3.194c0 .202.12.38.303.456a.5.5 0 0 0 .542-.116L10.03 14h.543A21.26 21.26 0 0 0 13 13.74V7.074c0-1.413-.993-2.672-2.43-2.903A21.212 21.212 0 0 0 10 4c0-.34-.003-.678-.01-1H10ZM8.5 7a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0Z" clipRule="evenodd" />
+      <path d="M15.5 2c-.126 0-.25.003-.374.008A5.026 5.026 0 0 1 17 5.426v5.148c0 2.034-1.517 3.73-3.512 3.97L12 14.596V16a.5.5 0 0 0 .831.373l1.604-1.473A21.27 21.27 0 0 0 16 14.83c1.437-.232 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.671-2.43-2.902A21.258 21.258 0 0 0 15.5 2.5V2Z" />
+    </svg>
+  )
+}
+
+function DashboardIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M1 2.75A.75.75 0 0 1 1.75 2h16.5a.75.75 0 0 1 0 1.5H18v8.75A2.75 2.75 0 0 1 15.25 15h-1.072l.798 3.06a.75.75 0 0 1-1.452.38L13.41 18H6.59l-.114.44a.75.75 0 0 1-1.452-.38L5.823 15H4.75A2.75 2.75 0 0 1 2 12.25V3.5h-.25A.75.75 0 0 1 1 2.75ZM7.373 15l-.391 1.5h6.037l-.392-1.5H7.373ZM13 7.5a.75.75 0 0 0-1.5 0v4.25a.75.75 0 0 0 1.5 0V7.5ZM9.25 9a.75.75 0 0 1 .75.75v2a.75.75 0 0 1-1.5 0v-2A.75.75 0 0 1 9.25 9ZM7 10.75a.75.75 0 0 0-1.5 0v.5a.75.75 0 0 0 1.5 0v-.5Z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
+function BookmarksIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 2c-1.716 0-3.408.106-5.07.31C3.806 2.45 3 3.414 3 4.517V17.25a.75.75 0 0 0 1.075.676L10 15.082l5.925 2.844A.75.75 0 0 0 17 17.25V4.517c0-1.103-.806-2.068-1.93-2.207A41.403 41.403 0 0 0 10 2Z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
+const ZONE3_PLACEHOLDER = {
+  feed:      'Filter projects…',
+  chat:      'Filter conversations…',
+  bookmarks: 'Filter collections…',
+  readlater: 'Filter queue…',
+  dashboard: 'Search…',
+}
+
+const NAV_ITEMS = [
+  { id: 'feed',      label: 'Feed',      icon: FeedIcon      },
+  { id: 'chat',      label: 'Chat',      icon: ChatIcon      },
+  { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
+  { id: 'bookmarks', label: 'Bookmarks', icon: BookmarksIcon },
+  { id: 'readlater', label: 'Read Later', icon: ClockIcon    },
+]
+
+// ── PwField ───────────────────────────────────────────────────────────────────
 
 function PwField({ value, onChange, placeholder, required, className, onKeyDown, autoComplete }) {
   const [show, setShow] = useState(false)
@@ -93,14 +146,14 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
   )
 }
 
-function SettingsPanel({ isDark, onToggleTheme }) {
+// ── SettingsPanel ─────────────────────────────────────────────────────────────
+
+function SettingsPanel({ isDark, onToggleTheme, positionClass = "absolute right-0 top-full mt-2 z-40" }) {
   const { user, logout, updateProfile, changePassword, deleteAccount, verifyPassword } = useAuth()
 
-  // section: "main" | "profile" | "password" | "forgot" | "danger"
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
 
-  // Keep name in sync with the auth context user (e.g. after getMe() refreshes)
   useEffect(() => {
     if (user?.name !== undefined) setProfileName(user.name)
   }, [user?.name])
@@ -109,7 +162,6 @@ function SettingsPanel({ isDark, onToggleTheme }) {
   const [profileErr, setProfileErr]     = useState("")
   const [savingProfile, setSavingProfile] = useState(false)
 
-  // password: 2-step — "verify" then "change"
   const [pwStep, setPwStep]   = useState("verify")
   const [curPw, setCurPw]     = useState("")
   const [newPw, setNewPw]     = useState("")
@@ -117,7 +169,6 @@ function SettingsPanel({ isDark, onToggleTheme }) {
   const [pwErr, setPwErr]     = useState("")
   const [savingPw, setSavingPw] = useState(false)
 
-  // forgot password — steps: "send" | "code" (verify) | "newpw" (set new password)
   const [forgotStep,     setForgotStep]     = useState("send")
   const [forgotCode,     setForgotCode]     = useState("")
   const [forgotNewPw,    setForgotNewPw]    = useState("")
@@ -240,8 +291,7 @@ function SettingsPanel({ isDark, onToggleTheme }) {
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
 
   return (
-    <div className="absolute right-0 top-full mt-2 z-40 w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
-      {/* Header */}
+    <div className={`${positionClass} w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         {section !== "main" && (
           <button onClick={back} className="text-slate-500 hover:text-slate-300 transition-colors mr-1">
@@ -269,10 +319,7 @@ function SettingsPanel({ isDark, onToggleTheme }) {
 
           <div className="px-4 py-3 border-b border-slate-800/60">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2.5">Appearance</p>
-            <button
-              onClick={onToggleTheme}
-              className="w-full flex items-center justify-between group"
-            >
+            <button onClick={onToggleTheme} className="w-full flex items-center justify-between group">
               <div className="flex items-center gap-2.5">
                 <span className="text-base leading-none">{isDark ? "🌙" : "☀️"}</span>
                 <div className="text-left">
@@ -323,12 +370,8 @@ function SettingsPanel({ isDark, onToggleTheme }) {
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">Email</label>
-            <input
-              type="email"
-              value={user?.email || ""}
-              disabled
-              className="w-full bg-[#0a0c12] border border-white/5 rounded-lg px-4 py-2.5 text-slate-600 text-sm cursor-not-allowed select-none"
-            />
+            <input type="email" value={user?.email || ""} disabled
+              className="w-full bg-[#0a0c12] border border-white/5 rounded-lg px-4 py-2.5 text-slate-600 text-sm cursor-not-allowed select-none" />
           </div>
           {profileErr && <p className="text-xs text-red-400">{profileErr}</p>}
           {profileMsg && <p className="text-xs text-green-400">{profileMsg}</p>}
@@ -345,23 +388,16 @@ function SettingsPanel({ isDark, onToggleTheme }) {
               <p className="text-xs text-slate-500">Enter your current password to continue.</p>
               <div>
                 <label className="block text-xs text-slate-500 mb-1">Current Password</label>
-                <PwField
-                  value={curPw}
-                  onChange={e => { setCurPw(e.target.value); setPwErr("") }}
-                  className={inputCls + " pr-8"}
-                  placeholder="Your current password"
-                  onKeyDown={e => e.key === "Enter" && handleVerifyPassword()}
-                />
+                <PwField value={curPw} onChange={e => { setCurPw(e.target.value); setPwErr("") }}
+                  className={inputCls + " pr-8"} placeholder="Your current password"
+                  onKeyDown={e => e.key === "Enter" && handleVerifyPassword()} />
               </div>
               {pwErr && <p className="text-xs text-red-400">{pwErr}</p>}
               <button onClick={handleVerifyPassword} disabled={savingPw || !curPw} className={btnPrimary}>
                 {savingPw ? "Verifying…" : "Verify Password"}
               </button>
-              <button
-                type="button"
-                onClick={() => { back(); setSection("forgot") }}
-                className="w-full text-center text-xs text-slate-600 hover:text-blue-400 transition-colors pt-1"
-              >
+              <button type="button" onClick={() => { back(); setSection("forgot") }}
+                className="w-full text-center text-xs text-slate-600 hover:text-blue-400 transition-colors pt-1">
                 Forgot password?
               </button>
             </>
@@ -375,13 +411,9 @@ function SettingsPanel({ isDark, onToggleTheme }) {
               </div>
               <div>
                 <label className="block text-xs text-slate-500 mb-1">New Password</label>
-                <PwField
-                  value={newPw}
-                  onChange={e => { setNewPw(e.target.value); setPwErr("") }}
-                  className={inputCls + " pr-8"}
-                  placeholder="At least 8 characters"
-                  onKeyDown={e => e.key === "Enter" && handleChangePassword()}
-                />
+                <PwField value={newPw} onChange={e => { setNewPw(e.target.value); setPwErr("") }}
+                  className={inputCls + " pr-8"} placeholder="At least 8 characters"
+                  onKeyDown={e => e.key === "Enter" && handleChangePassword()} />
               </div>
               {pwErr && <p className="text-xs text-red-400">{pwErr}</p>}
               {pwMsg && <p className="text-xs text-green-400">{pwMsg}</p>}
@@ -421,24 +453,15 @@ function SettingsPanel({ isDark, onToggleTheme }) {
               <p className="text-xs text-slate-500">
                 Code sent to <span className="text-slate-300">{user?.email}</span>. Enter it below.
               </p>
-
-              {/* Step 1 — enter & verify code */}
               <div>
                 <label className="block text-xs text-slate-500 mb-1">6-Digit Code</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength="6"
+                <input type="text" inputMode="numeric" pattern="[0-9]*" maxLength="6"
                   value={forgotCode}
                   onChange={e => { setForgotCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setForgotErr(""); setCodeVerified(false) }}
                   onKeyDown={e => e.key === "Enter" && !codeVerified && handleVerifyCode()}
-                  placeholder="000000"
-                  disabled={codeVerified}
-                  className={inputCls + " text-center text-xl font-mono tracking-[0.4em] placeholder-slate-700" + (codeVerified ? " opacity-60" : "")}
-                />
+                  placeholder="000000" disabled={codeVerified}
+                  className={inputCls + " text-center text-xl font-mono tracking-[0.4em] placeholder-slate-700" + (codeVerified ? " opacity-60" : "")} />
               </div>
-
               {codeVerified ? (
                 <p className="text-xs text-emerald-400 flex items-center gap-1.5">
                   <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16Zm3.78-9.72a.75.75 0 0 0-1.06-1.06L6.75 9.19 5.28 7.72a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l4.5-4.5Z"/></svg>
@@ -452,31 +475,19 @@ function SettingsPanel({ isDark, onToggleTheme }) {
                   </button>
                 </>
               )}
-
-              {/* Step 2 — new password (only after code verified) */}
               {codeVerified && (
                 <>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">New Password</label>
-                    <PwField
-                      value={forgotNewPw}
-                      onChange={e => { setForgotNewPw(e.target.value); setForgotErr("") }}
-                      className={inputCls + " pr-8"}
-                      placeholder="At least 8 characters"
-                      autoComplete="new-password"
-                    />
+                    <PwField value={forgotNewPw} onChange={e => { setForgotNewPw(e.target.value); setForgotErr("") }}
+                      className={inputCls + " pr-8"} placeholder="At least 8 characters" autoComplete="new-password" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-500 mb-1">Confirm Password</label>
-                    <input
-                      type="password"
-                      value={forgotConfirm}
+                    <input type="password" value={forgotConfirm}
                       onChange={e => { setForgotConfirm(e.target.value); setForgotErr("") }}
                       onKeyDown={e => e.key === "Enter" && handleResetWithCode()}
-                      placeholder="Repeat password"
-                      className={inputCls}
-                      autoComplete="new-password"
-                    />
+                      placeholder="Repeat password" className={inputCls} autoComplete="new-password" />
                   </div>
                   {forgotErr && <p className="text-xs text-red-400">{forgotErr}</p>}
                   <button onClick={handleResetWithCode} disabled={forgotLoading || !forgotNewPw || !forgotConfirm} className={btnPrimary}>
@@ -484,13 +495,8 @@ function SettingsPanel({ isDark, onToggleTheme }) {
                   </button>
                 </>
               )}
-
-              <button
-                type="button"
-                onClick={handleSendCode}
-                disabled={forgotLoading}
-                className="w-full text-center text-xs text-slate-600 hover:text-slate-400 transition-colors"
-              >
+              <button type="button" onClick={handleSendCode} disabled={forgotLoading}
+                className="w-full text-center text-xs text-slate-600 hover:text-slate-400 transition-colors">
                 Resend code
               </button>
             </>
@@ -501,19 +507,11 @@ function SettingsPanel({ isDark, onToggleTheme }) {
       {section === "danger" && (
         <div className="px-4 py-4 space-y-3">
           <p className="text-xs text-slate-400">Enter your password to permanently delete your account and all data. This cannot be undone.</p>
-          <PwField
-            value={deleteConfirm}
-            onChange={e => setDeleteConfirm(e.target.value)}
-            placeholder="Your password"
-            className={inputCls + " pr-8"}
-            autoComplete="current-password"
-          />
+          <PwField value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)}
+            placeholder="Your password" className={inputCls + " pr-8"} autoComplete="current-password" />
           {delErr && <p className="text-xs text-red-400">{delErr}</p>}
-          <button
-            onClick={handleDeleteAccount}
-            disabled={deleting || !deleteConfirm}
-            className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
-          >
+          <button onClick={handleDeleteAccount} disabled={deleting || !deleteConfirm}
+            className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors">
             {deleting ? "Deleting…" : "Delete My Account"}
           </button>
         </div>
@@ -521,6 +519,8 @@ function SettingsPanel({ isDark, onToggleTheme }) {
     </div>
   )
 }
+
+// ── QueuePanel ────────────────────────────────────────────────────────────────
 
 function groupByDate(items) {
   const today     = new Date(); today.setHours(0,0,0,0)
@@ -530,7 +530,7 @@ function groupByDate(items) {
     const d = item.queuedAt ? new Date(item.queuedAt) : new Date(0)
     const day = new Date(d); day.setHours(0,0,0,0)
     let label
-    if (day.getTime() === today.getTime())     label = "Today"
+    if (day.getTime() === today.getTime())          label = "Today"
     else if (day.getTime() === yesterday.getTime()) label = "Yesterday"
     else label = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined })
     if (!groups[label]) groups[label] = []
@@ -539,7 +539,7 @@ function groupByDate(items) {
   return groups
 }
 
-function QueuePanel({ queue, onItemClick }) {
+function QueuePanel({ queue, onItemClick, positionClass = "absolute right-0 top-full mt-2 z-40" }) {
   const [search, setSearch] = useState("")
 
   const filtered = search.trim()
@@ -549,8 +549,7 @@ function QueuePanel({ queue, onItemClick }) {
   const groups = groupByDate(filtered)
 
   return (
-    <div className="absolute right-0 top-full mt-2 z-40 w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
-      {/* Header */}
+    <div className={`${positionClass} w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
       <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ClockIcon className="w-3.5 h-3.5 text-amber-400" />
@@ -568,24 +567,18 @@ function QueuePanel({ queue, onItemClick }) {
         )}
       </div>
 
-      {/* Search */}
       {queue.length > 0 && (
         <div className="px-3 py-2 border-b border-slate-800/60">
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600" viewBox="0 0 16 16" fill="currentColor">
               <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/>
             </svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search queue…"
-              className="w-full pl-7 pr-3 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
-            />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search queue…"
+              className="w-full pl-7 pr-3 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-600 transition-colors" />
           </div>
         </div>
       )}
 
-      {/* Body */}
       {queue.length === 0 ? (
         <div className="px-4 py-8 text-center">
           <p className="text-sm text-slate-500">No cards queued yet.</p>
@@ -602,28 +595,20 @@ function QueuePanel({ queue, onItemClick }) {
               <p className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600">{label}</p>
               {items.map(item => (
                 <div key={item.articleKey} className="relative flex items-center hover:bg-slate-800/40 transition-colors group">
-                  <button
-                    onClick={() => onItemClick(item)}
+                  <button onClick={() => onItemClick(item)}
                     className="flex-1 flex items-start gap-2.5 px-4 py-2.5 text-left min-w-0"
-                    title={`Go to: ${item.title}`}
-                  >
+                    title={`Go to: ${item.title}`}>
                     <div className="flex-1 min-w-0 pr-4">
-                      <p className="text-xs font-medium text-slate-300 leading-snug line-clamp-2 group-hover:text-slate-100 transition-colors">
-                        {item.title}
-                      </p>
-                      {item.projectName && (
-                        <p className="text-[10px] text-slate-600 mt-0.5">{item.projectName}</p>
-                      )}
+                      <p className="text-xs font-medium text-slate-300 leading-snug line-clamp-2 group-hover:text-slate-100 transition-colors">{item.title}</p>
+                      {item.projectName && <p className="text-[10px] text-slate-600 mt-0.5">{item.projectName}</p>}
                     </div>
                     <svg className="w-3 h-3 text-slate-700 group-hover:text-slate-500 flex-shrink-0 mt-0.5 transition-colors" viewBox="0 0 16 16" fill="currentColor">
                       <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" />
                     </svg>
                   </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); removeFromQueue(item.articleKey) }}
+                  <button onClick={(e) => { e.stopPropagation(); removeFromQueue(item.articleKey) }}
                     title="Remove from queue"
-                    className="absolute right-2.5 w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-all"
-                  >
+                    className="absolute right-2.5 w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-all">
                     <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
                       <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
                     </svg>
@@ -638,17 +623,346 @@ function QueuePanel({ queue, onItemClick }) {
   )
 }
 
-const NAV_TABS = [
-  { id: 'feed',      label: 'Feed'      },
-  { id: 'chat',      label: 'Chat'      },
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'bookmarks', label: 'Bookmarks' },
-]
+// ── Sidebar components ────────────────────────────────────────────────────────
+
+function LogoMark() {
+  return (
+    <div className="relative w-7 h-7 flex-shrink-0">
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
+      <div className="absolute inset-0 rounded-xl flex items-center justify-center">
+        <svg style={{ width: '16px', height: '16px' }} viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
+          <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
+          <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
+          <path d="M10 4 L10 2.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
+          <path d="M13.5 5.5 L14.6 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
+          <path d="M6.5 5.5 L5.4 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
+          <path d="M14.5 8 L16 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
+          <path d="M5.5 8 L4 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+function NavItem({ item, active, collapsed, onClick, badge }) {
+  const Icon = item.icon
+  return (
+    <button
+      onClick={onClick}
+      title={collapsed ? item.label : undefined}
+      className={[
+        'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
+        active
+          ? 'bg-white/[0.07] text-white'
+          : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
+        collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
+      ].join(' ')}
+    >
+      <Icon className="w-[15px] h-[15px] flex-shrink-0" />
+      <span className={`flex-1 text-left ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
+      {badge > 0 && (
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none ${collapsed ? 'md:hidden' : ''}`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function Sidebar({
+  view, navigateTo, onSearchOpen,
+  queue, onQueueItemClick,
+  showSettings, onSettingsToggle, settingsRef, isDark, toggleTheme, user,
+  collapsed, setCollapsed, open, setOpen,
+}) {
+  const { subsection } = useSidebarSubsection()
+  const [sidebarQuery, setSidebarQuery] = useState('')
+  useEffect(() => { setSidebarQuery('') }, [view])
+
+  // Lock body scroll while mobile drawer is open
+  useEffect(() => {
+    if (!open) return
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [open])
+
+  const q = sidebarQuery.trim().toLowerCase()
+  const visibleQueue = q
+    ? queue.filter(i =>
+        i.title?.toLowerCase().includes(q) ||
+        i.projectName?.toLowerCase().includes(q)
+      )
+    : queue
+
+  return (
+    <>
+      {/* Mobile backdrop */}
+      <div
+        className={[
+          'fixed inset-0 bg-black/50 z-30 md:hidden',
+          'transition-opacity duration-300',
+          open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+        ].join(' ')}
+        onClick={() => setOpen(false)}
+        aria-hidden="true"
+      />
+
+      <aside
+        className={[
+          'fixed inset-y-0 left-0 z-40 flex flex-col',
+          'bg-slate-900 border-r border-white/[0.06]',
+          'transition-transform duration-300 ease-in-out',
+          'md:relative md:translate-x-0',
+          open ? 'translate-x-0' : '-translate-x-full',
+          'w-[280px]',
+          collapsed ? 'md:w-[68px]' : 'md:w-[280px]',
+        ].join(' ')}
+        style={{ willChange: 'transform' }}
+      >
+
+        {/* Zone 1: Logo + collapse toggle */}
+        <div className={`flex items-center h-12 flex-shrink-0 border-b border-white/[0.05] px-3 ${collapsed ? 'md:justify-center' : ''}`}>
+          <button
+            onClick={() => { navigateTo('feed'); setOpen(false) }}
+            className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
+          >
+            <LogoMark />
+            <span className={`font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent truncate ${collapsed ? 'md:hidden' : ''}`}>
+              Curivio
+            </span>
+          </button>
+          {/* Close button — mobile only */}
+          <button
+            onClick={() => setOpen(false)}
+            aria-label="Close sidebar"
+            className="md:hidden ml-auto flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors flex-shrink-0"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+            </svg>
+          </button>
+
+          {/* Collapse toggle — desktop only */}
+          <button
+            onClick={() => setCollapsed(c => !c)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`hidden md:flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors flex-shrink-0 ${collapsed ? 'mt-0' : 'ml-auto'}`}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+              {collapsed
+                ? <path fillRule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                : <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
+              }
+            </svg>
+          </button>
+        </div>
+
+        {/* Zone 2: Primary nav — never scrolls */}
+        <nav className={`flex-shrink-0 py-2 space-y-0.5 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
+          {NAV_ITEMS.map(item => (
+            <NavItem
+              key={item.id}
+              item={item}
+              active={view === item.id}
+              collapsed={collapsed}
+              onClick={() => { navigateTo(item.id); setOpen(false) }}
+              badge={item.id === 'readlater' ? queue.length : 0}
+            />
+          ))}
+        </nav>
+
+        {/* Zone 3: Search + dynamic subsection — ONLY scrollable section */}
+        <div className={[
+          'flex-1 flex flex-col min-h-0',
+          collapsed ? 'md:hidden' : '',
+        ].join(' ')}>
+          {/* Contextual search */}
+          <div className="px-2 pt-2 pb-1 flex-shrink-0">
+            <div className="relative">
+              <svg
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600 pointer-events-none"
+                viewBox="0 0 16 16" fill="currentColor"
+              >
+                <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z" />
+              </svg>
+              <input
+                type="text"
+                value={sidebarQuery}
+                onChange={e => setSidebarQuery(e.target.value)}
+                placeholder={ZONE3_PLACEHOLDER[view] ?? 'Filter…'}
+                className="w-full pl-7 pr-6 py-1.5 bg-white/[0.05] rounded-md text-[12px] text-slate-200 placeholder-slate-500 focus:outline-none focus:bg-white/[0.08] transition-colors"
+              />
+              {sidebarQuery && (
+                <button
+                  onClick={() => setSidebarQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Read Later inline queue list */}
+          {view === 'readlater' && (
+            <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
+              <div className="flex items-center justify-between px-1 py-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Queued</span>
+                {queue.length > 0 && (
+                  <button onClick={() => clearQueue()} className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors">
+                    Clear all
+                  </button>
+                )}
+              </div>
+              {visibleQueue.length === 0 ? (
+                <p className="text-xs text-slate-600 px-1 py-2">{q ? 'No matches.' : 'No queued items.'}</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {visibleQueue.map(item => (
+                    <div
+                      key={item.articleKey}
+                      className="group flex items-start gap-2 px-2 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
+                      onClick={() => onQueueItemClick(item)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium leading-snug line-clamp-2">{item.title}</p>
+                        {item.projectName && <p className="text-[10px] text-slate-500 mt-0.5">{item.projectName}</p>}
+                      </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); removeFromQueue(item.articleKey) }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-600 hover:text-slate-300 flex-shrink-0 mt-0.5 transition-all"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Feed / Bookmarks / Chat / Dashboard — subsection context */}
+          {view !== 'readlater' && subsection && subsection.type === view && (
+            <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
+              {subsection.render(sidebarQuery)}
+            </div>
+          )}
+        </div>
+
+        {/* Spacer: pushes Zone 4 to bottom on desktop when collapsed */}
+        {collapsed && <div className="hidden md:flex flex-1" />}
+
+        {/* Zone 4: User / Settings — always pinned at bottom */}
+        <div className={`flex-shrink-0 border-t border-white/[0.04] py-2 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
+          <div ref={settingsRef} className="relative">
+            <button
+              onClick={onSettingsToggle}
+              title={collapsed ? 'Settings' : undefined}
+              className={[
+                'flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
+                showSettings ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
+                collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 w-full px-3 py-2' : 'w-full px-3 py-2',
+              ].join(' ')}
+            >
+              <div className="w-[22px] h-[22px] rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                {(user?.name || user?.email || "?")[0].toUpperCase()}
+              </div>
+              <span className={`flex-1 text-left truncate ${collapsed ? 'md:hidden' : ''}`}>
+                {user?.name || 'Settings'}
+              </span>
+              <GearIcon className={`w-3.5 h-3.5 text-slate-600 flex-shrink-0 ${collapsed ? 'md:hidden' : ''}`} />
+            </button>
+            {showSettings && (
+              <SettingsPanel
+                isDark={isDark}
+                onToggleTheme={toggleTheme}
+                positionClass="absolute bottom-full left-0 mb-1.5 z-50"
+              />
+            )}
+          </div>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+// ── Read Later page ───────────────────────────────────────────────────────────
+
+function ReadLaterPage({ queue, onItemClick, onRemove }) {
+  if (queue.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-8">
+        <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-4">
+          <ClockIcon className="w-5 h-5 text-slate-500" />
+        </div>
+        <h3 className="text-sm font-semibold text-slate-300 mb-1">Queue is empty</h3>
+        <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
+          Click "Read Later" on any article to save it here.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="py-6 px-4 sm:px-8">
+      <div className="flex items-center justify-between mb-6 px-1">
+        <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Read Later</h1>
+        <button
+          onClick={() => clearQueue()}
+          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          Clear all
+        </button>
+      </div>
+      <div className="space-y-2 max-w-2xl">
+        {queue.map(item => (
+          <div
+            key={item.articleKey}
+            className="group flex items-center gap-4 p-4 bg-slate-900/60 border border-slate-800/80 rounded-xl hover:border-slate-700/80 transition-colors cursor-pointer"
+            onClick={() => onItemClick(item)}
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-200 leading-snug group-hover:text-white transition-colors line-clamp-2">
+                {item.title}
+              </p>
+              {item.projectName && (
+                <p className="text-xs text-slate-500 mt-1">{item.projectName}</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={e => { e.stopPropagation(); onRemove(item.articleKey) }}
+                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-all"
+                title="Remove"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                </svg>
+              </button>
+              <svg className="w-3.5 h-3.5 text-slate-700 group-hover:text-slate-500 transition-colors" viewBox="0 0 16 16" fill="currentColor">
+                <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+              </svg>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── App root ──────────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <SidebarSubsectionProvider>
+        <AppContent />
+      </SidebarSubsectionProvider>
     </AuthProvider>
   )
 }
@@ -663,54 +977,39 @@ function AppContent() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches
   })
 
-  // Feed → Chat context
   const [feedContext, setFeedContext] = useState(null)
-
-  // Session to load when jumping from Related Discussions → Chat
   const [targetSessionId,    setTargetSessionId]    = useState(null)
   const [targetSessionTitle, setTargetSessionTitle] = useState(null)
-
-  // Global search
-  const [showSearch,     setShowSearch]     = useState(false)
-  const [targetProjectId, setTargetProjectId] = useState(null)
-
-  // Read-Later queue
-  const [queue,            setQueue]            = useState(() => getQueue())
-  const [showQueue,        setShowQueue]        = useState(false)
-  const queueRef = useRef(null)
-
-  // Settings panel
+  const [showSearch,         setShowSearch]         = useState(false)
+  const [targetProjectId,    setTargetProjectId]    = useState(null)
+  const [queue,              setQueue]              = useState(() => getQueue())
   const [showSettings, setShowSettings] = useState(false)
   const settingsRef = useRef(null)
-
-  // Queue → Feed navigation targets
   const [targetInsightId,  setTargetInsightId]  = useState(null)
   const [targetArticleKey, setTargetArticleKey] = useState(null)
 
-  // Scope the read-later queue to the current user
+  // Sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    localStorage.getItem('sidebar_collapsed') === 'true'
+  )
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const handleSidebarClose = useCallback(() => setSidebarOpen(false), [])
+
+  useEffect(() => {
+    localStorage.setItem('sidebar_collapsed', sidebarCollapsed ? 'true' : 'false')
+  }, [sidebarCollapsed])
+
   useEffect(() => {
     setQueueUser(user?.user_id || null)
     setQueue(getQueue())
   }, [user?.user_id])
 
-  // Sync queue state from localStorage
   useEffect(() => {
     function onQueueChange() { setQueue(getQueue()) }
     window.addEventListener("queuechange", onQueueChange)
     return () => window.removeEventListener("queuechange", onQueueChange)
   }, [])
 
-  // Close queue panel on outside click
-  useEffect(() => {
-    if (!showQueue) return
-    function onDown(e) {
-      if (queueRef.current && !queueRef.current.contains(e.target)) setShowQueue(false)
-    }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [showQueue])
-
-  // Close settings panel on outside click
   useEffect(() => {
     if (!showSettings) return
     function onDown(e) {
@@ -720,30 +1019,26 @@ function AppContent() {
     return () => document.removeEventListener("mousedown", onDown)
   }, [showSettings])
 
-  // Seed the initial history entry so the browser has something to go back to
   useEffect(() => {
     window.history.replaceState({ view: 'feed' }, '')
   }, [])
 
-  // Restore app state when user presses browser back / forward
   useEffect(() => {
     function onPopState(e) {
       if (!e.state) return
       const s = e.state
       if (s.view) setView(s.view)
-      if ('feedContext'        in s) setFeedContext(s.feedContext)
-      if ('targetSessionId'   in s) setTargetSessionId(s.targetSessionId)
+      if ('feedContext'         in s) setFeedContext(s.feedContext)
+      if ('targetSessionId'    in s) setTargetSessionId(s.targetSessionId)
       if ('targetSessionTitle' in s) setTargetSessionTitle(s.targetSessionTitle)
-      if ('targetProjectId'   in s) setTargetProjectId(s.targetProjectId)
-      if ('targetInsightId'   in s) setTargetInsightId(s.targetInsightId)
-      if ('targetArticleKey'  in s) setTargetArticleKey(s.targetArticleKey)
+      if ('targetProjectId'    in s) setTargetProjectId(s.targetProjectId)
+      if ('targetInsightId'    in s) setTargetInsightId(s.targetInsightId)
+      if ('targetArticleKey'   in s) setTargetArticleKey(s.targetArticleKey)
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  // Use this instead of setView() for all user-initiated navigation so the
-  // browser history stack stays in sync and back/forward work correctly.
   const navigateTo = useCallback((newView, extra = {}) => {
     window.history.pushState({ view: newView, ...extra }, '')
     setView(newView)
@@ -760,7 +1055,6 @@ function AppContent() {
     setTimeout(() => root.classList.remove('theme-transitioning'), 250)
   }
 
-  // Cmd/Ctrl+K opens search
   useEffect(() => {
     const handler = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -781,7 +1075,6 @@ function AppContent() {
   const handleOpenInChat = useCallback((card, action, projectMeta = {}) => {
     const ctx = {
       action,
-      // explain_simply auto-triggers an immediate AI response on arrival
       auto_trigger:     action === "explain_simply",
       insight_title:    card.title    || "",
       insight_summary:  card.summary  || "",
@@ -807,7 +1100,7 @@ function AppContent() {
     setTargetProjectId(pid)
     setTargetInsightId(iid)
     setTargetArticleKey(akey)
-    setShowQueue(false)
+    setSidebarOpen(false)
     navigateTo('feed', { targetProjectId: pid, targetInsightId: iid, targetArticleKey: akey })
   }, [navigateTo])
 
@@ -829,8 +1122,6 @@ function AppContent() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  // While verifying the stored token, show a branded loading screen so we never
-  // render protected content against an invalid or expired JWT.
   if (!authChecked) return <AuthLoadingScreen />
 
   if (!isAuthenticated) {
@@ -853,150 +1144,69 @@ function AppContent() {
     return <LandingPage onShowAuth={() => setShowAuth(true)} />
   }
 
+  // Authenticated landing view — full-screen, no sidebar
+  if (view === 'landing') {
+    return (
+      <div className={`bg-slate-950 text-slate-100 ${isDark ? '' : 'theme-light'}`} style={{ minHeight: '100dvh' }}>
+        <LandingPage
+          isAuthenticated
+          onEnterApp={() => navigateTo('feed')}
+          onShowAuth={() => navigateTo('feed')}
+        />
+      </div>
+    )
+  }
+
+  const pageTitle = NAV_ITEMS.find(i => i.id === view)?.label || 'Curivio'
+
   return (
-    <div className={`min-h-screen min-h-dvh bg-slate-950 text-slate-100 ${isDark ? "" : "theme-light"}`}>
+    <div
+      className={`flex bg-slate-950 text-slate-100 overflow-hidden ${isDark ? '' : 'theme-light'}`}
+      style={{ height: '100dvh' }}
+    >
+      <Sidebar
+        view={view}
+        navigateTo={navigateTo}
+        onSearchOpen={() => setShowSearch(true)}
+        queue={queue}
+        onQueueItemClick={handleOpenQueueItem}
+        showSettings={showSettings}
+        onSettingsToggle={() => setShowSettings(s => !s)}
+        settingsRef={settingsRef}
+        isDark={isDark}
+        toggleTheme={toggleTheme}
+        user={user}
+        collapsed={sidebarCollapsed}
+        setCollapsed={setSidebarCollapsed}
+        open={sidebarOpen}
+        setOpen={setSidebarOpen}
+      />
 
-      {/* Sticky top nav — hidden on landing view */}
-      <header className={`sticky top-0 z-20 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm ${view === 'landing' ? 'hidden' : ''}`}>
-        <div className="px-5 h-13 flex items-center gap-5 relative" style={{ height: '52px' }}>
+      {/* Content area */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
-          {/* Brand — far left, prominent; click returns to landing on authenticated app */}
-          <button onClick={() => navigateTo('landing')} className="flex items-center gap-2.5 flex-shrink-0 hover:opacity-80 transition-opacity">
-            <div className="relative w-8 h-8 flex-shrink-0">
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
-              <div className="absolute inset-0 rounded-xl flex items-center justify-center">
-                <svg style={{ width: '18px', height: '18px' }} viewBox="0 0 20 20" fill="none">
-                  <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
-                  <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
-                  <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
-                  <path d="M10 4 L10 2.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-                  <path d="M13.5 5.5 L14.6 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-                  <path d="M6.5 5.5 L5.4 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-                  <path d="M14.5 8 L16 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-                  <path d="M5.5 8 L4 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-                </svg>
-              </div>
-            </div>
-            <span className="font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent">
-              Curivio
-            </span>
+        {/* Mobile top bar — 48px, hidden on md+ */}
+        <div className="md:hidden flex items-center h-12 px-3 gap-3 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm flex-shrink-0">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-all flex-shrink-0"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+              <path fillRule="evenodd" d="M1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5ZM1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1.75 7Zm0 5h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z" clipRule="evenodd" />
+            </svg>
           </button>
-
-          {/* Divider — desktop only */}
-          <div className="hidden md:block w-px h-5 bg-slate-800 flex-shrink-0" />
-
-          {/* Nav tabs — desktop only */}
-          <nav className="hidden md:flex items-center gap-0.5">
-            {NAV_TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => navigateTo(tab.id)}
-                className={`relative px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
-                  view === tab.id
-                    ? 'bg-slate-800 text-slate-100'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900/70'
-                }`}
-              >
-                {tab.label}
-                {view === tab.id && (
-                  <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3 h-0.5 rounded-full bg-blue-500" />
-                )}
-              </button>
-            ))}
-          </nav>
-
-          {/* Global search trigger — centered, desktop only */}
+          <span className="flex-1 text-center text-sm font-semibold text-slate-200">{pageTitle}</span>
           <button
             onClick={() => setShowSearch(true)}
-            className="hidden md:flex absolute left-1/2 -translate-x-1/2 items-center gap-2 px-3.5 py-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 border border-slate-800/60 transition-all text-[12px] w-72 pointer-events-auto"
-            title="Search (Ctrl+K)"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-all flex-shrink-0"
           >
-            <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
             </svg>
-            <span className="flex-1 text-left">Search</span>
-            <kbd className="hidden md:flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] rounded bg-slate-800 text-slate-600 border border-slate-700/50 flex-shrink-0">
-              ⌘K
-            </kbd>
           </button>
-
-          {/* Right corner — pushed to far right */}
-          <div className="ml-auto flex items-center gap-0.5 flex-shrink-0">
-
-            {/* Mobile search icon — mobile only */}
-            <button
-              onClick={() => setShowSearch(true)}
-              title="Search"
-              className="flex md:hidden items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-all"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
-              </svg>
-            </button>
-
-            {/* Read Later queue */}
-            <div ref={queueRef} className="relative">
-              <button
-                onClick={() => setShowQueue(s => !s)}
-                title="Your Queue"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all text-[12px] font-medium ${
-                  queue.length > 0
-                    ? "text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
-                    : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/60"
-                }`}
-              >
-                {/* Text on desktop, icon on mobile */}
-                <span className="hidden md:inline">Read Later</span>
-                <ClockIcon className="md:hidden w-4 h-4" />
-                {queue.length > 0 && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none">
-                    {queue.length}
-                  </span>
-                )}
-              </button>
-              {showQueue && <QueuePanel queue={queue} onItemClick={handleOpenQueueItem} />}
-            </div>
-
-            <div className="hidden md:block w-px h-4 bg-slate-800 mx-0.5 flex-shrink-0" />
-
-            {/* Settings */}
-            <div ref={settingsRef} className="relative">
-              <button
-                onClick={() => setShowSettings(s => !s)}
-                title="Settings"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all text-[12px] font-medium ${
-                  showSettings
-                    ? "text-slate-200 bg-slate-800"
-                    : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/60"
-                }`}
-              >
-                <GearIcon className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Settings</span>
-              </button>
-              {showSettings && (
-                <SettingsPanel isDark={isDark} onToggleTheme={toggleTheme} />
-              )}
-            </div>
-
-          </div>
         </div>
-      </header>
 
-      <main
-        className={`md:pb-0 ${view === 'feed' || view === 'dashboard' ? 'px-3 py-4 md:px-5 md:py-6' : ''}`}
-        style={view === 'landing' ? {} : { paddingBottom: 'var(--mobile-nav-h)' }}
-      >
-
-        {/* ── Landing view — authenticated users can visit the about/marketing page ── */}
-        {view === 'landing' && (
-          <LandingPage
-            isAuthenticated
-            onEnterApp={() => setView('feed')}
-            onShowAuth={() => setView('feed')}
-          />
-        )}
-
-        {/* ── Chat workspace — always mounted so in-progress AI streams survive tab switches ── */}
+        {/* Chat workspace — outside scrollable container, manages its own height via CSS vars */}
         <div className={view !== 'chat' ? 'hidden' : ''}>
           <ChatWorkspace
             feedContext={feedContext}
@@ -1008,88 +1218,57 @@ function AppContent() {
           />
         </div>
 
-        {/* ── Feed view — project-based learning streams ── */}
-        {/* Always mounted so generating state survives tab switches */}
-        <div className={view !== 'feed' ? 'hidden' : ''}>
-          <ProjectsPage
-            onOpenInChat={handleOpenInChat}
-            onOpenChat={handleOpenChat}
-            targetProjectId={targetProjectId}
-            targetInsightId={targetInsightId}
-            targetArticleKey={targetArticleKey}
-            onClearQueueTarget={handleClearQueueTarget}
-            userId={user?.user_id}
-            userName={user?.name}
-          />
-        </div>
+        {/* Scrollable main — feed, dashboard, bookmarks */}
+        <main className={[
+          'flex-1 overflow-y-auto',
+          view === 'chat' ? 'hidden' : '',
+        ].join(' ')}>
+          <div className={[
+            'max-w-5xl mx-auto w-full',
+            view === 'feed' || view === 'dashboard' ? 'px-4 py-6 md:px-8 md:py-8' : '',
+          ].join(' ')}>
 
-        {/* ── Dashboard view ── */}
-        {view === 'dashboard' && (
-          <DashboardPage onGoToFeed={() => setView('feed')} userName={user?.name} />
-        )}
+          {/* Feed — always mounted so generating state survives view switches */}
+          <div className={view !== 'feed' ? 'hidden' : ''}>
+            <ProjectsPage
+              onOpenInChat={handleOpenInChat}
+              onOpenChat={handleOpenChat}
+              targetProjectId={targetProjectId}
+              targetInsightId={targetInsightId}
+              targetArticleKey={targetArticleKey}
+              onClearQueueTarget={handleClearQueueTarget}
+              userId={user?.user_id}
+              userName={user?.name}
+              onSidebarClose={handleSidebarClose}
+            />
+          </div>
 
-        {/* ── Bookmarks view ── */}
-        {view === 'bookmarks' && (
-          <BookmarksPage onOpenChat={handleOpenChat} />
-        )}
+          {view === 'dashboard' && (
+            <DashboardPage onGoToFeed={() => setView('feed')} userName={user?.name} />
+          )}
 
-      </main>
-      {/* ── Global search overlay ── */}
+          {view === 'bookmarks' && (
+            <BookmarksPage onOpenChat={handleOpenChat} onSidebarClose={handleSidebarClose} />
+          )}
+
+          {view === 'readlater' && (
+            <ReadLaterPage
+              queue={queue}
+              onItemClick={handleOpenQueueItem}
+              onRemove={removeFromQueue}
+            />
+          )}
+
+          </div>
+        </main>
+      </div>
+
       {showSearch && (
         <GlobalSearch
           onClose={() => setShowSearch(false)}
           onNavigate={handleSearchNavigate}
         />
       )}
-
-      {/* ── Mobile bottom navigation — md:hidden, also hidden on landing ── */}
-      <nav className={`fixed bottom-0 left-0 right-0 z-20 md:hidden border-t border-slate-800/80 bg-slate-950/95 backdrop-blur-sm ${view === 'landing' ? 'hidden' : ''}`}>
-        <div className="flex items-center pb-safe">
-          {/* Feed */}
-          <button
-            onClick={() => navigateTo('feed')}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'feed' ? 'text-blue-400' : 'text-slate-600'}`}
-          >
-            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10.75 16.82A7.462 7.462 0 0 1 10 17c-.25 0-.5-.008-.75-.025V14h1.5v2.82ZM6.25 16.185a7.5 7.5 0 0 1-1.422-.878L6 14.016l1.06 1.06-1.06 1.06.25.05ZM14.75 15.308a7.5 7.5 0 0 1-1.422.877l-.25-.05-1.06-1.06L13.078 14l1.172 1.308ZM3.834 12.75a7.503 7.503 0 0 1-.516-1.562L4.5 10.5l1 1-1 1-.666.25ZM16.682 11.188a7.503 7.503 0 0 1-.516 1.562L15.5 12.5l-1-1 1-1 .682-.688.5 1.376Z" />
-              <path fillRule="evenodd" d="M10 3a7 7 0 1 0 0 14A7 7 0 0 0 10 3Zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Z" clipRule="evenodd" />
-              <path d="M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
-            </svg>
-            <span className="text-[10px] font-medium">Feed</span>
-          </button>
-          {/* Chat */}
-          <button
-            onClick={() => navigateTo('chat')}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'chat' ? 'text-blue-400' : 'text-slate-600'}`}
-          >
-            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902.848.138 1.705.248 2.57.33v3.194c0 .202.12.38.303.456a.5.5 0 0 0 .542-.116L10.03 14h.543A21.26 21.26 0 0 0 13 13.74V7.074c0-1.413-.993-2.672-2.43-2.903A21.212 21.212 0 0 0 10 4c0-.34-.003-.678-.01-1H10ZM8.5 7a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0Z" clipRule="evenodd" />
-              <path d="M15.5 2c-.126 0-.25.003-.374.008A5.026 5.026 0 0 1 17 5.426v5.148c0 2.034-1.517 3.73-3.512 3.97L12 14.596V16a.5.5 0 0 0 .831.373l1.604-1.473A21.27 21.27 0 0 0 16 14.83c1.437-.232 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.671-2.43-2.902A21.258 21.258 0 0 0 15.5 2.5V2Z" />
-            </svg>
-            <span className="text-[10px] font-medium">Chat</span>
-          </button>
-          {/* Dashboard */}
-          <button
-            onClick={() => navigateTo('dashboard')}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'dashboard' ? 'text-blue-400' : 'text-slate-600'}`}
-          >
-            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M1 2.75A.75.75 0 0 1 1.75 2h16.5a.75.75 0 0 1 0 1.5H18v8.75A2.75 2.75 0 0 1 15.25 15h-1.072l.798 3.06a.75.75 0 0 1-1.452.38L13.41 18H6.59l-.114.44a.75.75 0 0 1-1.452-.38L5.823 15H4.75A2.75 2.75 0 0 1 2 12.25V3.5h-.25A.75.75 0 0 1 1 2.75ZM7.373 15l-.391 1.5h6.037l-.392-1.5H7.373ZM13 7.5a.75.75 0 0 0-1.5 0v4.25a.75.75 0 0 0 1.5 0V7.5ZM9.25 9a.75.75 0 0 1 .75.75v2a.75.75 0 0 1-1.5 0v-2A.75.75 0 0 1 9.25 9ZM7 10.75a.75.75 0 0 0-1.5 0v.5a.75.75 0 0 0 1.5 0v-.5Z" clipRule="evenodd" />
-            </svg>
-            <span className="text-[10px] font-medium">Dashboard</span>
-          </button>
-          {/* Bookmarks */}
-          <button
-            onClick={() => navigateTo('bookmarks')}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${view === 'bookmarks' ? 'text-blue-400' : 'text-slate-600'}`}
-          >
-            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 2c-1.716 0-3.408.106-5.07.31C3.806 2.45 3 3.414 3 4.517V17.25a.75.75 0 0 0 1.075.676L10 15.082l5.925 2.844A.75.75 0 0 0 17 17.25V4.517c0-1.103-.806-2.068-1.93-2.207A41.403 41.403 0 0 0 10 2Z" clipRule="evenodd" />
-            </svg>
-            <span className="text-[10px] font-medium">Bookmarks</span>
-          </button>
-        </div>
-      </nav>
     </div>
   )
 }

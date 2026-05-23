@@ -40,10 +40,10 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
     <div
       onClick={() => onSelect(project)}
       className={`
-        group relative flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all select-none
+        group relative flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors select-none
         ${isActive
-          ? "bg-slate-800/80 border border-slate-700/50"
-          : "border border-transparent hover:bg-slate-800/40 hover:border-slate-800"
+          ? "bg-white/[0.07] border border-white/[0.08]"
+          : "border border-transparent hover:bg-white/[0.04] hover:border-white/[0.04]"
         }
       `}
     >
@@ -52,19 +52,19 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
 
       {/* Name + meta */}
       <div className="flex-1 min-w-0">
-        <p className={`text-[13px] font-semibold leading-snug truncate ${isActive ? "text-slate-100" : "text-slate-300 group-hover:text-slate-100"}`}>
+        <p className={`text-[13px] font-medium leading-snug truncate ${isActive ? "text-white" : "text-slate-300 group-hover:text-white"}`}>
           {project.name}
         </p>
         <p className="text-[10px] mt-0.5 flex items-center gap-1.5">
           <span className={lvl.color}>{lvl.label}</span>
-          {dayLabel && <><span className="text-slate-700">·</span><span className="text-slate-600">{dayLabel}</span></>}
-          <span className="text-slate-700">·</span>
-          <span className="text-slate-600">{intensity}</span>
+          {dayLabel && <><span className="text-slate-600">·</span><span className="text-slate-500">{dayLabel}</span></>}
+          <span className="text-slate-600">·</span>
+          <span className="text-slate-500">{intensity}</span>
         </p>
       </div>
 
       {/* Edit / Delete — appear on hover, overlay day count */}
-      <div className="project-card-actions absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-slate-800/90 rounded-md px-0.5 py-0.5">
+      <div className="project-card-actions absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-slate-900/70 backdrop-blur-sm rounded-md px-0.5 py-0.5">
         <button
           onClick={handleEdit}
           title="Edit"

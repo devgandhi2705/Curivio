@@ -1,9 +1,9 @@
 /**
  * ProjectsPage — the intelligence workspace hub.
  *
- * Layout:
- *   Left sidebar (w-72)  — project list with rich cards + "New Project" button
- *   Right workspace      — project header → stat strip → progression → daily feed
+ * Layout (sidebar-first architecture):
+ *   The project list lives in the App-level sidebar (FeedSubsection, registered via
+ *   SidebarSubsectionContext). This component owns only the workspace on the right.
  *
  * Data loading:
  *   On mount:   listProjects() + listAllProgressions() in parallel
@@ -35,6 +35,7 @@ import EditProjectModal from "./EditProjectModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
 import { computeDisplayLabels, computeNextLabel } from "./DailyPackageView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
+import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 
 // ── Shared style maps ─────────────────────────────────────────────────────────
 
@@ -65,27 +66,11 @@ function PlusIcon({ className }) {
   )
 }
 
-function ChevronLeftIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
-      <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 1.06L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z" />
-    </svg>
-  )
-}
-
-function ChevronRightIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
-      <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" />
-    </svg>
-  )
-}
-
 // ── Skeleton loaders ──────────────────────────────────────────────────────────
 
 function SidebarSkeleton() {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1 px-1">
       {[1, 2, 3].map(i => (
         <div key={i} className="h-8 rounded-lg bg-slate-800/40 animate-pulse" />
       ))}
@@ -104,12 +89,10 @@ function WorkspaceSkeleton() {
   )
 }
 
-// ── Generation state: persists across tab switches (component remounts) ──────
-// Stores the projectId of any in-progress generation so the UI can be restored
-// if the user leaves and immediately returns to the feed tab.
+// ── Generation state persists across tab switches ─────────────────────────────
 const _generatingNow = new Set()
 
-// ── Main export ───────────────────────────────────────────────────────────────
+// ── Greeting ──────────────────────────────────────────────────────────────────
 
 function getGreeting(name) {
   const h = new Date().getHours()
@@ -118,7 +101,71 @@ function getGreeting(name) {
   return firstName ? `${time}, ${firstName}` : time
 }
 
-export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId, targetInsightId, targetArticleKey, onClearQueueTarget, userId, userName }) {
+// ── FeedSubsection — rendered inside App sidebar's Zone 3 ─────────────────────
+
+function FeedSubsection({
+  projects,
+  activeId,
+  loadingList,
+  listError,
+  progressions,
+  activeLatestLabel,
+  onSelect,
+  onNew,
+  onDelete,
+  onEdit,
+}) {
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2 px-1">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+          Projects
+        </span>
+        <button
+          onClick={onNew}
+          className="p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+          title="New project"
+        >
+          <PlusIcon className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Project list */}
+      {loadingList ? (
+        <SidebarSkeleton />
+      ) : listError ? (
+        <p className="text-xs text-red-400 px-1">{listError}</p>
+      ) : projects.length === 0 ? (
+        <EmptySidebar onNew={onNew} />
+      ) : (
+        <div className="space-y-0.5 overflow-y-auto flex-1">
+          {projects.map(project => (
+            <ProjectCard
+              key={project.project_id}
+              project={project}
+              progression={progressions[project.project_id]}
+              isActive={project.project_id === activeId}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              displayLabel={project.project_id === activeId ? activeLatestLabel : undefined}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export default function ProjectsPage({
+  onOpenInChat, onOpenChat,
+  targetProjectId, targetInsightId, targetArticleKey, onClearQueueTarget,
+  userId, userName,
+  onSidebarClose,
+}) {
   // Project list
   const [projects,       setProjects]       = useState([])
   const [loadingList,    setLoadingList]    = useState(true)
@@ -140,15 +187,11 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   const [readKeys,       setReadKeys]       = useState(new Set())
 
   // Related chats lazy cache: Map<articleKey, list|null>
-  // null = not loaded yet, list = loaded (may be empty)
   const [relatedChatsMap, setRelatedChatsMap] = useState(new Map())
-  // Track which article_keys are currently loading to avoid duplicate fetches
   const loadingRelated = useRef(new Set())
 
-  // Sidebar
-  const [sidebarCollapsed,    setSidebarCollapsed]    = useState(false)
-  const [mobileSidebarOpen,   setMobileSidebarOpen]   = useState(false)
-  const [visitedOrder,        setVisitedOrder]        = useState([])
+  // Sidebar content registration
+  const [visitedOrder, setVisitedOrder] = useState([])
 
   // Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false)
@@ -157,21 +200,70 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   const [showCreate,     setShowCreate]     = useState(false)
   const [creating,       setCreating]       = useState(false)
   const [showEdit,       setShowEdit]       = useState(false)
-  const [pendingDelete,  setPendingDelete]  = useState(null) // project object awaiting confirmation
+  const [pendingDelete,  setPendingDelete]  = useState(null)
 
-  // ── Derived display labels (calendar-based, same system as DailyPackageView) ──
-  // Computed inline so they stay in sync whenever `insights` changes.
+  // ── Derived display labels ────────────────────────────────────────────────────
   const _todayStr            = new Date().toLocaleDateString("en-CA")
   const _activeDisplayLabels = computeDisplayLabels(insights)
   const _generatedTodayCount = insights.filter(p =>
     p.generated_at && new Date(p.generated_at).toLocaleDateString("en-CA") === _todayStr
   ).length
-  // Label of the latest (newest) successfully-fetched package
   const activeLatestLabel = insights.length > 0
     ? (_activeDisplayLabels.get(insights[0].id) ?? null)
     : null
-  // Label that the *next* generation will produce
   const activeNextLabel = computeNextLabel(insights, _activeDisplayLabels, _generatedTodayCount)
+
+  // ── Sort projects by most-recently-visited ────────────────────────────────────
+  const sortedProjects = visitedOrder.length === 0 ? projects : [...projects].sort((a, b) => {
+    const ia = visitedOrder.indexOf(a.project_id)
+    const ib = visitedOrder.indexOf(b.project_id)
+    if (ia === -1 && ib === -1) return 0
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
+
+  // ── Sidebar subsection registration ──────────────────────────────────────────
+  const { register } = useSidebarSubsection()
+
+  // Stable ref for handlers so the subsection render fn always calls current handlers
+  const subsectionHandlers = useRef({})
+  useEffect(() => {
+    subsectionHandlers.current = {
+      handleSelect: (project) => {
+        handleSelect(project)
+        onSidebarClose?.()
+      },
+      onNew:    () => setShowCreate(true),
+      onDelete: handleDeleteRequest,
+      onEdit:   (id) => { setActiveId(id); setShowEdit(true) },
+    }
+  })
+
+  useEffect(() => {
+    register('feed', (query) => {
+      const q = query?.trim().toLowerCase() ?? ''
+      const filtered = q
+        ? sortedProjects.filter(p => p.name.toLowerCase().includes(q))
+        : sortedProjects
+      return (
+      <FeedSubsection
+        projects={filtered}
+        activeId={activeId}
+        loadingList={loadingList}
+        listError={listError}
+        progressions={progressions}
+        activeLatestLabel={activeLatestLabel}
+        onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
+        onNew={() => subsectionHandlers.current.onNew()}
+        onDelete={(id) => subsectionHandlers.current.onDelete(id)}
+        onEdit={(id) => subsectionHandlers.current.onEdit(id)}
+      />
+      )
+    })
+    // No cleanup — ProjectsPage is always-mounted.
+    // Sidebar gates display with subsection.type === view.
+  }, [register, sortedProjects, activeId, loadingList, listError, progressions, activeLatestLabel])
 
   // ── Auto-select project when navigated from global search ─────────────────
   useEffect(() => {
@@ -189,14 +281,12 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
         setProjects(data)
         if (data.length > 0) {
           setActiveId(data[0].project_id)
-          // Batch-load progressions for all projects
           const ids = data.map(p => p.project_id)
           try {
             const map = await listAllProgressions(ids)
             setProgressions(map)
           } catch (_) {}
         } else if (!hasCompletedOnboarding(userId)) {
-          // New user — show guided onboarding instead of empty state
           setShowOnboarding(true)
         }
       })
@@ -217,7 +307,6 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
     listProjectInsights(activeId, 20)
       .then(async (data) => {
         setInsights(data)
-        // Load read state for the latest package
         if (data.length > 0) {
           const latestId = data[0].id
           const keys = await getInsightReadKeys(activeId, latestId).catch(() => new Set())
@@ -229,13 +318,13 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
-  // Restore generating UI if user switched tabs mid-generation and just came back
+  // Restore generating UI if user switched tabs mid-generation
   useEffect(() => {
     if (!activeId) return
     if (_generatingNow.has(activeId)) setGenerating(true)
   }, [activeId])
 
-  // When generation finishes (possibly in a background/old instance), refresh insights
+  // When generation finishes in background, refresh insights
   useEffect(() => {
     if (!activeId) return
     function onDone(e) {
@@ -338,7 +427,6 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
     finally { setCreating(false) }
   }, [])
 
-  // Onboarding path: create project then immediately generate Day 1
   const handleOnboardingComplete = useCallback(async (fields) => {
     setCreating(true)
     try {
@@ -346,7 +434,6 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
       setShowOnboarding(false)
-      // Auto-generate Day 1 so the user lands on content, not an empty state
       _generatingNow.add(project.project_id)
       setGenerating(true)
       const pid = project.project_id
@@ -422,11 +509,11 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
     await markCardUnread(activeId, insightId, articleKey).catch(() => {})
   }, [activeId])
 
-  // ── Related chats (lazy load per article) ─────────────────────────────────
+  // ── Related chats ──────────────────────────────────────────────────────────
 
   const handleLoadRelatedChats = useCallback(async (insightId, articleKey) => {
     if (!activeId) return
-    if (loadingRelated.current.has(articleKey)) return  // deduplicate concurrent calls
+    if (loadingRelated.current.has(articleKey)) return
     loadingRelated.current.add(articleKey)
     try {
       const links = await getArticleChatLinks(activeId, articleKey)
@@ -454,302 +541,59 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
 
   const activeProject = projects.find(p => p.project_id === activeId) ?? null
 
-  // Sort sidebar by most-recently-visited first
-  const sortedProjects = visitedOrder.length === 0 ? projects : [...projects].sort((a, b) => {
-    const ia = visitedOrder.indexOf(a.project_id)
-    const ib = visitedOrder.indexOf(b.project_id)
-    if (ia === -1 && ib === -1) return 0
-    if (ia === -1) return 1
-    if (ib === -1) return -1
-    return ia - ib
-  })
-
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col md:flex-row gap-0 min-h-[calc(100vh-8rem)]">
+    <>
+      {/* Greeting */}
+      <div className="mb-2.5 md:mb-4 px-1">
+        <h1 className="text-xl md:text-2xl font-bold text-slate-100 tracking-tight">{getGreeting(userName)}</h1>
+      </div>
 
-      {/* ── Left sidebar — desktop only ── */}
-      <aside className={`hidden md:flex flex-shrink-0 flex-col border-r border-slate-800/40 transition-[width] duration-200 ease-in-out ${sidebarCollapsed ? "w-16" : "w-56"}`}
-        style={{ paddingRight: sidebarCollapsed ? '0' : '12px', marginRight: '20px' }}>
-
-        {/* Sidebar header */}
-        <div className={`flex items-center mb-4 ${sidebarCollapsed ? "justify-center flex-col gap-2" : "justify-between"}`}>
-          {!sidebarCollapsed && (
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
-              Projects
-            </span>
+      {/* Workspace */}
+      {!activeProject ? (
+        <EmptyWorkspace onNew={() => setShowCreate(true)} />
+      ) : (
+        <>
+          {genError && (
+            <div className="mb-5 px-4 py-3 bg-red-950/30 border border-red-900/40 rounded-xl text-xs text-red-400">
+              {genError}
+            </div>
           )}
-          <div className={`flex ${sidebarCollapsed ? "flex-col" : "flex-row"} items-center gap-1`}>
-            {!sidebarCollapsed && (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="p-1.5 rounded-md text-slate-600 hover:text-slate-300 hover:bg-slate-800/60 transition-colors"
-                title="New project"
-              >
-                <PlusIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <button
-              onClick={() => setSidebarCollapsed(c => !c)}
-              className="p-1.5 rounded-md text-slate-700 hover:text-slate-400 hover:bg-slate-800/50 transition-colors"
-              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed
-                ? <ChevronRightIcon className="w-3.5 h-3.5" />
-                : <ChevronLeftIcon className="w-3.5 h-3.5" />
-              }
-            </button>
-          </div>
-        </div>
 
-        {/* Project list */}
-        {loadingList ? (
-          sidebarCollapsed ? null : <SidebarSkeleton />
-        ) : listError ? (
-          sidebarCollapsed ? null : <p className="text-xs text-red-400 px-1">{listError}</p>
-        ) : projects.length === 0 ? (
-          sidebarCollapsed ? (
-            <button
-              onClick={() => setShowCreate(true)}
-              className="w-10 h-10 mx-auto rounded-xl flex items-center justify-center bg-slate-800/50 text-slate-600 hover:text-slate-400 hover:bg-slate-800 transition-all"
-              title="New project"
-            >
-              <PlusIcon className="w-4 h-4" />
-            </button>
+          {loadingContent && !generating ? (
+            <WorkspaceSkeleton />
           ) : (
-            <EmptySidebar onNew={() => setShowCreate(true)} />
-          )
-        ) : sidebarCollapsed ? (
-          /* Collapsed: stacked gradient icon squares */
-          <div className="flex flex-col items-center gap-2">
-            {sortedProjects.map(project => {
-              const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
-              const isActive = project.project_id === activeId
-              return (
-                <button
-                  key={project.project_id}
-                  onClick={() => handleSelect(project)}
-                  title={project.name}
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all flex-shrink-0 shadow-sm ${
-                    isActive
-                      ? `bg-gradient-to-br ${grad} text-white shadow-md ring-1 ring-white/10`
-                      : "bg-slate-800/60 text-slate-400 hover:bg-slate-700/70 hover:text-slate-200"
-                  }`}
-                >
-                  {project.name.charAt(0).toUpperCase()}
-                </button>
-              )
-            })}
-            <button
-              onClick={() => setShowCreate(true)}
-              className="w-10 h-10 mt-1 rounded-xl flex items-center justify-center border border-dashed border-slate-700/60 text-slate-700 hover:border-slate-600 hover:text-slate-500 transition-all"
-              title="New project"
-            >
-              <PlusIcon className="w-4 h-4" />
-            </button>
-          </div>
-        ) : (
-          /* Expanded: project rows, sorted by recently visited */
-          <div className="space-y-1 overflow-y-auto">
-            {sortedProjects.map(project => (
-              <ProjectCard
-                key={project.project_id}
-                project={project}
-                progression={progressions[project.project_id]}
-                isActive={project.project_id === activeId}
-                onSelect={handleSelect}
-                onDelete={handleDeleteRequest}
-                onEdit={(id) => { setActiveId(id); setShowEdit(true) }}
-                displayLabel={project.project_id === activeId ? activeLatestLabel : undefined}
-              />
-            ))}
-          </div>
-        )}
-      </aside>
-
-      {/* ── Right workspace ── */}
-      <main className="flex-1 min-w-0">
-
-        {/* Greeting banner — always visible at the top */}
-        <div className="mb-4 px-1">
-          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{getGreeting(userName)}</h1>
-        </div>
-
-        {/* Mobile project selector strip — mobile only */}
-        <div className="flex md:hidden items-center gap-2 mb-3 -mx-3 px-3">
-          {/* Sidebar trigger */}
-          <button
-            onClick={() => setMobileSidebarOpen(true)}
-            className="flex-shrink-0 p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-            title="All projects"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
-            </svg>
-          </button>
-
-          {/* Project chips */}
-          {projects.length > 0 && (
-            <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-none flex-1">
-              {sortedProjects.map(project => {
-                const isActive = project.project_id === activeId
-                const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
-                return (
-                  <button
-                    key={project.project_id}
-                    onClick={() => handleSelect(project)}
-                    className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                      isActive
-                        ? `bg-gradient-to-r ${grad} text-white shadow-sm`
-                        : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {project.name}
-                  </button>
-                )
-              })}
-              <button
-                onClick={() => setShowCreate(true)}
-                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-slate-700/60 text-slate-600 hover:text-slate-400 transition-all"
-              >
-                <PlusIcon className="w-3 h-3" />
-                New
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Mobile slide-out project sidebar */}
-        {mobileSidebarOpen && (
-          <>
-            <div
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
-              onClick={() => setMobileSidebarOpen(false)}
+            <ProjectInsightView
+              project={activeProject}
+              insights={insights}
+              onGenerate={handleGenerate}
+              onRegenerate={handleRegenerate}
+              generating={generating}
+              targetInsightId={targetInsightId}
+              targetArticleKey={targetArticleKey}
+              onClearQueueTarget={onClearQueueTarget}
+              onOpenInChat={
+                onOpenInChat
+                  ? (card, action) => onOpenInChat(card, action, {
+                      name:       activeProject.name,
+                      keywords:   activeProject.keywords,
+                      domain:     activeProject.domain || "default",
+                      project_id: activeProject.project_id,
+                      insight_id: insights[0]?.id ?? null,
+                    })
+                  : undefined
+              }
+              readKeys={readKeys}
+              onMarkRead={handleMarkRead}
+              onMarkUnread={handleMarkUnread}
+              relatedChatsMap={relatedChatsMap}
+              onLoadRelatedChats={handleLoadRelatedChats}
+              onOpenChat={handleOpenChat}
             />
-            <div className="fixed left-0 top-0 bottom-0 w-72 bg-slate-950 border-r border-slate-800/60 z-50 flex flex-col md:hidden">
-              {/* Drawer header */}
-              <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800/60">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Projects</span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => { setShowCreate(true); setMobileSidebarOpen(false) }}
-                    className="p-1.5 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-                    title="New project"
-                  >
-                    <PlusIcon className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setMobileSidebarOpen(false)}
-                    className="p-1.5 rounded-md text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.06 1.06L9.06 8l3.22 3.22a.749.749 0 0 1-1.06 1.06L8 9.06l-3.22 3.22a.751.751 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Project list */}
-              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
-                {sortedProjects.map(project => {
-                  const isActive = project.project_id === activeId
-                  const grad = COLOR_GRADIENT[project.color] || COLOR_GRADIENT.blue
-                  return (
-                    <div
-                      key={project.project_id}
-                      className={`group flex items-center gap-2 px-3 py-2.5 rounded-xl transition-all ${
-                        isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                      }`}
-                    >
-                      <button
-                        onClick={() => { handleSelect(project); setMobileSidebarOpen(false) }}
-                        className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
-                      >
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 bg-gradient-to-br ${grad} text-white`}>
-                          {project.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate leading-snug">{project.name}</p>
-                          <p className="text-[10px] text-slate-600 mt-0.5">
-                            {project.project_id === activeId
-                              ? (activeLatestLabel ?? `Day ${project.insight_count ?? 1}`)
-                              : `Day ${project.insight_count ?? 1}`}
-                          </p>
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                        <button
-                          onClick={() => { setActiveId(project.project_id); setShowEdit(true); setMobileSidebarOpen(false) }}
-                          className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-700 transition-colors"
-                          title="Edit"
-                        >
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => { handleDeleteRequest(project.project_id); setMobileSidebarOpen(false) }}
-                          className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-colors"
-                          title="Delete"
-                        >
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </>
-        )}
-
-        {!activeProject ? (
-          <EmptyWorkspace onNew={() => setShowCreate(true)} />
-        ) : (
-          <>
-            {genError && (
-              <div className="mb-5 px-4 py-3 bg-red-950/30 border border-red-900/40 rounded-xl text-xs text-red-400">
-                {genError}
-              </div>
-            )}
-
-            {loadingContent && !generating ? (
-              <WorkspaceSkeleton />
-            ) : (
-              <ProjectInsightView
-                project={activeProject}
-                insights={insights}
-                onGenerate={handleGenerate}
-                onRegenerate={handleRegenerate}
-                generating={generating}
-                targetInsightId={targetInsightId}
-                targetArticleKey={targetArticleKey}
-                onClearQueueTarget={onClearQueueTarget}
-                onOpenInChat={
-                  onOpenInChat
-                    ? (card, action) => onOpenInChat(card, action, {
-                        name:       activeProject.name,
-                        keywords:   activeProject.keywords,
-                        domain:     activeProject.domain || "default",
-                        project_id: activeProject.project_id,
-                        insight_id: insights[0]?.id ?? null,
-                      })
-                    : undefined
-                }
-                readKeys={readKeys}
-                onMarkRead={handleMarkRead}
-                onMarkUnread={handleMarkUnread}
-                relatedChatsMap={relatedChatsMap}
-                onLoadRelatedChats={handleLoadRelatedChats}
-                onOpenChat={handleOpenChat}
-              />
-            )}
-          </>
-        )}
-      </main>
+          )}
+        </>
+      )}
 
       {showOnboarding && (
         <OnboardingModal
@@ -784,7 +628,7 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl bg-red-950/60 border border-red-900/50 flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-red-400" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
+                  <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
                 </svg>
               </div>
               <div>
@@ -815,7 +659,7 @@ export default function ProjectsPage({ onOpenInChat, onOpenChat, targetProjectId
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -845,7 +689,6 @@ function EmptySidebar({ onNew }) {
 function EmptyWorkspace({ onNew }) {
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8">
-      {/* Decorative grid */}
       <div className="relative w-16 h-16 mb-6">
         <div className="absolute inset-0 rounded-2xl bg-slate-800/80 border border-slate-700/60" />
         <div className="absolute inset-0 flex items-center justify-center">

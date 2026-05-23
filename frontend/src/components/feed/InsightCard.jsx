@@ -306,13 +306,13 @@ export default function InsightCard({
     }`}>
 
       {/* Card header */}
-      <div className="px-3 pt-3 pb-2 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          <div className={`flex-shrink-0 w-7 h-7 rounded-lg border flex items-center justify-center mt-0.5 ${type.iconBg}`}>
-            <Icon className={`w-3.5 h-3.5 ${type.iconColor}`} />
+      <div className="px-3 pt-2.5 pb-1.5 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5 md:gap-3 min-w-0">
+          <div className={`flex-shrink-0 w-6 h-6 md:w-7 md:h-7 rounded-md md:rounded-lg border flex items-center justify-center mt-0.5 ${type.iconBg}`}>
+            <Icon className={`w-3 h-3 md:w-3.5 md:h-3.5 ${type.iconColor}`} />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${type.labelColor}`}>
                 {type.label}
               </span>
@@ -339,20 +339,20 @@ export default function InsightCard({
       </div>
 
       {/* Summary */}
-      <div className="px-3 pb-2 md:px-4 md:pb-3">
+      <div className="px-3 pb-1.5 md:px-4 md:pb-3">
         <p className="text-[13px] md:text-sm text-slate-400 leading-relaxed">{card.summary}</p>
       </div>
 
       {/* Educational explanation (always open) */}
       {card.educational_explanation && (
         <div className="border-t border-slate-800/80">
-          <div className="flex items-center gap-2 px-3 md:px-4 py-2">
+          <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
             <LightbulbIcon className="w-3 h-3 text-slate-500" />
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
               {card.content_type === "educational" ? "Deep Dive" : "Why This Works"}
             </span>
           </div>
-          <div className="px-3 md:px-4 pb-3 md:pb-3.5 bg-slate-800/20">
+          <div className="px-3 md:px-4 pb-2 md:pb-3.5 bg-slate-800/20">
             <p className="text-xs text-slate-400 leading-relaxed">{card.educational_explanation}</p>
           </div>
         </div>
@@ -360,7 +360,7 @@ export default function InsightCard({
 
       {/* Why it matters */}
       {card.why_it_matters && (
-        <div className="mx-3 mb-2 md:mx-4 md:mb-3 px-3 py-2 md:py-2.5 bg-slate-800/50 rounded-xl border border-slate-700/40">
+        <div className="mx-3 mb-1.5 md:mx-4 md:mb-3 px-3 py-1.5 md:py-2.5 bg-slate-800/50 rounded-xl border border-slate-700/40">
           <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Why it matters</p>
           <p className="text-xs text-slate-300 leading-relaxed">{card.why_it_matters}</p>
         </div>
@@ -368,7 +368,7 @@ export default function InsightCard({
 
       {/* Source links */}
       {card.source_links?.length > 0 && (
-        <div className="px-3 pb-3 md:px-4 md:pb-4 flex flex-wrap gap-2">
+        <div className="px-3 pb-2 md:px-4 md:pb-4 flex flex-wrap gap-1.5 md:gap-2">
           {card.source_links.slice(0, 3).map((link, i) => (
             <a
               key={i}
@@ -386,7 +386,7 @@ export default function InsightCard({
 
       {/* Bottom action bar */}
       {(hasChatActions || onMarkRead || onMarkUnread) && (
-        <div className="border-t border-slate-800/80 px-3 md:px-4 py-2 md:py-2.5">
+        <div className="border-t border-slate-800/80 px-3 md:px-4 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* PRIMARY: Ask About */}

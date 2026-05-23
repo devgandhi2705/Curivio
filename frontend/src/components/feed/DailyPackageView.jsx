@@ -178,9 +178,9 @@ function ExportButton({ pkg, project, dayLabel }) {
 function PackageHeader({ pkg, dayLabel, actions }) {
   const contentMix = buildContentMix(pkg)
   return (
-    <div className="mb-4 md:mb-7">
+    <div className="mb-3 md:mb-7">
       {/* Meta row */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mb-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 md:mb-3">
         <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
           {dayLabel ?? `Day ${pkg.day_number}`}
         </span>
@@ -192,7 +192,7 @@ function PackageHeader({ pkg, dayLabel, actions }) {
       </div>
 
       {/* Headline */}
-      <h2 className="text-lg md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-2 md:mb-4 break-words">
+      <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-1.5 md:mb-4 break-words">
         {pkg.package_headline}
       </h2>
 
@@ -209,7 +209,7 @@ function PackageHeader({ pkg, dayLabel, actions }) {
 
 function SectionDivider({ label }) {
   return (
-    <div className="flex items-center gap-3 my-3 md:my-5">
+    <div className="flex items-center gap-3 my-2 md:my-5">
       <div className="flex-1 h-px bg-slate-800" />
       <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">{label}</span>
       <div className="flex-1 h-px bg-slate-800" />
@@ -219,7 +219,7 @@ function SectionDivider({ label }) {
 
 function ActionItem({ text }) {
   return (
-    <div className="mt-4 md:mt-6 flex gap-3 px-3 md:px-4 py-3 md:py-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl">
+    <div className="mt-3 md:mt-6 flex gap-2.5 md:gap-3 px-3 md:px-4 py-2.5 md:py-4 bg-slate-800/40 border border-slate-700/40 rounded-xl md:rounded-2xl">
       <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mt-0.5">
         <svg className="w-3 h-3 text-blue-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M2 6l3 3 5-5" />
@@ -241,7 +241,7 @@ function DayProgressBar({ readCount, totalCount }) {
   const allDone = readCount >= totalCount
 
   return (
-    <div className="flex items-center gap-3 mb-3 md:mb-5 px-4 py-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
+    <div className="flex items-center gap-3 mb-2.5 md:mb-5 px-3 md:px-4 py-2.5 md:py-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
       <div className="flex-1">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[11px] font-semibold text-slate-400">Day progress</span>
@@ -375,7 +375,7 @@ function HistoryItem({ pkg, dayLabel, isSelected, onClick }) {
 
 function CuriositySectionHeader() {
   return (
-    <div className="flex items-center gap-3 my-6">
+    <div className="flex items-center gap-3 my-3 md:my-6">
       <div className="flex-1 h-px bg-slate-800/60" />
       <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-950/40 border border-amber-500/20">
         <svg className="w-3 h-3 text-amber-400/80" viewBox="0 0 20 20" fill="currentColor">
@@ -476,7 +476,7 @@ function PackageContent({
       {newsCards.length > 0 && (
         <>
           <SectionDivider label="Current Events" />
-          <div className="space-y-2 md:space-y-3">
+          <div className="space-y-1.5 md:space-y-3">
             {newsCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -493,7 +493,7 @@ function PackageContent({
       {eduCards.length > 0 && (
         <>
           <SectionDivider label="Deep Learning" />
-          <div className="space-y-2 md:space-y-3">
+          <div className="space-y-1.5 md:space-y-3">
             {eduCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -525,12 +525,12 @@ function PackageContent({
 
       {/* ── Curiosity Picks section ──────────────────────────────────────── */}
       {curiosityCards.length > 0 && (
-        <div className="mt-2">
+        <div className="mt-1.5 md:mt-2">
           <CuriositySectionHeader />
-          <p className="text-[11px] text-slate-600 mb-3 leading-relaxed">
+          <p className="text-[11px] text-slate-600 mb-2 md:mb-3 leading-relaxed">
             Optional side trails — intellectually stimulating, not on the critical path.
           </p>
-          <div className="space-y-2 md:space-y-3">
+          <div className="space-y-1.5 md:space-y-3">
             {curiosityCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -544,7 +544,7 @@ function PackageContent({
       )}
 
       {/* Generate next package */}
-      <div className="mt-4 md:mt-6 pt-4 md:pt-5 border-t border-slate-800">
+      <div className="mt-3 md:mt-6 pt-3 md:pt-5 border-t border-slate-800">
         <GenerateButton
           generating={generating}
           onGenerate={onGenerate}

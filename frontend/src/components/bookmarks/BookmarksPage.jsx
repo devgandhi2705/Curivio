@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   fetchCollections, fetchBookmarks,
   deleteBookmark, deleteCollection,
   createCollection, updateCollection,
 } from '../../api/bookmarks.js'
 import CollectionPickerModal from './CollectionPickerModal.jsx'
+import { useSidebarSubsection } from '../../contexts/SidebarSubsection.jsx'
 
 // ── Color palette ──────────────────────────────────────────────────────────────
 
@@ -196,18 +197,18 @@ function CollectionItem({ col, isActive, onClick, onDelete, onEdit }) {
   }
 
   return (
-    <div className={`group flex items-start gap-2.5 px-3 py-2.5 rounded-lg transition-all ${
-      isActive ? 'bg-slate-800 text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+    <div className={`group flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors ${
+      isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
     }`}>
       <button onClick={() => onClick(col.collection_id)} className="flex items-start gap-2.5 flex-1 min-w-0 text-left">
         <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-1">
             <span className="text-sm font-medium truncate">{col.name}</span>
-            <span className="text-[10px] text-slate-600 flex-shrink-0">{col.bookmark_count}</span>
+            <span className="text-[10px] text-slate-500 flex-shrink-0">{col.bookmark_count}</span>
           </div>
           {col.description && (
-            <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-600'}`}>
+            <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-500'}`}>
               {col.description}
             </p>
           )}
@@ -216,7 +217,7 @@ function CollectionItem({ col, isActive, onClick, onDelete, onEdit }) {
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5 transition-opacity">
         <button
           onClick={e => { e.stopPropagation(); onEdit(col) }}
-          className="p-1 rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700 transition-colors"
+          className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-colors"
           title="Edit"
         >
           <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
@@ -226,7 +227,7 @@ function CollectionItem({ col, isActive, onClick, onDelete, onEdit }) {
         <button
           onClick={handleDelete}
           disabled={deleting}
-          className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-colors"
+          className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
           title="Delete"
         >
           <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
@@ -355,9 +356,50 @@ function EditCollectionModal({ col, onClose, onSave }) {
   )
 }
 
+// ── Collections subsection — rendered inside App sidebar's Zone 3 ─────────────
+
+function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew, onDelete, onEdit }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-1 mb-2 flex-shrink-0">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Collections</span>
+        <button
+          onClick={onNew}
+          className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+          title="New collection"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z" />
+          </svg>
+        </button>
+      </div>
+      <div className="flex-1 space-y-0.5 overflow-y-auto min-h-0">
+        {colLoading ? (
+          <div className="space-y-1">
+            {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-800/40 rounded-lg animate-pulse" />)}
+          </div>
+        ) : collections.length === 0 ? (
+          <p className="text-xs text-slate-600 px-1 py-2">No collections yet.</p>
+        ) : (
+          collections.map(col => (
+            <CollectionItem
+              key={col.collection_id}
+              col={col}
+              isActive={activeId === col.collection_id}
+              onClick={onSelect}
+              onDelete={onDelete}
+              onEdit={onEdit}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function BookmarksPage({ onOpenChat }) {
+export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
   const [collections,    setCollections]    = useState([])
   const [bookmarks,      setBookmarks]      = useState([])
   const [activeId,       setActiveId]       = useState(null)
@@ -366,8 +408,42 @@ export default function BookmarksPage({ onOpenChat }) {
   const [search,         setSearch]         = useState('')
   const [typeFilter,     setTypeFilter]     = useState('')
   const [showNewCol,     setShowNewCol]     = useState(false)
-  const [colsOpen,       setColsOpen]       = useState(() => window.innerWidth >= 768)
-  const [editingCol,     setEditingCol]     = useState(null) // collection object being edited
+  const [editingCol,     setEditingCol]     = useState(null)
+
+  const { register, unregister } = useSidebarSubsection()
+  const subsectionHandlers = useRef({})
+
+  // Update handler refs every render so the registered render fn always calls current handlers
+  useEffect(() => {
+    subsectionHandlers.current = {
+      onSelect:  (id) => { setActiveId(id); onSidebarClose?.() },
+      onNew:     () => setShowNewCol(true),
+      onDelete:  (colId) => handleDeleteCollection(colId),
+      onEdit:    (col) => setEditingCol(col),
+    }
+  })
+
+  // Register subsection — cleanup on unmount since BookmarksPage is conditionally mounted
+  useEffect(() => {
+    register('bookmarks', (query) => {
+      const q = query?.trim().toLowerCase() ?? ''
+      const filtered = q
+        ? collections.filter(c => c.name.toLowerCase().includes(q))
+        : collections
+      return (
+        <BookmarksSubsection
+          collections={filtered}
+          activeId={activeId}
+          colLoading={colLoading}
+          onSelect={(id) => subsectionHandlers.current.onSelect(id)}
+          onNew={() => subsectionHandlers.current.onNew()}
+          onDelete={(id) => subsectionHandlers.current.onDelete(id)}
+          onEdit={(col) => subsectionHandlers.current.onEdit(col)}
+        />
+      )
+    })
+    return () => unregister('bookmarks')
+  }, [register, unregister, collections, activeId, colLoading])
 
   // Load collections on mount
   useEffect(() => {
@@ -405,9 +481,7 @@ export default function BookmarksPage({ onOpenChat }) {
   )
 
   function handleDeleteBookmark(bmId) {
-    // Optimistic: remove from list immediately
     setBookmarks(prev => prev.filter(b => b.bookmark_id !== bmId))
-    // Then silently sync counts from server
     refreshCounts()
   }
 
@@ -437,111 +511,39 @@ export default function BookmarksPage({ onOpenChat }) {
   }
 
   return (
-    <div className="relative flex" style={{ height: 'calc(100dvh - var(--header-h) - var(--mobile-nav-h))' }}>
+    <div className="py-6 px-4 sm:px-8">
 
-      {/* Mobile backdrop for sidebar */}
-      {colsOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-20 md:hidden"
-          onClick={() => setColsOpen(false)}
-        />
-      )}
-
-      {/* ── Collections sidebar ── */}
-      <aside className={`flex-shrink-0 flex flex-col border-r border-slate-800/60 overflow-y-auto transition-all duration-200 ${colsOpen ? 'fixed left-0 top-0 bottom-0 z-30 bg-slate-950 md:static md:inset-auto md:bg-transparent w-56 py-6 px-3' : 'w-10 py-6 px-0 items-center'}`}>
-        {colsOpen ? (
-          <>
-            <div className="flex items-center justify-between px-1 mb-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Collections</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setShowNewCol(true)}
-                  className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-                  title="New collection"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setColsOpen(false)}
-                  className="p-1 rounded text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-                  title="Collapse sidebar"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 space-y-0.5 overflow-y-auto">
-              {colLoading ? (
-                <div className="space-y-1 px-1 pt-2">
-                  {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-800/40 rounded-lg animate-pulse" />)}
-                </div>
-              ) : (
-                collections.map(col => (
-                  <CollectionItem
-                    key={col.collection_id}
-                    col={col}
-                    isActive={activeId === col.collection_id}
-                    onClick={setActiveId}
-                    onDelete={handleDeleteCollection}
-                    onEdit={setEditingCol}
-                  />
-                ))
-              )}
-            </div>
-          </>
-        ) : (
-          <button
-            onClick={() => setColsOpen(true)}
-            className="p-1.5 rounded text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-            title="Expand collections"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
-            </svg>
-          </button>
-        )}
-      </aside>
-
-      {/* ── Main content ── */}
-      <div className="flex-1 flex flex-col min-w-0 py-6 px-4 sm:px-8 overflow-y-auto">
-
-        {/* Search + filter bar */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="relative flex-1 max-w-sm">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z" />
-            </svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search bookmarks…"
-              className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
-            />
-          </div>
-
+      {/* Search bar */}
+      <div className="flex items-center gap-3 mb-6">
+        <div className="relative flex-1 max-w-sm">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z" />
+          </svg>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search bookmarks…"
+            className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-600 transition-colors"
+          />
         </div>
-
-        {/* Bookmark grid */}
-        {bmLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3,4,5,6].map(i => (
-              <div key={i} className="h-48 bg-slate-800/30 rounded-xl animate-pulse" />
-            ))}
-          </div>
-        ) : bookmarks.length === 0 ? (
-          <EmptyState activeCol={activeCol} hasFilters={!!search || !!typeFilter} />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {bookmarks.map(bm => (
-              <BookmarkCard key={bm.bookmark_id} bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} />
-            ))}
-          </div>
-        )}
       </div>
+
+      {/* Bookmark grid */}
+      {bmLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1,2,3,4,5,6].map(i => (
+            <div key={i} className="h-48 bg-slate-800/30 rounded-xl animate-pulse" />
+          ))}
+        </div>
+      ) : bookmarks.length === 0 ? (
+        <EmptyState activeCol={activeCol} hasFilters={!!search || !!typeFilter} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {bookmarks.map(bm => (
+            <BookmarkCard key={bm.bookmark_id} bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} />
+          ))}
+        </div>
+      )}
 
       {showNewCol && (
         <NewCollectionModal

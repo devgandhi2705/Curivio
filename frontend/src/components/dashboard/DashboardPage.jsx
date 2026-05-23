@@ -446,9 +446,9 @@ export default function DashboardPage({ onGoToFeed, userName }) {
   return (
     <div>
       {/* Greeting */}
-      <div className="mb-5">
-        <h1 className="text-xl font-bold text-slate-100">{greeting}</h1>
-        <p className="text-sm text-slate-500 mt-0.5">{dateStr}</p>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{greeting}</h1>
+        <p className="text-sm text-slate-500 mt-1">{dateStr}</p>
       </div>
 
       {/* Stats strip */}
