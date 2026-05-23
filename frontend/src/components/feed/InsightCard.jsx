@@ -18,9 +18,9 @@ import { useState, useEffect, useRef } from "react"
 import BookmarkButton from "../bookmarks/BookmarkButton.jsx"
 
 const DIFF_BADGE = {
-  beginner:     "text-emerald-400 bg-emerald-900/30 border-emerald-800/40",
-  intermediate: "text-blue-400 bg-blue-900/30 border-blue-800/40",
-  advanced:     "text-violet-400 bg-violet-900/30 border-violet-800/40",
+  beginner:     "text-emerald-400/60 bg-emerald-900/15 border-emerald-800/25",
+  intermediate: "text-blue-400/60 bg-blue-900/15 border-blue-800/25",
+  advanced:     "text-violet-400/60 bg-violet-900/15 border-violet-800/25",
 }
 
 // ─── Icon components ──────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ const TYPE_CONFIG = {
     borderTop:  "border-t-2 border-t-blue-500/60",
     iconBg:     "bg-blue-500/15 border-blue-500/30",
     iconColor:  "text-blue-400",
-    labelColor: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+    labelColor: "text-blue-400/65 bg-blue-500/[0.08] border-blue-500/15",
     Icon: GlobeIcon,
   },
   educational: {
@@ -138,15 +138,15 @@ const TYPE_CONFIG = {
     borderTop:  "border-t-2 border-t-emerald-500/60",
     iconBg:     "bg-emerald-500/15 border-emerald-500/30",
     iconColor:  "text-emerald-400",
-    labelColor: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+    labelColor: "text-emerald-400/65 bg-emerald-500/[0.08] border-emerald-500/15",
     Icon: BookIcon,
   },
   curiosity: {
     label:      "Curiosity Pick",
-    borderTop:  "border-t-2 border-t-amber-500/50",
-    iconBg:     "bg-amber-500/10 border-amber-500/25",
-    iconColor:  "text-amber-400",
-    labelColor: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+    borderTop:  "border-t border-t-amber-500/40",
+    iconBg:     "bg-amber-500/10 border-amber-500/20",
+    iconColor:  "text-amber-400/80",
+    labelColor: "text-amber-400/60 bg-amber-500/[0.07] border-amber-500/15",
     Icon: LightbulbIcon,
   },
 }
@@ -301,37 +301,37 @@ export default function InsightCard({
     <div className={`rounded-2xl border overflow-hidden flex flex-col transition-colors ${
       type.borderTop
     } ${card.content_type === "curiosity"
-        ? "bg-slate-900/30 border-slate-800/50"
-        : `bg-slate-900/50 ${isRead ? "border-slate-800/50 opacity-80" : "border-slate-800"}`
+        ? "bg-amber-950/[0.10] border-amber-900/20"
+        : `bg-slate-900/50 ${isRead ? "border-slate-800/50 opacity-75" : "border-slate-800"}`
     }`}>
 
       {/* Card header */}
-      <div className="px-3 pt-2.5 pb-1.5 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2.5 md:gap-3 min-w-0">
+      <div className="px-3 pt-3 pb-1.5 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-2.5">
+        <div className="flex items-start gap-2 md:gap-3 min-w-0">
           <div className={`flex-shrink-0 w-6 h-6 md:w-7 md:h-7 rounded-md md:rounded-lg border flex items-center justify-center mt-0.5 ${type.iconBg}`}>
             <Icon className={`w-3 h-3 md:w-3.5 md:h-3.5 ${type.iconColor}`} />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${type.labelColor}`}>
+            <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide border ${type.labelColor}`}>
                 {type.label}
               </span>
               {card.category && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] text-slate-400 bg-slate-800/80 border border-slate-700/50">
+                <span className="text-[10px] text-slate-500/60">
                   {card.category}
                 </span>
               )}
             </div>
-            <h3 className="text-sm font-semibold text-slate-100 leading-snug">{card.title}</h3>
+            <h3 className="text-[15px] md:text-sm font-semibold text-slate-100 leading-snug">{card.title}</h3>
           </div>
         </div>
 
-        <div className="flex-shrink-0 flex items-center gap-2 mt-0.5">
+        <div className="flex-shrink-0 flex items-center gap-1.5 mt-0.5">
           {card.estimated_read_time && (
-            <span className="text-[10px] text-slate-600 whitespace-nowrap">{card.estimated_read_time}</span>
+            <span className="text-[10px] text-slate-600/70 whitespace-nowrap hidden sm:inline">{card.estimated_read_time}</span>
           )}
           {card.difficulty && (
-            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-medium border ${DIFF_BADGE[card.difficulty] || DIFF_BADGE.intermediate}`}>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium border ${DIFF_BADGE[card.difficulty] || DIFF_BADGE.intermediate}`}>
               {card.difficulty}
             </span>
           )}
@@ -339,30 +339,30 @@ export default function InsightCard({
       </div>
 
       {/* Summary */}
-      <div className="px-3 pb-1.5 md:px-4 md:pb-3">
+      <div className="px-3 pb-2 md:px-4 md:pb-3">
         <p className="text-[13px] md:text-sm text-slate-400 leading-relaxed">{card.summary}</p>
       </div>
 
       {/* Educational explanation (always open) */}
       {card.educational_explanation && (
-        <div className="border-t border-slate-800/80">
+        <div className="border-t border-slate-800/50">
           <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
-            <LightbulbIcon className="w-3 h-3 text-slate-500" />
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+            <LightbulbIcon className="w-3 h-3 text-slate-600" />
+            <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">
               {card.content_type === "educational" ? "Deep Dive" : "Why This Works"}
             </span>
           </div>
-          <div className="px-3 md:px-4 pb-2 md:pb-3.5 bg-slate-800/20">
-            <p className="text-xs text-slate-400 leading-relaxed">{card.educational_explanation}</p>
+          <div className="px-3 md:px-4 pb-2.5 md:pb-3.5">
+            <p className="text-[12px] md:text-xs text-slate-500 md:text-slate-400 leading-relaxed">{card.educational_explanation}</p>
           </div>
         </div>
       )}
 
       {/* Why it matters */}
       {card.why_it_matters && (
-        <div className="mx-3 mb-1.5 md:mx-4 md:mb-3 px-3 py-1.5 md:py-2.5 bg-slate-800/50 rounded-xl border border-slate-700/40">
-          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Why it matters</p>
-          <p className="text-xs text-slate-300 leading-relaxed">{card.why_it_matters}</p>
+        <div className="mx-3 mb-2 md:mx-4 md:mb-3 px-3 py-2 md:py-2.5 bg-slate-800/[0.28] md:bg-slate-800/50 rounded-lg md:rounded-xl border-0 md:border md:border-slate-700/40">
+          <p className="text-[10px] font-medium text-slate-600 uppercase tracking-wide mb-1">Why it matters</p>
+          <p className="text-[12px] md:text-xs text-slate-400 md:text-slate-300 leading-relaxed">{card.why_it_matters}</p>
         </div>
       )}
 
@@ -386,14 +386,14 @@ export default function InsightCard({
 
       {/* Bottom action bar */}
       {(hasChatActions || onMarkRead || onMarkUnread) && (
-        <div className="border-t border-slate-800/80 px-3 md:px-4 py-1.5 md:py-2.5">
+        <div className="border-t border-slate-800/50 px-2.5 md:px-4 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1 md:gap-1.5 flex-wrap">
             {/* PRIMARY: Ask About */}
             {onAskAbout && (
               <button
                 onClick={() => onAskAbout(card)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
               >
                 <ChatIcon className="w-3 h-3" />
                 Ask About
@@ -403,7 +403,7 @@ export default function InsightCard({
             {onExplainSimply && (
               <button
                 onClick={() => onExplainSimply(card)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/40 hover:bg-amber-500/10 border border-slate-700/40 hover:border-amber-500/30 transition-all"
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/20 hover:bg-amber-500/10 border border-slate-700/20 hover:border-amber-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
               >
                 <LightbulbIcon className="w-3 h-3" />
                 Explain Simply
@@ -413,7 +413,7 @@ export default function InsightCard({
             {onDeepResearch && (
               <button
                 onClick={() => onDeepResearch(card)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/40 hover:bg-violet-500/10 border border-slate-700/40 hover:border-violet-500/30 transition-all"
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/20 hover:bg-violet-500/10 border border-slate-700/20 hover:border-violet-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
               >
                 <MicroscopeIcon className="w-3 h-3" />
                 <span className="hidden md:inline">Deep Research</span>
@@ -487,10 +487,10 @@ export default function InsightCard({
             {(onToggleQueue || onSaveNote || onDeleteNote || note || onMarkRead || onMarkUnread) && (
               <button
                 onClick={() => setMoreOpen(o => !o)}
-                className={`md:hidden ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                className={`md:hidden ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
                   moreOpen
-                    ? "text-slate-300 bg-slate-800 border-slate-700"
-                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-slate-300"
+                    ? "text-slate-300 bg-slate-800/60 border-slate-700/50"
+                    : "text-slate-500/70 bg-transparent border-slate-700/20 hover:text-slate-300"
                 }`}
               >
                 <DotsIcon className="w-3.5 h-3.5" />
@@ -499,14 +499,14 @@ export default function InsightCard({
           </div>
           {/* Tertiary row — mobile only, shown when More is open */}
           {moreOpen && (
-            <div className="md:hidden flex items-center gap-1.5 flex-wrap mt-1.5 pt-1.5 border-t border-slate-800/50">
+            <div className="md:hidden flex items-center gap-1 flex-wrap mt-1.5 pt-1.5 border-t border-slate-800/40">
               {onToggleQueue && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
                     isQueued
                       ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
                   }`}
                 >
                   <ClockIcon className="w-3 h-3" />
@@ -516,10 +516,10 @@ export default function InsightCard({
               {(onSaveNote || onDeleteNote || note) && (
                 <button
                   onClick={() => setNoteOpen(o => !o)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
                     noteOpen || hasNote
                       ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
                   }`}
                 >
                   <PencilIcon className="w-3 h-3" />
@@ -532,10 +532,10 @@ export default function InsightCard({
               {(onMarkRead || onMarkUnread) && (
                 <button
                   onClick={handleReadToggle}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
                     isRead
-                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
-                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
                   }`}
                 >
                   {isRead

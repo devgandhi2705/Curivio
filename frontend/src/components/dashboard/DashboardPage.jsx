@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { listProjects } from "../../api/projects.js"
 import { getReadingStats } from "../../api/feed.js"
-import { getProjectActivity } from "../../api/activity.js"
+import { getProjectActivity, getAllProjectsActivity } from "../../api/activity.js"
 import LearningCalendar from "../feed/LearningCalendar.jsx"
 
 // ── Constants & helpers ───────────────────────────────────────────────────────
@@ -375,13 +375,14 @@ function ProjectLeaderboard({ projects }) {
 // ── Project selector ──────────────────────────────────────────────────────────
 
 function ProjectSelector({ projects, value, onChange }) {
-  if (projects.length <= 1) return null
+  if (projects.length === 0) return null
   return (
     <select
-      value={value ?? ""}
+      value={value}
       onChange={e => onChange(e.target.value)}
       className="text-xs bg-slate-800 border border-slate-700/60 text-slate-300 rounded-lg px-2.5 py-1 outline-none focus:border-slate-600 cursor-pointer"
     >
+      <option value="all">All Projects</option>
       {projects.map(p => (
         <option key={p.project_id} value={p.project_id}>{p.name}</option>
       ))}
@@ -396,7 +397,7 @@ export default function DashboardPage({ onGoToFeed, userName }) {
   const [statsLoading,      setStatsLoading]      = useState(true)
   const [projects,          setProjects]          = useState([])
   const [projectsLoading,   setProjectsLoading]   = useState(true)
-  const [selectedProjectId, setSelectedProjectId] = useState(null)
+  const [selectedProjectId, setSelectedProjectId] = useState('all')
   const [activityData,      setActivityData]      = useState([])
   const [activityLoading,   setActivityLoading]   = useState(false)
   const [weeklyTarget,      setWeeklyTarget]      = useState(getStoredWeeklyGoal)
@@ -407,18 +408,17 @@ export default function DashboardPage({ onGoToFeed, userName }) {
       .finally(() => setStatsLoading(false))
 
     listProjects()
-      .then(data => {
-        setProjects(data)
-        if (data.length > 0) setSelectedProjectId(data[0].project_id)
-      })
+      .then(data => { setProjects(data) })
       .catch(() => {})
       .finally(() => setProjectsLoading(false))
   }, [])
 
   useEffect(() => {
-    if (!selectedProjectId) { setActivityData([]); return }
     setActivityLoading(true)
-    getProjectActivity(selectedProjectId)
+    const fetchPromise = selectedProjectId === 'all'
+      ? getAllProjectsActivity()
+      : getProjectActivity(selectedProjectId)
+    fetchPromise
       .then(setActivityData).catch(() => setActivityData([]))
       .finally(() => setActivityLoading(false))
   }, [selectedProjectId])
@@ -431,6 +431,7 @@ export default function DashboardPage({ onGoToFeed, userName }) {
   }, [activityData])
 
   const selectedProject = projects.find(p => p.project_id === selectedProjectId) ?? null
+  const calendarLabel = selectedProjectId === 'all' ? 'All Projects' : (selectedProject?.name ?? '')
 
   function handleChangeTarget(n) {
     setWeeklyTarget(n)
@@ -462,12 +463,10 @@ export default function DashboardPage({ onGoToFeed, userName }) {
 
           {/* Calendar */}
           <div>
-            {projects.length > 1 && (
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Learning Calendar</span>
-                <ProjectSelector projects={projects} value={selectedProjectId} onChange={setSelectedProjectId} />
-              </div>
-            )}
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Learning Calendar</span>
+              <ProjectSelector projects={projects} value={selectedProjectId} onChange={setSelectedProjectId} />
+            </div>
             {projectsLoading ? (
               <div className="h-48 rounded-2xl bg-slate-900/40 border border-slate-800/50 animate-pulse" />
             ) : projects.length === 0 ? (
@@ -481,7 +480,7 @@ export default function DashboardPage({ onGoToFeed, userName }) {
               <LearningCalendar
                 data={activityData}
                 loading={activityLoading}
-                projectName={selectedProject?.name ?? ""}
+                projectName={calendarLabel}
               />
             )}
           </div>

@@ -1,23 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect } from "react"
 import { searchSessions } from "../../api/chat.js"
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
-
-function PencilIcon() {
-  return (
-    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064l6.286-6.286Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354l-1.086-1.086Z" />
-    </svg>
-  )
-}
-
-function TrashIcon() {
-  return (
-    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
-    </svg>
-  )
-}
 
 function SearchIcon() {
   return (
@@ -46,132 +30,28 @@ function Highlight({ text, query }) {
 
 // ─── Session row ──────────────────────────────────────────────────────────────
 
-function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) {
-  const [editing,    setEditing]    = useState(false)
-  const [draft,      setDraft]      = useState("")
-  const [confirmDel, setConfirmDel] = useState(false)
-  const inputRef = useRef(null)
-
+function SessionRow({ session, isActive, onSelect, query }) {
   const displayTitle = session.title || session.first_topic_hint || "Conversation"
   const showSnippet  = query && session.match_snippet
 
-  const startEdit = useCallback((e) => {
-    e.stopPropagation()
-    setDraft(session.title || session.first_topic_hint || "")
-    setEditing(true)
-    setConfirmDel(false)
-  }, [session.title, session.first_topic_hint])
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
-  }, [editing])
-
-  function commitEdit() {
-    const trimmed = draft.trim()
-    if (trimmed && trimmed !== displayTitle) onRename(session.session_id, trimmed)
-    setEditing(false)
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === "Enter")  { e.preventDefault(); commitEdit() }
-    if (e.key === "Escape") { setEditing(false) }
-    e.stopPropagation()
-  }
-
-  function handleDeleteClick(e) {
-    e.stopPropagation()
-    setConfirmDel(true)
-    setEditing(false)
-  }
-
-  function handleConfirmDelete(e) {
-    e.stopPropagation()
-    onDelete(session.session_id)
-  }
-
-  function handleCancelDelete(e) {
-    e.stopPropagation()
-    setConfirmDel(false)
-  }
-
   return (
-    <div
-      className={`group relative rounded-lg transition-colors ${
-        isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"
-      }`}
-    >
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={handleKeyDown}
-          maxLength={100}
-          className="w-full px-3 py-2.5 bg-transparent text-xs text-slate-100 focus:outline-none rounded-lg ring-1 ring-blue-500/50"
-          onClick={e => e.stopPropagation()}
-        />
-      ) : confirmDel ? (
-        <div className="px-3 py-2.5 flex items-center justify-between gap-2">
-          <span className="text-xs text-slate-400 truncate">Delete?</span>
-          <div className="flex gap-1 flex-shrink-0">
-            <button
-              onClick={handleConfirmDelete}
-              className="px-2 py-0.5 text-[10px] rounded bg-red-900/60 text-red-300 hover:bg-red-800/70 transition-colors"
-            >
-              Delete
-            </button>
-            <button
-              onClick={handleCancelDelete}
-              className="px-2 py-0.5 text-[10px] rounded bg-slate-700/60 text-slate-400 hover:bg-slate-700 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
+    <div className={`rounded-lg transition-colors ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
+      <button onClick={() => onSelect(session)} className="w-full text-left px-3 py-2.5 text-xs">
+        <div className={`font-medium truncate ${isActive ? "text-slate-100" : "text-slate-300 hover:text-slate-100"}`}>
+          <Highlight text={displayTitle} query={query} />
         </div>
-      ) : (
-        <button
-          onClick={() => onSelect(session)}
-          className="w-full text-left px-3 py-2.5 text-xs"
-        >
-          <div className={`font-medium truncate pr-12 ${isActive ? "text-slate-100" : "text-slate-300 group-hover:text-slate-100"}`}>
-            <Highlight text={displayTitle} query={query} />
+        {showSnippet ? (
+          <div className="text-slate-600 mt-0.5 text-[10px] leading-snug line-clamp-2">
+            <Highlight text={session.match_snippet} query={query} />
           </div>
-          {showSnippet ? (
-            <div className="text-slate-600 mt-0.5 text-[10px] leading-snug line-clamp-2 pr-12">
-              <Highlight text={session.match_snippet} query={query} />
-            </div>
-          ) : (
-            <div className="text-slate-600 mt-0.5 text-[10px]">
-              {session.message_count} msg{session.message_count !== 1 ? "s" : ""}
-              {" · "}
-              {formatRelativeTime(session.last_active_at)}
-            </div>
-          )}
-        </button>
-      )}
-
-      {!editing && !confirmDel && (
-        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={startEdit}
-            title="Rename"
-            className="p-1 rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700/60 transition-colors"
-          >
-            <PencilIcon />
-          </button>
-          <button
-            onClick={handleDeleteClick}
-            title="Delete"
-            className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-colors"
-          >
-            <TrashIcon />
-          </button>
-        </div>
-      )}
+        ) : (
+          <div className="text-slate-600 mt-0.5 text-[10px]">
+            {session.message_count} msg{session.message_count !== 1 ? "s" : ""}
+            {" · "}
+            {formatRelativeTime(session.last_active_at)}
+          </div>
+        )}
+      </button>
     </div>
   )
 }
@@ -179,7 +59,7 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
 // ─── Inline content for unified sidebar Zone 3 ───────────────────────────────
 // No <aside>, no own search input — query comes from the sidebar's Zone 3 field.
 
-export function SessionListContent({ query = "", sessions, currentSessionId, onSelect, onNew, onRename, onDelete }) {
+export function SessionListContent({ query = "", sessions, currentSessionId, onSelect, onNew }) {
   const [results,   setResults]   = useState(null)
   const [searching, setSearching] = useState(false)
   const timerRef = useRef(null)
@@ -263,8 +143,6 @@ export function SessionListContent({ query = "", sessions, currentSessionId, onS
           session={session}
           isActive={session.session_id === currentSessionId}
           onSelect={onSelect}
-          onRename={onRename}
-          onDelete={onDelete}
           query={isSearchMode ? query : ""}
         />
       ))}
@@ -274,7 +152,7 @@ export function SessionListContent({ query = "", sessions, currentSessionId, onS
 
 // ─── Main export (standalone drawer, kept for potential future use) ────────────
 
-export default function SessionList({ sessions, currentSessionId, onSelect, onNew, onRename, onDelete, onMobileClose }) {
+export default function SessionList({ sessions, currentSessionId, onSelect, onNew, onMobileClose }) {
   const [query,     setQuery]     = useState("")
   const [results,   setResults]   = useState(null)  // null = not in search mode
   const [searching, setSearching] = useState(false)
@@ -394,8 +272,6 @@ export default function SessionList({ sessions, currentSessionId, onSelect, onNe
             session={session}
             isActive={session.session_id === currentSessionId}
             onSelect={onSelect}
-            onRename={onRename}
-            onDelete={onDelete}
             query={isSearchMode ? query : ""}
           />
         ))}

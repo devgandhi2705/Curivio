@@ -25,6 +25,23 @@ function _mockData(days = 365) {
   return out
 }
 
+export async function getAllProjectsActivity(days = 365) {
+  if (USE_MOCK) {
+    await new Promise(r => setTimeout(r, 80))
+    return _mockData(days)
+  }
+  try {
+    const res = await fetch(
+      `${API_URL}/activity/all?days=${days}`,
+      { headers: { ...getAuthHeaders() } }
+    )
+    if (!res.ok) return []
+    return res.json()
+  } catch {
+    return []
+  }
+}
+
 export async function getProjectActivity(projectId, days = 365) {
   if (USE_MOCK) {
     await new Promise(r => setTimeout(r, 80))

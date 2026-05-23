@@ -6,6 +6,7 @@ import {
 } from '../../api/bookmarks.js'
 import CollectionPickerModal from './CollectionPickerModal.jsx'
 import { useSidebarSubsection } from '../../contexts/SidebarSubsection.jsx'
+import { useContextMenu } from '../../contexts/ContextMenu.jsx'
 
 // ── Color palette ──────────────────────────────────────────────────────────────
 
@@ -186,56 +187,27 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
 
 // ── Collection sidebar item ───────────────────────────────────────────────────
 
-function CollectionItem({ col, isActive, onClick, onDelete, onEdit }) {
-  const [deleting, setDeleting] = useState(false)
-
-  async function handleDelete(e) {
-    e.stopPropagation()
-    if (!window.confirm(`Delete "${col.name}"? All bookmarks inside will be unassigned.`)) return
-    setDeleting(true)
-    try { await onDelete(col.collection_id) } finally { setDeleting(false) }
-  }
-
+function CollectionItem({ col, isActive, onClick }) {
   return (
-    <div className={`group flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors ${
-      isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
-    }`}>
-      <button onClick={() => onClick(col.collection_id)} className="flex items-start gap-2.5 flex-1 min-w-0 text-left">
-        <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-sm font-medium truncate">{col.name}</span>
-            <span className="text-[10px] text-slate-500 flex-shrink-0">{col.bookmark_count}</span>
-          </div>
-          {col.description && (
-            <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-500'}`}>
-              {col.description}
-            </p>
-          )}
+    <button
+      onClick={() => onClick(col.collection_id)}
+      className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors text-left ${
+        isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+      }`}
+    >
+      <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-sm font-medium truncate">{col.name}</span>
+          <span className="text-[10px] text-slate-500 flex-shrink-0">{col.bookmark_count}</span>
         </div>
-      </button>
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5 transition-opacity">
-        <button
-          onClick={e => { e.stopPropagation(); onEdit(col) }}
-          className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-colors"
-          title="Edit"
-        >
-          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Z" />
-          </svg>
-        </button>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-          title="Delete"
-        >
-          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
-          </svg>
-        </button>
+        {col.description && (
+          <p className={`text-[11px] leading-snug mt-0.5 truncate ${isActive ? 'text-slate-400' : 'text-slate-500'}`}>
+            {col.description}
+          </p>
+        )}
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -356,9 +328,69 @@ function EditCollectionModal({ col, onClose, onSave }) {
   )
 }
 
+// ── Rename modal ──────────────────────────────────────────────────────────────
+
+function RenameModal({ heading, initialValue, onConfirm, onClose }) {
+  const [value, setValue] = useState(initialValue)
+  const inputRef = useRef(null)
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onConfirm(value.trim()) }
+    if (e.key === 'Escape') onClose()
+    e.stopPropagation()
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          maxLength={120}
+          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
+        />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Delete confirmation modal ─────────────────────────────────────────────────
+
+function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-9 h-9 rounded-xl bg-red-950/60 border border-red-900/50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-4 h-4 text-red-400" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15Z" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-100 text-sm">Delete "{name}"?</h3>
+            <p className="text-xs text-slate-500 mt-0.5">This cannot be undone.</p>
+          </div>
+        </div>
+        {message && <p className="text-sm text-slate-400 mb-5 leading-relaxed">{message}</p>}
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors">Cancel</button>
+          <button onClick={onConfirm} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors">Delete</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Collections subsection — rendered inside App sidebar's Zone 3 ─────────────
 
-function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew, onDelete, onEdit }) {
+function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-1 mb-2 flex-shrink-0">
@@ -387,8 +419,6 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
               col={col}
               isActive={activeId === col.collection_id}
               onClick={onSelect}
-              onDelete={onDelete}
-              onEdit={onEdit}
             />
           ))
         )}
@@ -407,19 +437,21 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
   const [bmLoading,      setBmLoading]      = useState(false)
   const [search,         setSearch]         = useState('')
   const [typeFilter,     setTypeFilter]     = useState('')
-  const [showNewCol,     setShowNewCol]     = useState(false)
-  const [editingCol,     setEditingCol]     = useState(null)
+  const [showNewCol,        setShowNewCol]        = useState(false)
+  const [editingCol,        setEditingCol]        = useState(null)
+  const [pendingDeleteCol,  setPendingDeleteCol]  = useState(null)
+  const [showRenameCol,     setShowRenameCol]     = useState(false)
+  const [renameColDraft,    setRenameColDraft]    = useState('')
 
   const { register, unregister } = useSidebarSubsection()
+  const { setViewActions, clearViewActions } = useContextMenu()
   const subsectionHandlers = useRef({})
 
   // Update handler refs every render so the registered render fn always calls current handlers
   useEffect(() => {
     subsectionHandlers.current = {
-      onSelect:  (id) => { setActiveId(id); onSidebarClose?.() },
-      onNew:     () => setShowNewCol(true),
-      onDelete:  (colId) => handleDeleteCollection(colId),
-      onEdit:    (col) => setEditingCol(col),
+      onSelect: (id) => { setActiveId(id); onSidebarClose?.() },
+      onNew:    () => setShowNewCol(true),
     }
   })
 
@@ -437,13 +469,25 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
           colLoading={colLoading}
           onSelect={(id) => subsectionHandlers.current.onSelect(id)}
           onNew={() => subsectionHandlers.current.onNew()}
-          onDelete={(id) => subsectionHandlers.current.onDelete(id)}
-          onEdit={(col) => subsectionHandlers.current.onEdit(col)}
         />
       )
     })
     return () => unregister('bookmarks')
   }, [register, unregister, collections, activeId, colLoading])
+
+  // Register contextual ⋮ actions for the bookmarks view
+  useEffect(() => {
+    if (!activeCol) { clearViewActions('bookmarks'); return }
+    setViewActions('bookmarks', [
+      {
+        label: 'Rename collection',
+        onClick: () => { setRenameColDraft(activeCol.name || ''); setShowRenameCol(true) },
+      },
+      { label: 'Edit collection', onClick: () => setEditingCol(activeCol) },
+      { label: 'Delete collection', variant: 'danger', onClick: () => setPendingDeleteCol(activeCol) },
+    ])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCol])
 
   // Load collections on mount
   useEffect(() => {
@@ -510,6 +554,15 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
     setEditingCol(null)
   }
 
+  async function handleRenameCollection(newName) {
+    if (!activeCol || !newName.trim()) return
+    try {
+      const updated = await updateCollection(activeCol.collection_id, { ...activeCol, name: newName.trim() })
+      setCollections(prev => prev.map(c => c.collection_id === activeCol.collection_id ? { ...c, ...updated } : c))
+    } catch {}
+    setShowRenameCol(false)
+  }
+
   return (
     <div className="py-6 px-4 sm:px-8">
 
@@ -557,6 +610,24 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
           col={editingCol}
           onClose={() => setEditingCol(null)}
           onSave={(fields) => handleEditCollection(editingCol, fields)}
+        />
+      )}
+
+      {showRenameCol && (
+        <RenameModal
+          heading="Rename collection"
+          initialValue={renameColDraft}
+          onConfirm={handleRenameCollection}
+          onClose={() => setShowRenameCol(false)}
+        />
+      )}
+
+      {pendingDeleteCol && (
+        <DeleteConfirmModal
+          name={pendingDeleteCol.name}
+          message="All bookmarks inside will be unassigned."
+          onConfirm={async () => { await handleDeleteCollection(pendingDeleteCol.collection_id); setPendingDeleteCol(null) }}
+          onCancel={() => setPendingDeleteCol(null)}
         />
       )}
     </div>

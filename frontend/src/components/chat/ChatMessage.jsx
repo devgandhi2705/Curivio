@@ -71,9 +71,9 @@ function StreamingSkeleton() {
 function SummaryCard({ title, summary, accentKey }) {
   const acc = ACCENT[accentKey] ?? ACCENT.blue
   return (
-    <div className={`border-l-4 ${acc.border} pl-4 py-3 mb-6 rounded-r-lg ${acc.bg}`}>
-      <h3 className={`font-semibold text-[15.5px] leading-snug mb-2 ${acc.text}`}>{title}</h3>
-      {summary && <p className="text-slate-300 text-[14px] leading-[1.72]">{summary}</p>}
+    <div className={`border-l-4 ${acc.border} pl-4 py-3 mb-4 sm:mb-6 rounded-r-lg ${acc.bg}`}>
+      <h3 className={`font-semibold text-[14.5px] sm:text-[15.5px] leading-snug mb-2 ${acc.text}`}>{title}</h3>
+      {summary && <p className="text-slate-300 text-[13.5px] sm:text-[14px] leading-[1.68] sm:leading-[1.72]">{summary}</p>}
     </div>
   )
 }
@@ -83,13 +83,13 @@ function SectionBlock({ section }) {
   const isHigh = section.importance === "high"
 
   return (
-    <div className="mb-6">
+    <div className="mb-4 sm:mb-6">
       <button
         className="w-full flex items-center justify-between text-left group mb-2"
         onClick={() => section.collapsible && setCollapsed(c => !c)}
         style={{ cursor: section.collapsible ? "pointer" : "default" }}
       >
-        <h4 className={`font-semibold text-[13.5px] leading-snug ${isHigh ? "text-slate-100" : "text-slate-300"}`}>
+        <h4 className={`font-semibold text-[13px] sm:text-[13.5px] leading-snug ${isHigh ? "text-slate-100" : "text-slate-300"}`}>
           {section.title}
         </h4>
         {section.collapsible && (
@@ -102,7 +102,7 @@ function SectionBlock({ section }) {
         )}
       </button>
       {!collapsed && (
-        <div className="text-[14.5px] leading-[1.72]">
+        <div className="text-[13.5px] sm:text-[14.5px] leading-[1.68] sm:leading-[1.72]">
           <MessageText text={section.content} />
         </div>
       )}
@@ -117,8 +117,8 @@ function KeyTakeawaysList({ items }) {
       <h4 className="text-[10.5px] font-semibold uppercase tracking-widest text-slate-500 mb-3">Key Takeaways</h4>
       <ul className="space-y-2.5">
         {items.map((item, i) => (
-          <li key={i} className="flex gap-2.5 text-[14px] text-slate-300 leading-[1.7]">
-            <span className="text-blue-400/60 flex-shrink-0 mt-[3px] text-[14px] select-none">•</span>
+          <li key={i} className="flex gap-2.5 text-[13.5px] sm:text-[14px] text-slate-300 leading-[1.68] sm:leading-[1.7]">
+            <span className="text-blue-400/60 flex-shrink-0 mt-[3px] text-[13px] select-none">•</span>
             <span>{item}</span>
           </li>
         ))}
@@ -534,9 +534,9 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
   const { srObject, displayContent } = normalizeResponse(message)
 
   return (
-    <div className="flex gap-3 max-w-4xl group/msg">
-      <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-md shadow-violet-950/50 mt-0.5">
-        <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
+    <div className="flex gap-2.5 sm:gap-3 max-w-4xl group/msg">
+      <div className="flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-md shadow-violet-950/50 mt-0.5">
+        <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
       </div>

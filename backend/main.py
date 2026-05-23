@@ -1567,6 +1567,18 @@ async def export_insight_endpoint(
 
 # ── Activity calendar ─────────────────────────────────────────────────────────
 
+@app.get("/activity/all")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def all_projects_activity_endpoint(
+    request: Request,
+    days: int = 365,
+    current_user: dict = Depends(get_current_user),
+):
+    from .services.activity_service import get_all_projects_activity
+    days = min(max(days, 7), 365)
+    return get_all_projects_activity(current_user["user_id"], days)
+
+
 @app.get("/projects/{project_id}/activity")
 @limiter.limit(PROJECTS_RATE_LIMIT)
 async def project_activity_endpoint(

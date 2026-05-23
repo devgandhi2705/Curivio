@@ -2,9 +2,41 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
+import { useContextMenu } from "../../contexts/ContextMenu.jsx"
 import ChatMessage from "./ChatMessage.jsx"
 import ChatInput from "./ChatInput.jsx"
 import { SessionListContent } from "./SessionList.jsx"
+
+function RenameModal({ heading, initialValue, onConfirm, onClose }) {
+  const [value, setValue] = useState(initialValue)
+  const inputRef = useRef(null)
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onConfirm(value.trim()) }
+    if (e.key === 'Escape') onClose()
+    e.stopPropagation()
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          maxLength={120}
+          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
+        />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function generateSessionId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -365,6 +397,29 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     handleSend(newText)
   }, [handleSend])
 
+  // Context menu — rename modal state
+  const [showRenameModal, setShowRenameModal] = useState(false)
+  const [renameDraft,     setRenameDraft]     = useState('')
+
+  // Register contextual ⋮ actions for the chat view
+  const { setViewActions, clearViewActions } = useContextMenu()
+  useEffect(() => {
+    if (!messages.length) { clearViewActions('chat'); return }
+    const currentSession = sessions.find(s => s.session_id === sessionId)
+    setViewActions('chat', [
+      {
+        label: 'Rename chat',
+        onClick: () => {
+          setRenameDraft(currentSession?.title || currentSession?.first_topic_hint || '')
+          setShowRenameModal(true)
+        },
+      },
+      { label: 'New chat', onClick: handleNewChat },
+      { label: 'Delete chat', variant: 'danger', onClick: () => handleDeleteSession(sessionId) },
+    ])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, sessions, sessionId, handleNewChat, handleDeleteSession])
+
   // Register conversation list into unified sidebar Zone 3 (after all callbacks are declared)
   const { register, unregister } = useSidebarSubsection()
   useEffect(() => {
@@ -375,8 +430,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         currentSessionId={sessionId}
         onSelect={(s) => { handleSelectSession(s); onSidebarClose?.() }}
         onNew={() => { handleNewChat(); onSidebarClose?.() }}
-        onRename={handleRename}
-        onDelete={handleDeleteSession}
       />
     ))
     return () => unregister('chat')
@@ -386,24 +439,21 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   return (
     <div className="flex flex-col h-full">
 
-      {/* Toolbar — clear button, only shown when there are messages */}
-      {messages.length > 0 && (
-        <div className="flex items-center justify-end px-4 py-1.5 flex-shrink-0">
-          <button
-            onClick={handleClearSession}
-            className="text-xs text-slate-700 hover:text-slate-400 transition-colors px-2 py-1 rounded-lg hover:bg-white/[0.05]"
-          >
-            Clear
-          </button>
-        </div>
+      {showRenameModal && (
+        <RenameModal
+          heading="Rename chat"
+          initialValue={renameDraft}
+          onConfirm={async (value) => { await handleRename(sessionId, value); setShowRenameModal(false) }}
+          onClose={() => setShowRenameModal(false)}
+        />
       )}
 
       {/* Feed context header */}
       <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
 
       {/* Messages — scrollable */}
-      <div className="flex-1 overflow-y-auto py-3 px-3 sm:py-5 sm:px-4">
-        <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex-1 overflow-y-auto py-3 px-4 sm:py-5 sm:px-4">
+        <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4">
           {messages.length === 0 && !isLoading && (
             <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} onSelectSession={handleSelectSession} />
           )}

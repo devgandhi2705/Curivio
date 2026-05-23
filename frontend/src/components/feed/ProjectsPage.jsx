@@ -35,6 +35,7 @@ import EditProjectModal from "./EditProjectModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
+import { useContextMenu } from "../../contexts/ContextMenu.jsx"
 
 // ── Shared style maps ─────────────────────────────────────────────────────────
 
@@ -100,6 +101,39 @@ function getGreeting(name) {
   return firstName ? `${time}, ${firstName}` : time
 }
 
+// ── Rename modal ──────────────────────────────────────────────────────────────
+
+function RenameModal({ heading, initialValue, onConfirm, onClose }) {
+  const [value, setValue] = useState(initialValue)
+  const inputRef = useRef(null)
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onConfirm(value.trim()) }
+    if (e.key === 'Escape') onClose()
+    e.stopPropagation()
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          maxLength={120}
+          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
+        />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── FeedSubsection — rendered inside App sidebar's Zone 3 ─────────────────────
 
 function FeedSubsection({
@@ -110,8 +144,6 @@ function FeedSubsection({
   progressions,
   onSelect,
   onNew,
-  onDelete,
-  onEdit,
 }) {
   return (
     <div className="flex flex-col h-full">
@@ -145,8 +177,6 @@ function FeedSubsection({
               progression={progressions[project.project_id]}
               isActive={project.project_id === activeId}
               onSelect={onSelect}
-              onDelete={onDelete}
-              onEdit={onEdit}
             />
           ))}
         </div>
@@ -194,10 +224,15 @@ export default function ProjectsPage({
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   // Modals
-  const [showCreate,     setShowCreate]     = useState(false)
-  const [creating,       setCreating]       = useState(false)
-  const [showEdit,       setShowEdit]       = useState(false)
-  const [pendingDelete,  setPendingDelete]  = useState(null)
+  const [showCreate,        setShowCreate]        = useState(false)
+  const [creating,          setCreating]          = useState(false)
+  const [showEdit,          setShowEdit]          = useState(false)
+  const [pendingDelete,     setPendingDelete]     = useState(null)
+  const [showRenameProject, setShowRenameProject] = useState(false)
+  const [renameProjectDraft, setRenameProjectDraft] = useState('')
+
+  // Export callbacks exposed by DailyPackageView for the current selection
+  const [exportCallbacks, setExportCallbacks] = useState({ pdf: null, md: null })
 
   // ── Sort projects by most-recently-visited ────────────────────────────────────
   const sortedProjects = visitedOrder.length === 0 ? projects : [...projects].sort((a, b) => {
@@ -208,6 +243,9 @@ export default function ProjectsPage({
     if (ib === -1) return -1
     return ia - ib
   })
+
+  // ── Context menu registration ─────────────────────────────────────────────────
+  const { setViewActions, clearViewActions } = useContextMenu()
 
   // ── Sidebar subsection registration ──────────────────────────────────────────
   const { register } = useSidebarSubsection()
@@ -220,9 +258,7 @@ export default function ProjectsPage({
         handleSelect(project)
         onSidebarClose?.()
       },
-      onNew:    () => setShowCreate(true),
-      onDelete: handleDeleteRequest,
-      onEdit:   (id) => { setActiveId(id); setShowEdit(true) },
+      onNew: () => setShowCreate(true),
     }
   })
 
@@ -241,13 +277,30 @@ export default function ProjectsPage({
           progressions={progressions}
           onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
           onNew={() => subsectionHandlers.current.onNew()}
-          onDelete={(id) => subsectionHandlers.current.onDelete(id)}
-          onEdit={(id) => subsectionHandlers.current.onEdit(id)}
         />
       )
     })
     // No cleanup — ProjectsPage is always-mounted.
   }, [register, sortedProjects, activeId, loadingList, listError, progressions])
+
+  // Register contextual ⋮ actions for the feed view
+  useEffect(() => {
+    const activeProject = projects.find(p => p.project_id === activeId) ?? null
+    if (!activeProject) { clearViewActions('feed'); return }
+    setViewActions('feed', [
+      {
+        label: 'Rename project',
+        onClick: () => { setRenameProjectDraft(activeProject.name || ''); setShowRenameProject(true) },
+      },
+      { label: 'Edit project', onClick: () => setShowEdit(true) },
+      ...(exportCallbacks.pdf ? [
+        { label: 'Export as PDF',      onClick: exportCallbacks.pdf },
+        { label: 'Export as Markdown', onClick: exportCallbacks.md },
+      ] : []),
+      { label: 'Delete project', variant: 'danger', onClick: () => setPendingDelete(activeProject) },
+    ])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, projects, exportCallbacks])
 
   // ── Auto-select project when navigated from global search ─────────────────
   useEffect(() => {
@@ -479,6 +532,19 @@ export default function ProjectsPage({
     setShowEdit(false)
   }, [activeId])
 
+  const handleRenameProject = useCallback(async (newName) => {
+    if (!activeId) return
+    try {
+      await updateProject(activeId, { name: newName })
+      setProjects(prev => prev.map(p => p.project_id === activeId ? { ...p, name: newName } : p))
+    } catch (_) {}
+    setShowRenameProject(false)
+  }, [activeId])
+
+  const handleExportReady = useCallback((pdfFn, mdFn) => {
+    setExportCallbacks({ pdf: pdfFn, md: mdFn })
+  }, [])
+
   // ── Read tracking ──────────────────────────────────────────────────────────
 
   const handleMarkRead = useCallback(async (insightId, articleKey, articleTitle) => {
@@ -574,6 +640,7 @@ export default function ProjectsPage({
               relatedChatsMap={relatedChatsMap}
               onLoadRelatedChats={handleLoadRelatedChats}
               onOpenChat={handleOpenChat}
+              onExportReady={handleExportReady}
             />
           )}
         </>
@@ -592,6 +659,15 @@ export default function ProjectsPage({
           onClose={() => setShowCreate(false)}
           onCreate={handleCreate}
           loading={creating}
+        />
+      )}
+
+      {showRenameProject && (
+        <RenameModal
+          heading="Rename project"
+          initialValue={renameProjectDraft}
+          onConfirm={handleRenameProject}
+          onClose={() => setShowRenameProject(false)}
         />
       )}
 

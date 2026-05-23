@@ -58,7 +58,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("### ")) {
       elements.push(
-        <h3 key={i} className="text-[11.5px] font-semibold text-slate-400 mt-6 mb-2 first:mt-0 uppercase tracking-widest">
+        <h3 key={i} className="text-[11px] sm:text-[11.5px] font-semibold text-slate-400 mt-5 sm:mt-6 mb-1.5 sm:mb-2 first:mt-0 uppercase tracking-widest">
           {renderInline(line.slice(4))}
         </h3>
       )
@@ -68,7 +68,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("## ")) {
       elements.push(
-        <h2 key={i} className="text-[15.5px] font-semibold text-slate-100 mt-7 mb-2.5 first:mt-0 leading-snug tracking-tight">
+        <h2 key={i} className="text-[14.5px] sm:text-[15.5px] font-semibold text-slate-100 mt-5 sm:mt-7 mb-2 sm:mb-2.5 first:mt-0 leading-snug tracking-tight">
           {renderInline(line.slice(3))}
         </h2>
       )
@@ -78,7 +78,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("# ")) {
       elements.push(
-        <h1 key={i} className="text-[18px] font-bold text-slate-50 mt-8 mb-3 first:mt-0 leading-tight tracking-tight">
+        <h1 key={i} className="text-[16px] sm:text-[18px] font-bold text-slate-50 mt-6 sm:mt-8 mb-2.5 sm:mb-3 first:mt-0 leading-tight tracking-tight">
           {renderInline(line.slice(2))}
         </h1>
       )
@@ -108,7 +108,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("**") && line.endsWith("**") && !line.slice(2, -2).includes("**")) {
       elements.push(
-        <p key={i} className="font-semibold text-slate-100 text-[15px] mt-6 mb-2.5 first:mt-0 leading-snug">
+        <p key={i} className="font-semibold text-slate-100 text-[14px] sm:text-[15px] mt-5 sm:mt-6 mb-2 sm:mb-2.5 first:mt-0 leading-snug">
           {line.slice(2, -2)}
         </p>
       )
@@ -162,10 +162,10 @@ export default function MarkdownText({ text }) {
         i++
       }
       elements.push(
-        <ul key={i} className="my-3.5 space-y-2.5 pl-0">
+        <ul key={i} className="my-2.5 sm:my-3.5 space-y-2 sm:space-y-2.5 pl-0">
           {items.map((item, idx) => (
-            <li key={idx} className="flex gap-2.5 text-[15px] text-slate-300 leading-[1.75]">
-              <span className="text-blue-400/50 flex-shrink-0 mt-[3px] select-none text-[14px]">•</span>
+            <li key={idx} className="flex gap-2.5 text-[14px] sm:text-[15px] text-slate-300 leading-[1.7] sm:leading-[1.75]">
+              <span className="text-blue-400/50 flex-shrink-0 mt-[3px] select-none text-[13px] sm:text-[14px]">•</span>
               <span>{renderInline(item)}</span>
             </li>
           ))}
@@ -181,9 +181,9 @@ export default function MarkdownText({ text }) {
         i++
       }
       elements.push(
-        <ol key={i} className="my-3.5 space-y-2.5 pl-0 list-none">
+        <ol key={i} className="my-2.5 sm:my-3.5 space-y-2 sm:space-y-2.5 pl-0 list-none">
           {items.map((item, idx) => (
-            <li key={idx} className="flex gap-2.5 text-[15px] text-slate-300 leading-[1.75]">
+            <li key={idx} className="flex gap-2.5 text-[14px] sm:text-[15px] text-slate-300 leading-[1.7] sm:leading-[1.75]">
               <span className="text-blue-400/60 flex-shrink-0 tabular-nums text-[13px] font-semibold mt-[2px] min-w-[1.4em] text-right">{idx + 1}.</span>
               <span>{renderInline(item)}</span>
             </li>
@@ -194,13 +194,13 @@ export default function MarkdownText({ text }) {
     }
 
     if (!line.trim()) {
-      elements.push(<div key={i} className="h-4" />)
+      elements.push(<div key={i} className="h-2.5 sm:h-4" />)
       i++
       continue
     }
 
     elements.push(
-      <p key={i} className="text-slate-300 leading-[1.78] text-[15px]">
+      <p key={i} className="text-slate-300 leading-[1.72] sm:leading-[1.78] text-[14px] sm:text-[15px]">
         {renderInline(line)}
       </p>
     )

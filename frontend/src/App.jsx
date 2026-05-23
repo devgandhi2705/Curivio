@@ -8,6 +8,7 @@ import AuthPage from './components/auth/AuthPage.jsx'
 import LandingPage from './components/landing/LandingPage.jsx'
 import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
 import { SidebarSubsectionProvider, useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
+import { ContextMenuProvider, useContextMenu } from './contexts/ContextMenu.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
 
 function AuthLoadingScreen() {
@@ -148,7 +149,7 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
 
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 
-function SettingsPanel({ isDark, onToggleTheme, positionClass = "absolute right-0 top-full mt-2 z-40" }) {
+function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }) {
   const { user, logout, updateProfile, changePassword, deleteAccount, verifyPassword } = useAuth()
 
   const [section, setSection]           = useState("main")
@@ -315,22 +316,6 @@ function SettingsPanel({ isDark, onToggleTheme, positionClass = "absolute right-
                 <p className="text-[11px] text-slate-500 truncate">{user?.email}</p>
               </div>
             </div>
-          </div>
-
-          <div className="px-4 py-3 border-b border-slate-800/60">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2.5">Appearance</p>
-            <button onClick={onToggleTheme} className="w-full flex items-center justify-between group">
-              <div className="flex items-center gap-2.5">
-                <span className="text-base leading-none">{isDark ? "🌙" : "☀️"}</span>
-                <div className="text-left">
-                  <p className="text-sm font-medium text-slate-200 leading-tight">{isDark ? "Night Mode" : "Day Mode"}</p>
-                  <p className="text-[11px] text-slate-500 leading-tight mt-0.5">{isDark ? "Switch to light" : "Switch to dark"}</p>
-                </div>
-              </div>
-              <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 flex-shrink-0 overflow-hidden ${isDark ? "bg-blue-600" : "bg-slate-600"}`}>
-                <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? "translate-x-5" : "translate-x-0"}`} />
-              </div>
-            </button>
           </div>
 
           <div className="px-4 py-2">
@@ -673,7 +658,7 @@ function NavItem({ item, active, collapsed, onClick, badge }) {
 function Sidebar({
   view, navigateTo, onSearchOpen,
   queue, onQueueItemClick,
-  showSettings, onSettingsToggle, settingsRef, isDark, toggleTheme, user,
+  showSettings, onSettingsToggle, settingsRef, user,
   collapsed, setCollapsed, open, setOpen,
 }) {
   const { subsections } = useSidebarSubsection()
@@ -879,8 +864,6 @@ function Sidebar({
             </button>
             {showSettings && (
               <SettingsPanel
-                isDark={isDark}
-                onToggleTheme={toggleTheme}
                 positionClass="absolute bottom-full left-0 mb-1.5 z-50"
               />
             )}
@@ -961,7 +944,9 @@ export default function App() {
   return (
     <AuthProvider>
       <SidebarSubsectionProvider>
-        <AppContent />
+        <ContextMenuProvider>
+          <AppContent />
+        </ContextMenuProvider>
       </SidebarSubsectionProvider>
     </AuthProvider>
   )
@@ -969,13 +954,9 @@ export default function App() {
 
 function AppContent() {
   const { isAuthenticated, authChecked, user } = useAuth()
+  const { actionsByView } = useContextMenu()
   const [view, setView] = useState('feed')
   const [showAuth, setShowAuth] = useState(false)
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('theme')
-    if (saved) return saved === 'dark'
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  })
 
   const [feedContext, setFeedContext] = useState(null)
   const [targetSessionId,    setTargetSessionId]    = useState(null)
@@ -987,6 +968,8 @@ function AppContent() {
   const settingsRef = useRef(null)
   const [targetInsightId,  setTargetInsightId]  = useState(null)
   const [targetArticleKey, setTargetArticleKey] = useState(null)
+  const [showOverflow, setShowOverflow] = useState(false)
+  const overflowRef = useRef(null)
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
@@ -1020,6 +1003,17 @@ function AppContent() {
   }, [showSettings])
 
   useEffect(() => {
+    if (!showOverflow) return
+    function onDown(e) {
+      if (overflowRef.current && !overflowRef.current.contains(e.target)) setShowOverflow(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [showOverflow])
+
+  useEffect(() => { setShowOverflow(false) }, [view])
+
+  useEffect(() => {
     window.history.replaceState({ view: 'feed' }, '')
   }, [])
 
@@ -1043,17 +1037,6 @@ function AppContent() {
     window.history.pushState({ view: newView, ...extra }, '')
     setView(newView)
   }, [])
-
-  function toggleTheme() {
-    const root = document.documentElement
-    root.classList.add('theme-transitioning')
-    setIsDark(d => {
-      const next = !d
-      localStorage.setItem('theme', next ? 'dark' : 'light')
-      return next
-    })
-    setTimeout(() => root.classList.remove('theme-transitioning'), 250)
-  }
 
   useEffect(() => {
     const handler = (e) => {
@@ -1147,7 +1130,7 @@ function AppContent() {
   // Authenticated landing view — full-screen, no sidebar
   if (view === 'landing') {
     return (
-      <div className={`bg-slate-950 text-slate-100 ${isDark ? '' : 'theme-light'}`} style={{ minHeight: '100dvh' }}>
+      <div className="bg-slate-950 text-slate-100" style={{ minHeight: '100dvh' }}>
         <LandingPage
           isAuthenticated
           onEnterApp={() => navigateTo('feed')}
@@ -1157,11 +1140,9 @@ function AppContent() {
     )
   }
 
-  const pageTitle = NAV_ITEMS.find(i => i.id === view)?.label || 'Curivio'
-
   return (
     <div
-      className={`flex bg-slate-950 text-slate-100 overflow-hidden ${isDark ? '' : 'theme-light'}`}
+      className="flex bg-slate-950 text-slate-100 overflow-hidden"
       style={{ height: '100dvh' }}
     >
       <Sidebar
@@ -1173,8 +1154,6 @@ function AppContent() {
         showSettings={showSettings}
         onSettingsToggle={() => setShowSettings(s => !s)}
         settingsRef={settingsRef}
-        isDark={isDark}
-        toggleTheme={toggleTheme}
         user={user}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
@@ -1182,31 +1161,71 @@ function AppContent() {
         setOpen={setSidebarOpen}
       />
 
+      {/* Floating mobile sidebar trigger — only visible when sidebar is closed on mobile */}
+      <button
+        onClick={() => setSidebarOpen(true)}
+        aria-label="Open navigation"
+        className={[
+          'md:hidden fixed top-3.5 left-3.5 z-50',
+          'w-8 h-8 flex items-center justify-center rounded-lg',
+          'bg-slate-950/70 backdrop-blur-sm text-slate-500 hover:text-slate-200 transition-all duration-200',
+          sidebarOpen ? 'opacity-0 pointer-events-none' : 'opacity-100',
+        ].join(' ')}
+      >
+        <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+          <path fillRule="evenodd" d="M1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5ZM1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1.75 7Zm0 5h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {/* Contextual overflow menu — top-right, shown when current view has registered actions */}
+      {(actionsByView[view] ?? []).length > 0 && (
+        <div
+          ref={overflowRef}
+          className={[
+            'fixed top-3.5 right-3.5 z-50 transition-all duration-200',
+            sidebarOpen ? 'opacity-0 pointer-events-none' : 'opacity-100',
+          ].join(' ')}
+        >
+          <button
+            onClick={() => setShowOverflow(s => !s)}
+            aria-label="More options"
+            className={[
+              'w-8 h-8 flex items-center justify-center rounded-lg',
+              'bg-slate-950/70 backdrop-blur-sm transition-colors',
+              showOverflow
+                ? 'text-slate-200 bg-slate-800/80'
+                : 'text-slate-500 hover:text-slate-200',
+            ].join(' ')}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM14.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+            </svg>
+          </button>
+          {showOverflow && (
+            <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
+              {(actionsByView[view] ?? []).map((action, i) => (
+                <button
+                  key={i}
+                  onClick={() => { action.onClick(); setShowOverflow(false) }}
+                  className={[
+                    'w-full text-left px-3.5 py-2 text-[13px] transition-colors',
+                    action.variant === 'danger'
+                      ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                      : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
+                  ].join(' ')}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Content area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
-        {/* Mobile top bar — 48px, hidden on md+ */}
-        <div className="md:hidden flex items-center h-12 px-3 gap-3 border-b border-slate-800/60 bg-slate-950/95 backdrop-blur-sm flex-shrink-0">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-all flex-shrink-0"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-              <path fillRule="evenodd" d="M1.75 2h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5ZM1.75 7h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1.75 7Zm0 5h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <span className="flex-1 text-center text-sm font-semibold text-slate-200">{pageTitle}</span>
-          <button
-            onClick={() => setShowSearch(true)}
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/60 transition-all flex-shrink-0"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Chat workspace — flex-1 so it fills all remaining space below the mobile bar */}
+        {/* Chat workspace — fills all space on mobile */}
         <div className={[
           'overflow-hidden',
           view !== 'chat' ? 'hidden' : 'flex-1 flex flex-col',

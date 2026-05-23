@@ -186,82 +186,10 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
   )
 }
 
-// ─── Export button (PDF + Markdown dropdown) ──────────────────────────────────
-
-function ExportButton({ pkg, project, dayLabel }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-
-  useEffect(() => {
-    if (!open) return
-    function onDown(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [open])
-
-  const opts = { projectName: project?.name || "", dayLabel: dayLabel || "" }
-
-  return (
-    <div ref={ref} className="relative ml-auto flex-shrink-0">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-slate-600 hover:text-slate-300 hover:bg-white/[0.06] transition-all select-none"
-      >
-        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z" />
-          <path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.97a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.779a.749.749 0 1 1 1.06-1.06l1.97 1.97Z" />
-        </svg>
-        Export
-        <svg className={`w-2.5 h-2.5 transition-transform duration-150 ${open ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl overflow-hidden">
-          <button
-            onClick={() => { exportAsPdf(pkg, opts); setOpen(false) }}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[11px] text-slate-300 hover:text-slate-100 hover:bg-slate-800/70 transition-colors text-left"
-          >
-            <svg className="w-3.5 h-3.5 text-rose-400/80 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M3.75 0h8.5C13.216 0 14 .784 14 1.75v12.5A1.75 1.75 0 0 1 12.25 16h-8.5A1.75 1.75 0 0 1 2 14.25V1.75C2 .784 2.784 0 3.75 0Zm0 1.5a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Zm.5 3h7a.75.75 0 0 1 0 1.5h-7a.75.75 0 0 1 0-1.5Zm0 3h7a.75.75 0 0 1 0 1.5h-7a.75.75 0 0 1 0-1.5Zm0 3h4a.75.75 0 0 1 0 1.5h-4a.75.75 0 0 1 0-1.5Z" />
-            </svg>
-            Save as PDF
-          </button>
-          <div className="h-px bg-slate-800/80 mx-2" />
-          <button
-            onClick={() => { downloadMarkdown(pkg, opts); setOpen(false) }}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[11px] text-slate-300 hover:text-slate-100 hover:bg-slate-800/70 transition-colors text-left"
-          >
-            <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3Zm-3.1 8L9.9 8.35 8 10.5V6h1.5v2.15l1.65-1.85L12 8.15 10.5 11H11.75ZM6 6H4.5v3.5H3V6H1.5V4.5H6Z" />
-            </svg>
-            Download Markdown
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function PackageHeader({ pkg, dayLabel, daySelector, actions }) {
+function PackageHeader({ pkg, dayLabel }) {
   const contentMix = buildContentMix(pkg)
   return (
     <div className="mb-3 md:mb-7">
-      {/* Meta row */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 md:mb-3">
-        {daySelector ?? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            {dayLabel ?? `Day ${pkg.day_number}`}
-          </span>
-        )}
-        <span className="text-[11px] text-slate-600">{formatDate(pkg.generated_at)}</span>
-        {contentMix && (
-          <span className="text-[11px] text-slate-700 hidden sm:inline tabular-nums">{contentMix}</span>
-        )}
-        {actions && <div className="ml-auto">{actions}</div>}
-      </div>
-
       {/* Headline */}
       <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-1.5 md:mb-4 break-words">
         {pkg.package_headline}
@@ -280,7 +208,7 @@ function PackageHeader({ pkg, dayLabel, daySelector, actions }) {
 
 function SectionDivider({ label }) {
   return (
-    <div className="flex items-center gap-3 my-2 md:my-5">
+    <div className="flex items-center gap-3 my-3 md:my-5">
       <div className="flex-1 h-px bg-white/[0.06]" />
       <span className="text-[10px] font-medium uppercase tracking-widest text-slate-600">{label}</span>
       <div className="flex-1 h-px bg-white/[0.06]" />
@@ -455,9 +383,6 @@ function PackageContent({
   onDeleteNote,
   queuedKeys,
   onToggleQueue,
-  packages,
-  displayLabels,
-  onSelectPackage,
 }) {
   const failed = isFailedPackage(pkg)
 
@@ -494,19 +419,9 @@ function PackageContent({
     }
   }
 
-  const dayDropdown = packages?.length > 1 ? (
-    <DayDropdown
-      packages={packages}
-      displayLabels={displayLabels}
-      selectedId={pkg.id}
-      onSelect={onSelectPackage}
-    />
-  ) : undefined
-
   if (failed) {
     return (
       <div>
-        {dayDropdown && <div className="mb-3">{dayDropdown}</div>}
         <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
         <div className="mt-4 pt-4 border-t border-slate-800">
           <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
@@ -520,8 +435,6 @@ function PackageContent({
       <PackageHeader
         pkg={pkg}
         dayLabel={dayLabel}
-        daySelector={dayDropdown}
-        actions={<ExportButton pkg={pkg} project={project} dayLabel={dayLabel} />}
       />
 
       {/* Day progress bar — core cards only (curiosity is optional) */}
@@ -533,7 +446,7 @@ function PackageContent({
       {newsCards.length > 0 && (
         <>
           <SectionDivider label="Current Events" />
-          <div className="space-y-1.5 md:space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {newsCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -550,7 +463,7 @@ function PackageContent({
       {eduCards.length > 0 && (
         <>
           <SectionDivider label="Deep Learning" />
-          <div className="space-y-1.5 md:space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {eduCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -587,7 +500,7 @@ function PackageContent({
           <p className="text-[11px] text-slate-600 mb-2 md:mb-3 leading-relaxed">
             Optional side trails — intellectually stimulating, not on the critical path.
           </p>
-          <div className="space-y-1.5 md:space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {curiosityCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
@@ -685,6 +598,7 @@ export default function DailyPackageView({
   targetInsightId,
   targetArticleKey,
   onClearQueueTarget,
+  onExportReady,
 }) {
   const [selectedId, setSelectedId] = useState(packages[0]?.id ?? null)
   // Map<cardId, noteContent> for the currently-selected package
@@ -802,6 +716,17 @@ export default function DailyPackageView({
   ).length
   const nextLabel = computeNextLabel(packages, displayLabels, generatedTodayCount)
 
+  // Expose export functions to parent whenever selection changes
+  useEffect(() => {
+    if (!onExportReady || !selected) return
+    const dayLabelForExport = displayLabels.get(selected.id) ?? ""
+    const opts = { projectName: project?.name || "", dayLabel: dayLabelForExport }
+    onExportReady(
+      () => exportAsPdf(selected, opts),
+      () => downloadMarkdown(selected, opts)
+    )
+  }, [selected?.id, project?.project_id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   if (generating) {
     return <GeneratingPackageState project={project} nextLabel={nextLabel} />
   }
@@ -811,32 +736,41 @@ export default function DailyPackageView({
   }
 
   return selected ? (
-    <PackageContent
-      pkg={selected}
-      project={project}
-      generating={generating}
-      onGenerate={onGenerate}
-      onRegenerate={onRegenerate}
-      onOpenInChat={onOpenInChat}
-      isLatestPackage={isLatest}
-      dayLabel={displayLabels.get(selected.id)}
-      generatedTodayCount={isLatest ? generatedTodayCount : 0}
-      nextLabel={isLatest ? nextLabel : undefined}
-      readKeys={isLatest ? readKeys : undefined}
-      onMarkRead={isLatest ? onMarkRead : undefined}
-      onMarkUnread={isLatest ? onMarkUnread : undefined}
-      relatedChatsMap={relatedChatsMap}
-      onLoadRelatedChats={onLoadRelatedChats}
-      onOpenChat={onOpenChat}
-      notesMap={notesMap}
-      onSaveNote={handleSaveNote}
-      onDeleteNote={handleDeleteNote}
-      queuedKeys={queuedKeys}
-      onToggleQueue={handleToggleQueue}
-      packages={packages}
-      displayLabels={displayLabels}
-      onSelectPackage={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
-    />
+    <>
+      {packages.length > 1 && (
+        <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50">
+          <DayDropdown
+            packages={packages}
+            displayLabels={displayLabels}
+            selectedId={selectedId}
+            onSelect={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
+          />
+        </div>
+      )}
+      <PackageContent
+        pkg={selected}
+        project={project}
+        generating={generating}
+        onGenerate={onGenerate}
+        onRegenerate={onRegenerate}
+        onOpenInChat={onOpenInChat}
+        isLatestPackage={isLatest}
+        dayLabel={displayLabels.get(selected.id)}
+        generatedTodayCount={isLatest ? generatedTodayCount : 0}
+        nextLabel={isLatest ? nextLabel : undefined}
+        readKeys={isLatest ? readKeys : undefined}
+        onMarkRead={isLatest ? onMarkRead : undefined}
+        onMarkUnread={isLatest ? onMarkUnread : undefined}
+        relatedChatsMap={relatedChatsMap}
+        onLoadRelatedChats={onLoadRelatedChats}
+        onOpenChat={onOpenChat}
+        notesMap={notesMap}
+        onSaveNote={handleSaveNote}
+        onDeleteNote={handleDeleteNote}
+        queuedKeys={queuedKeys}
+        onToggleQueue={handleToggleQueue}
+      />
+    </>
   ) : null
 }
 

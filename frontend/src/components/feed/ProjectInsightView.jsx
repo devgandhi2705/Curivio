@@ -20,6 +20,7 @@ export default function ProjectInsightView({
   targetInsightId,
   targetArticleKey,
   onClearQueueTarget,
+  onExportReady,
 }) {
   return (
     <DailyPackageView
@@ -38,6 +39,7 @@ export default function ProjectInsightView({
       targetInsightId={targetInsightId}
       targetArticleKey={targetArticleKey}
       onClearQueueTarget={onClearQueueTarget}
+      onExportReady={onExportReady}
     />
   )
 }
