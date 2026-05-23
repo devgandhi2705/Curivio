@@ -564,7 +564,7 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
   }
 
   return (
-    <div className="py-6 px-4 sm:px-8">
+    <div className="pt-2 pb-6 px-4 sm:px-8">
 
       {/* Search bar */}
       <div className="flex items-center gap-3 mb-6">

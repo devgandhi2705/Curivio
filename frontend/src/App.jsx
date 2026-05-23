@@ -892,8 +892,8 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
   }
 
   return (
-    <div className="py-6 px-4 sm:px-8">
-      <div className="flex items-center justify-between mb-6 px-1">
+    <div className="pt-2 pb-6 px-4 sm:px-8">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Read Later</h1>
         <button
           onClick={() => clearQueue()}
@@ -1248,7 +1248,7 @@ function AppContent() {
         ].join(' ')}>
           <div className={[
             'max-w-5xl mx-auto w-full',
-            view === 'feed' || view === 'dashboard' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
+            view !== 'chat' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
           ].join(' ')}>
 
           {/* Feed — always mounted so generating state survives view switches */}
