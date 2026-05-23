@@ -1248,7 +1248,7 @@ function AppContent() {
         ].join(' ')}>
           <div className={[
             'max-w-5xl mx-auto w-full',
-            view === 'feed' || view === 'dashboard' ? 'px-4 py-6 md:px-8 md:py-8' : '',
+            view === 'feed' || view === 'dashboard' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
           ].join(' ')}>
 
           {/* Feed — always mounted so generating state survives view switches */}

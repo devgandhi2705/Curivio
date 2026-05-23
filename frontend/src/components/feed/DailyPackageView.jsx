@@ -138,16 +138,16 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
       <button
         onClick={() => setOpen(o => !o)}
         className={[
-          "inline-flex items-center gap-1 px-2 py-0.5 rounded-md",
-          "text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+          "inline-flex items-center gap-1.5 px-3 py-1 rounded-lg",
+          "text-[11px] font-semibold uppercase tracking-wider transition-colors select-none",
           open
-            ? "bg-white/[0.10] border border-white/[0.12] text-slate-200"
-            : "bg-white/[0.05] border border-white/[0.07] text-slate-500 hover:text-slate-200 hover:bg-white/[0.08]",
+            ? "bg-white/[0.12] border border-white/[0.16] text-slate-100"
+            : "bg-white/[0.07] border border-white/[0.11] text-slate-400 hover:text-slate-100 hover:bg-white/[0.10] hover:border-white/[0.15]",
         ].join(" ")}
       >
         {currentLabel}
         <svg
-          className={`w-2.5 h-2.5 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
           viewBox="0 0 20 20" fill="currentColor"
         >
           <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />

@@ -28,16 +28,16 @@ export default function ProjectCard({ project, progression, isActive, onSelect }
     <div
       onClick={() => onSelect(project)}
       className={`
-        group relative flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors select-none
+        group relative flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-colors select-none
         ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}
       `}
     >
-      <div className={`flex-shrink-0 w-[3px] h-9 rounded-full bg-gradient-to-b ${grad} opacity-90`} />
+      <div className={`flex-shrink-0 w-[3px] h-7 rounded-full bg-gradient-to-b ${grad} opacity-90`} />
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] font-medium leading-snug truncate ${isActive ? "text-white" : "text-slate-300 group-hover:text-white"}`}>
           {project.name}
         </p>
-        <p className="text-[10px] mt-0.5 flex items-center gap-1.5">
+        <p className="text-[10px] flex items-center gap-1.5">
           <span className={lvl.color}>{lvl.label}</span>
           <span className="text-slate-600">·</span>
           <span className="text-slate-500">{intensity}</span>

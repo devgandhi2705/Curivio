@@ -199,10 +199,10 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
   const count = relatedChats?.length ?? 0
 
   return (
-    <div className="border-t border-slate-800/80">
+    <div className="border-t border-slate-800/50">
       <button
         onClick={handleToggle}
-        className="w-full flex items-center justify-between px-3 py-2 md:px-4 hover:bg-slate-800/30 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-1.5 md:px-4 hover:bg-slate-800/20 transition-colors text-left"
       >
         <div className="flex items-center gap-1.5">
           <ChatIcon className="w-3 h-3 text-slate-600" />
@@ -375,7 +375,7 @@ export default function InsightCard({
               href={link.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-400 hover:text-slate-200 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 hover:border-slate-600/50 transition-all truncate max-w-[180px]"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-slate-500 hover:text-slate-200 bg-slate-800/25 hover:bg-slate-700/50 border border-slate-700/25 hover:border-slate-600/40 transition-all truncate max-w-[180px]"
             >
               <ExternalLinkIcon className="w-2.5 h-2.5 flex-shrink-0" />
               <span className="truncate">{link.title || "Source"}</span>
