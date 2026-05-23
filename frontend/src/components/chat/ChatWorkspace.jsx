@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
+import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import ChatMessage from "./ChatMessage.jsx"
 import ChatInput from "./ChatInput.jsx"
-import SessionList from "./SessionList.jsx"
+import { SessionListContent } from "./SessionList.jsx"
 
 function generateSessionId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -42,13 +43,12 @@ function getGreeting(name, rand) {
   return firstName ? `${time}, ${firstName}` : time
 }
 
-export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName }) {
+export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName, onSidebarClose }) {
   const [sessionId, setSessionId]     = useState(() => generateSessionId())
   const [messages, setMessages]       = useState([])
   const [sessions, setSessions]       = useState([])
   const [isLoading, setIsLoading]     = useState(false)
   const [error, setError]             = useState(null)
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768)
   const [chatMode, setChatMode]         = useState("normal")
   const [statusMsg, setStatusMsg]       = useState(null)
   const [statusHistory, setStatusHistory] = useState([])
@@ -365,116 +365,101 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     handleSend(newText)
   }, [handleSend])
 
-  return (
-    <div className="relative flex" style={{ height: 'calc(100dvh - var(--header-h) - var(--mobile-nav-h))' }}>
+  // Register conversation list into unified sidebar Zone 3 (after all callbacks are declared)
+  const { register, unregister } = useSidebarSubsection()
+  useEffect(() => {
+    register('chat', (query) => (
+      <SessionListContent
+        query={query}
+        sessions={sessions}
+        currentSessionId={sessionId}
+        onSelect={(s) => { handleSelectSession(s); onSidebarClose?.() }}
+        onNew={() => { handleNewChat(); onSidebarClose?.() }}
+        onRename={handleRename}
+        onDelete={handleDeleteSession}
+      />
+    ))
+    return () => unregister('chat')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, sessionId, handleSelectSession, handleNewChat, handleRename, handleDeleteSession, onSidebarClose, register, unregister])
 
-      {/* Sidebar — overlay drawer on mobile, inline panel on desktop */}
-      {sidebarOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/50 z-20 md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-          <SessionList
-            sessions={sessions}
-            currentSessionId={sessionId}
-            onSelect={(s) => { handleSelectSession(s); if (window.innerWidth < 768) setSidebarOpen(false) }}
-            onNew={() => { handleNewChat(); if (window.innerWidth < 768) setSidebarOpen(false) }}
-            onRename={handleRename}
-            onDelete={handleDeleteSession}
-            onMobileClose={() => setSidebarOpen(false)}
-          />
-        </>
+  return (
+    <div className="flex flex-col h-full">
+
+      {/* Toolbar — clear button, only shown when there are messages */}
+      {messages.length > 0 && (
+        <div className="flex items-center justify-end px-4 py-1.5 flex-shrink-0">
+          <button
+            onClick={handleClearSession}
+            className="text-xs text-slate-700 hover:text-slate-400 transition-colors px-2 py-1 rounded-lg hover:bg-white/[0.05]"
+          >
+            Clear
+          </button>
+        </div>
       )}
 
-      {/* Main chat area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Feed context header */}
+      <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
 
-        {/* Toolbar */}
-        <div className="flex items-center gap-2 px-3 py-2 sm:px-4 sm:py-2.5 border-b border-slate-800/50 flex-shrink-0">
-          <button
-            onClick={() => setSidebarOpen(o => !o)}
-            className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-colors flex-shrink-0"
-            aria-label="Toggle sidebar"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <span className="flex-1" />
-          {messages.length > 0 && (
-            <button
-              onClick={handleClearSession}
-              className="text-xs text-slate-600 hover:text-slate-400 transition-colors px-2 py-1 rounded-lg hover:bg-slate-800/60"
-            >
-              Clear
-            </button>
+      {/* Messages — scrollable */}
+      <div className="flex-1 overflow-y-auto py-3 px-3 sm:py-5 sm:px-4">
+        <div className="max-w-4xl mx-auto space-y-4">
+          {messages.length === 0 && !isLoading && (
+            <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} onSelectSession={handleSelectSession} />
           )}
-        </div>
 
-        {/* Feed context header */}
-        <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
-
-        {/* Messages — scrollable, no visible scrollbar */}
-        <div className="flex-1 overflow-y-auto py-3 px-3 sm:py-5 sm:px-4">
-          <div className="max-w-4xl mx-auto space-y-4">
-            {messages.length === 0 && !isLoading && (
-              <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} />
-            )}
-
-            {messages.map((msg, idx) => {
-              const isLastAssistant =
-                msg.role === "assistant" &&
-                !msg.streaming &&
-                idx === messages.length - 1
-              return (
-                <ChatMessage
-                  key={msg.id}
-                  message={msg}
-                  msgIndex={idx}
-                  sessionId={sessionId}
-                  isLastAssistant={isLastAssistant}
-                  onRetry={isLastAssistant ? handleRetry : undefined}
-                  onEdit={msg.role === "user" ? handleEditMessage : undefined}
-                />
-              )
-            })}
-
-            {isLoading && (
-              <TypingIndicator
-                statusMsg={statusMsg}
-                statusHistory={statusHistory}
-                chatMode={chatMode}
-                isLayman={conversationMode === "layman" || chatMode === "layman"}
+          {messages.map((msg, idx) => {
+            const isLastAssistant =
+              msg.role === "assistant" &&
+              !msg.streaming &&
+              idx === messages.length - 1
+            return (
+              <ChatMessage
+                key={msg.id}
+                message={msg}
+                msgIndex={idx}
+                sessionId={sessionId}
+                isLastAssistant={isLastAssistant}
+                onRetry={isLastAssistant ? handleRetry : undefined}
+                onEdit={msg.role === "user" ? handleEditMessage : undefined}
               />
-            )}
+            )
+          })}
 
-            {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-red-300 text-sm">
-                <span className="flex-shrink-0">⚠</span>
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div ref={bottomRef} />
-          </div>
-        </div>
-
-        {/* Input */}
-        <div className="flex-shrink-0">
-          <div className="max-w-4xl mx-auto">
-            <ChatInput
-              onSend={handleSend}
-              disabled={isLoading}
-              chatMode={conversationMode === "layman" ? "layman" : chatMode}
-              onModeChange={(mode) => {
-                setChatMode(mode)
-                if (mode === "layman") setConversationMode("layman")
-                else if (conversationMode === "layman" && mode !== "layman") setConversationMode(null)
-              }}
-              autoMode={autoMode}
+          {isLoading && (
+            <TypingIndicator
+              statusMsg={statusMsg}
+              statusHistory={statusHistory}
+              chatMode={chatMode}
+              isLayman={conversationMode === "layman" || chatMode === "layman"}
             />
-          </div>
+          )}
+
+          {error && (
+            <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-red-300 text-sm">
+              <span className="flex-shrink-0">⚠</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+      </div>
+
+      {/* Input */}
+      <div className="flex-shrink-0">
+        <div className="max-w-4xl mx-auto">
+          <ChatInput
+            onSend={handleSend}
+            disabled={isLoading}
+            chatMode={conversationMode === "layman" ? "layman" : chatMode}
+            onModeChange={(mode) => {
+              setChatMode(mode)
+              if (mode === "layman") setConversationMode("layman")
+              else if (conversationMode === "layman" && mode !== "layman") setConversationMode(null)
+            }}
+            autoMode={autoMode}
+          />
         </div>
       </div>
     </div>
@@ -639,25 +624,25 @@ const SUGGESTIONS = [
   { text: "Learning roadmap for machine learning",            hint: "instant answer" },
 ]
 
-function EmptyState({ onSend, sessions = [], activeFeedCtx, userName, greetingRand = 0.5 }) {
+function EmptyState({ onSend, sessions = [], activeFeedCtx, onSelectSession, userName, greetingRand = 0.5 }) {
   const recentSessions = sessions.slice(0, 3)
 
   if (activeFeedCtx) {
     const actionLabel = { ask_about: "Ask about", deep_research: "Deep-dive into", explain_simply: "Generating simple explanation for" }
     const isLayman = activeFeedCtx.action === "explain_simply"
     return (
-      <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center px-4">
-        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg mb-4 ${
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 pb-16">
+        <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shadow-lg mb-3 ${
           isLayman
             ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-950/50"
             : "bg-gradient-to-br from-blue-500 to-violet-600 shadow-violet-950/50"
         }`}>
           {isLayman ? (
-            <svg className="w-5 h-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+            <svg className="w-4.5 h-4.5 text-white" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10 1a6 6 0 0 1 3.479 10.907A1 1 0 0 1 13 13H7a1 1 0 0 1-.479-1.093A6 6 0 0 1 10 1ZM8.5 15.5a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3Zm.25 2a.25.25 0 0 0 0 .5h2.5a.25.25 0 0 0 0-.5h-2.5Z" />
             </svg>
           ) : (
-            <svg className="w-5 h-5 text-white" viewBox="0 0 16 16" fill="currentColor">
+            <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="currentColor">
               <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
             </svg>
           )}
@@ -667,13 +652,13 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, userName, greetingRa
         }`}>
           {actionLabel[activeFeedCtx.action] ?? "Exploring"}
         </p>
-        <h2 className="text-base font-semibold text-slate-100 mb-1 max-w-sm leading-snug">
+        <h2 className="text-sm font-semibold text-slate-100 mb-1 max-w-[280px] leading-snug">
           &ldquo;{activeFeedCtx.insight_title || "this topic"}&rdquo;
         </h2>
         {activeFeedCtx.project_name && (
-          <p className="text-xs text-slate-500 mb-4">from <span className="text-slate-400">{activeFeedCtx.project_name}</span></p>
+          <p className="text-xs text-slate-500 mb-3">from <span className="text-slate-400">{activeFeedCtx.project_name}</span></p>
         )}
-        <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
+        <p className="text-xs text-slate-600 max-w-[220px] leading-relaxed">
           {isLayman
             ? "Generating a plain-language explanation — no jargon, just intuition."
             : "Type your question below — the article context is ready to use."}
@@ -683,28 +668,27 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, userName, greetingRa
   }
 
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[35vh] text-center px-4 py-4">
-      <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-950/50 mb-3">
-        <svg className="w-5 h-5 text-white" viewBox="0 0 16 16" fill="currentColor">
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 pb-16">
+      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-950/50 mb-2.5">
+        <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
       </div>
-      <h2 className="text-base font-semibold text-slate-200 mb-0.5">{getGreeting(userName, greetingRand)}</h2>
-      <p className="text-xs text-slate-500 mb-2">Your research companion is ready</p>
-      <p className="text-xs text-slate-500 mb-3 max-w-xs leading-relaxed">
+      <h2 className="text-sm font-semibold text-slate-200 mb-1">{getGreeting(userName, greetingRand)}</h2>
+      <p className="text-xs text-slate-500 mb-4 max-w-[210px] leading-relaxed">
         Use <span className="text-blue-400/80">Web Search</span> for live data or{" "}
         <span className="text-violet-400/80">Deep Research</span> for analysis.
       </p>
 
       {recentSessions.length > 0 ? (
-        <div className="w-full max-w-lg mt-2">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2 text-left">Recent</p>
+        <div className="w-full max-w-[280px]">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 text-left">Recent</p>
           <div className="flex flex-col gap-1">
             {recentSessions.map(s => (
               <button
                 key={s.session_id}
-                onClick={() => onSend && onSelectSession?.(s)}
-                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800/80 text-left hover:border-slate-700 hover:bg-slate-900 transition-all"
+                onClick={() => onSelectSession?.(s)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.05] text-left hover:border-white/[0.08] hover:bg-white/[0.06] transition-all"
               >
                 <svg className="w-3 h-3 text-slate-600 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12Z" />
@@ -715,12 +699,12 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, userName, greetingRa
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg mt-2">
+        <div className="flex flex-col gap-1.5 w-full max-w-[280px]">
           {SUGGESTIONS.map((s, i) => (
             <button
               key={i}
               onClick={() => onSend(s.text)}
-              className="group text-left px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/70 transition-all"
+              className="group text-left px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.05] hover:border-white/[0.08] hover:bg-white/[0.06] transition-all"
             >
               <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors leading-snug block">
                 {s.text}

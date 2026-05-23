@@ -3,20 +3,24 @@ import { createContext, useContext, useState, useCallback } from 'react'
 const SidebarSubsectionContext = createContext(null)
 
 export function SidebarSubsectionProvider({ children }) {
-  // subsection = { type: 'feed'|'bookmarks', render: () => ReactNode } | null
-  // Stores a render *function* so the sidebar always calls into the latest closure
-  const [subsection, setSubsection] = useState(null)
+  // subsections = { [type]: (query) => ReactNode }
+  // Using a map so multiple always-mounted views (feed, chat) can coexist without overwriting each other
+  const [subsections, setSubsections] = useState({})
 
   const register = useCallback((type, renderFn) => {
-    setSubsection({ type, render: renderFn })
+    setSubsections(prev => ({ ...prev, [type]: renderFn }))
   }, [])
 
   const unregister = useCallback((type) => {
-    setSubsection(prev => (prev?.type === type ? null : prev))
+    setSubsections(prev => {
+      const next = { ...prev }
+      delete next[type]
+      return next
+    })
   }, [])
 
   return (
-    <SidebarSubsectionContext.Provider value={{ subsection, register, unregister }}>
+    <SidebarSubsectionContext.Provider value={{ subsections, register, unregister }}>
       {children}
     </SidebarSubsectionContext.Provider>
   )

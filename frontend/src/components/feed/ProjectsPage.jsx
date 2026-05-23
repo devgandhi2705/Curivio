@@ -33,7 +33,6 @@ import ProjectCard from "./ProjectCard.jsx"
 import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
-import { computeDisplayLabels, computeNextLabel } from "./DailyPackageView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 
@@ -109,7 +108,6 @@ function FeedSubsection({
   loadingList,
   listError,
   progressions,
-  activeLatestLabel,
   onSelect,
   onNew,
   onDelete,
@@ -149,7 +147,6 @@ function FeedSubsection({
               onSelect={onSelect}
               onDelete={onDelete}
               onEdit={onEdit}
-              displayLabel={project.project_id === activeId ? activeLatestLabel : undefined}
             />
           ))}
         </div>
@@ -202,17 +199,6 @@ export default function ProjectsPage({
   const [showEdit,       setShowEdit]       = useState(false)
   const [pendingDelete,  setPendingDelete]  = useState(null)
 
-  // ── Derived display labels ────────────────────────────────────────────────────
-  const _todayStr            = new Date().toLocaleDateString("en-CA")
-  const _activeDisplayLabels = computeDisplayLabels(insights)
-  const _generatedTodayCount = insights.filter(p =>
-    p.generated_at && new Date(p.generated_at).toLocaleDateString("en-CA") === _todayStr
-  ).length
-  const activeLatestLabel = insights.length > 0
-    ? (_activeDisplayLabels.get(insights[0].id) ?? null)
-    : null
-  const activeNextLabel = computeNextLabel(insights, _activeDisplayLabels, _generatedTodayCount)
-
   // ── Sort projects by most-recently-visited ────────────────────────────────────
   const sortedProjects = visitedOrder.length === 0 ? projects : [...projects].sort((a, b) => {
     const ia = visitedOrder.indexOf(a.project_id)
@@ -247,23 +233,21 @@ export default function ProjectsPage({
         ? sortedProjects.filter(p => p.name.toLowerCase().includes(q))
         : sortedProjects
       return (
-      <FeedSubsection
-        projects={filtered}
-        activeId={activeId}
-        loadingList={loadingList}
-        listError={listError}
-        progressions={progressions}
-        activeLatestLabel={activeLatestLabel}
-        onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
-        onNew={() => subsectionHandlers.current.onNew()}
-        onDelete={(id) => subsectionHandlers.current.onDelete(id)}
-        onEdit={(id) => subsectionHandlers.current.onEdit(id)}
-      />
+        <FeedSubsection
+          projects={filtered}
+          activeId={activeId}
+          loadingList={loadingList}
+          listError={listError}
+          progressions={progressions}
+          onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
+          onNew={() => subsectionHandlers.current.onNew()}
+          onDelete={(id) => subsectionHandlers.current.onDelete(id)}
+          onEdit={(id) => subsectionHandlers.current.onEdit(id)}
+        />
       )
     })
     // No cleanup — ProjectsPage is always-mounted.
-    // Sidebar gates display with subsection.type === view.
-  }, [register, sortedProjects, activeId, loadingList, listError, progressions, activeLatestLabel])
+  }, [register, sortedProjects, activeId, loadingList, listError, progressions])
 
   // ── Auto-select project when navigated from global search ─────────────────
   useEffect(() => {

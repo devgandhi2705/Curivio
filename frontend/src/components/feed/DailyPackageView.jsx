@@ -117,6 +117,75 @@ function buildContentMix(pkg) {
   return curiosityCount ? `${core} + ${curiosityCount} curiosity pick${curiosityCount !== 1 ? "s" : ""}` : core
 }
 
+// ─── Day history dropdown ─────────────────────────────────────────────────────
+
+function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const currentLabel = displayLabels.get(selectedId) ?? `Day ?`
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={[
+          "inline-flex items-center gap-1 px-2 py-0.5 rounded-md",
+          "text-[10px] font-bold uppercase tracking-wider transition-colors select-none",
+          open
+            ? "bg-white/[0.10] border border-white/[0.12] text-slate-200"
+            : "bg-white/[0.05] border border-white/[0.07] text-slate-500 hover:text-slate-200 hover:bg-white/[0.08]",
+        ].join(" ")}
+      >
+        {currentLabel}
+        <svg
+          className={`w-2.5 h-2.5 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20" fill="currentColor"
+        >
+          <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1.5 z-30 min-w-[172px] bg-slate-900/95 backdrop-blur-sm border border-white/[0.07] rounded-xl shadow-2xl shadow-black/60 overflow-hidden py-1">
+          {packages.map(pkg => {
+            const label  = displayLabels.get(pkg.id)
+            const isSel  = pkg.id === selectedId
+            const failed = label === "Day 0"
+            return (
+              <button
+                key={pkg.id}
+                onClick={() => { onSelect(pkg.id); setOpen(false) }}
+                className={[
+                  "w-full flex items-center justify-between gap-4 px-3 py-1.5 text-left transition-colors",
+                  isSel
+                    ? "bg-white/[0.07] text-slate-100"
+                    : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200",
+                ].join(" ")}
+              >
+                <span className={`text-[11px] font-semibold uppercase tracking-wide ${failed ? "text-rose-400/80" : ""}`}>
+                  {label}
+                </span>
+                <span className="text-[10px] text-slate-600 tabular-nums flex-shrink-0">
+                  {formatDate(pkg.generated_at)}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Export button (PDF + Markdown dropdown) ──────────────────────────────────
 
 function ExportButton({ pkg, project, dayLabel }) {
@@ -136,7 +205,7 @@ function ExportButton({ pkg, project, dayLabel }) {
     <div ref={ref} className="relative ml-auto flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-slate-500 hover:text-slate-300 bg-slate-900/60 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 transition-all select-none"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-slate-600 hover:text-slate-300 hover:bg-white/[0.06] transition-all select-none"
       >
         <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
           <path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z" />
@@ -175,18 +244,20 @@ function ExportButton({ pkg, project, dayLabel }) {
   )
 }
 
-function PackageHeader({ pkg, dayLabel, actions }) {
+function PackageHeader({ pkg, dayLabel, daySelector, actions }) {
   const contentMix = buildContentMix(pkg)
   return (
     <div className="mb-3 md:mb-7">
       {/* Meta row */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 md:mb-3">
-        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-          {dayLabel ?? `Day ${pkg.day_number}`}
-        </span>
+        {daySelector ?? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700/60 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            {dayLabel ?? `Day ${pkg.day_number}`}
+          </span>
+        )}
         <span className="text-[11px] text-slate-600">{formatDate(pkg.generated_at)}</span>
         {contentMix && (
-          <span className="text-[11px] text-slate-700 hidden sm:inline">{contentMix}</span>
+          <span className="text-[11px] text-slate-700 hidden sm:inline tabular-nums">{contentMix}</span>
         )}
         {actions && <div className="ml-auto">{actions}</div>}
       </div>
@@ -199,7 +270,7 @@ function PackageHeader({ pkg, dayLabel, actions }) {
       {/* Learning thread — left-accent style */}
       {pkg.learning_thread && (
         <div className="flex gap-3">
-          <div className="flex-shrink-0 w-0.5 rounded-full bg-slate-600/60 self-stretch" />
+          <div className="flex-shrink-0 w-0.5 rounded-full bg-white/[0.08] self-stretch" />
           <p className="text-[12px] text-slate-500 leading-relaxed">{pkg.learning_thread}</p>
         </div>
       )}
@@ -210,16 +281,16 @@ function PackageHeader({ pkg, dayLabel, actions }) {
 function SectionDivider({ label }) {
   return (
     <div className="flex items-center gap-3 my-2 md:my-5">
-      <div className="flex-1 h-px bg-slate-800" />
-      <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">{label}</span>
-      <div className="flex-1 h-px bg-slate-800" />
+      <div className="flex-1 h-px bg-white/[0.06]" />
+      <span className="text-[10px] font-medium uppercase tracking-widest text-slate-600">{label}</span>
+      <div className="flex-1 h-px bg-white/[0.06]" />
     </div>
   )
 }
 
 function ActionItem({ text }) {
   return (
-    <div className="mt-3 md:mt-6 flex gap-2.5 md:gap-3 px-3 md:px-4 py-2.5 md:py-4 bg-slate-800/40 border border-slate-700/40 rounded-xl md:rounded-2xl">
+    <div className="mt-3 md:mt-6 flex gap-2.5 md:gap-3 px-3 md:px-4 py-2.5 md:py-4 bg-white/[0.04] rounded-xl md:rounded-2xl">
       <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mt-0.5">
         <svg className="w-3 h-3 text-blue-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M2 6l3 3 5-5" />
@@ -241,7 +312,7 @@ function DayProgressBar({ readCount, totalCount }) {
   const allDone = readCount >= totalCount
 
   return (
-    <div className="flex items-center gap-3 mb-2.5 md:mb-5 px-3 md:px-4 py-2.5 md:py-3 bg-slate-800/30 rounded-xl border border-slate-700/40">
+    <div className="flex items-center gap-3 mb-2.5 md:mb-5 px-3 md:px-4 py-2.5 md:py-3 bg-white/[0.04] rounded-xl">
       <div className="flex-1">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[11px] font-semibold text-slate-400">Day progress</span>
@@ -288,7 +359,7 @@ function GenerateButton({ generating, onGenerate, locked, nextLabel = "Next Day"
   return (
     <div className="flex flex-col gap-2">
       {confirming ? (
-        <div className="flex flex-col gap-2 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700/60">
+        <div className="flex flex-col gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] border border-white/[0.08]">
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-300 flex-1">
               Generate {nextLabel}
@@ -314,7 +385,7 @@ function GenerateButton({ generating, onGenerate, locked, nextLabel = "Next Day"
           onClick={handleClick}
           disabled={generating || locked}
           title={locked ? "Mark all articles as read to unlock the next package" : undefined}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 hover:border-slate-600 text-sm text-slate-300 hover:text-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] hover:border-white/[0.12] text-sm text-slate-400 hover:text-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
         >
           {generating ? (
             <>
@@ -340,34 +411,6 @@ function GenerateButton({ generating, onGenerate, locked, nextLabel = "Next Day"
         </p>
       )}
     </div>
-  )
-}
-
-// ─── History sidebar item ─────────────────────────────────────────────────────
-
-function HistoryItem({ pkg, dayLabel, isSelected, onClick }) {
-  const isEmpty = dayLabel === "Day 0"
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
-        isSelected
-          ? "bg-slate-700/60 border border-slate-600/60"
-          : "hover:bg-slate-800/60 border border-transparent"
-      }`}
-    >
-      <div className="flex items-center justify-between mb-0.5">
-        <span className={`text-[10px] font-semibold uppercase tracking-wide ${isEmpty ? "text-rose-500" : "text-slate-500"}`}>
-          {dayLabel ?? `Day ${pkg.day_number}`}
-        </span>
-        <span className="text-[10px] text-slate-600">{formatDate(pkg.generated_at)}</span>
-      </div>
-      {isEmpty ? (
-        <p className="text-xs text-rose-500/60 leading-snug italic">Generation failed — no content</p>
-      ) : (
-        <p className="text-xs text-slate-300 leading-snug line-clamp-2">{pkg.package_headline}</p>
-      )}
-    </button>
   )
 }
 
@@ -412,6 +455,9 @@ function PackageContent({
   onDeleteNote,
   queuedKeys,
   onToggleQueue,
+  packages,
+  displayLabels,
+  onSelectPackage,
 }) {
   const failed = isFailedPackage(pkg)
 
@@ -448,9 +494,19 @@ function PackageContent({
     }
   }
 
+  const dayDropdown = packages?.length > 1 ? (
+    <DayDropdown
+      packages={packages}
+      displayLabels={displayLabels}
+      selectedId={pkg.id}
+      onSelect={onSelectPackage}
+    />
+  ) : undefined
+
   if (failed) {
     return (
       <div>
+        {dayDropdown && <div className="mb-3">{dayDropdown}</div>}
         <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
         <div className="mt-4 pt-4 border-t border-slate-800">
           <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
@@ -464,6 +520,7 @@ function PackageContent({
       <PackageHeader
         pkg={pkg}
         dayLabel={dayLabel}
+        daySelector={dayDropdown}
         actions={<ExportButton pkg={pkg} project={project} dayLabel={dayLabel} />}
       />
 
@@ -745,127 +802,42 @@ export default function DailyPackageView({
   ).length
   const nextLabel = computeNextLabel(packages, displayLabels, generatedTodayCount)
 
-  // Show the animated generation state any time a fetch is in progress,
-  // regardless of whether prior packages exist. Keep the history sidebar
-  // visible on desktop so the user can see how many days they already have.
   if (generating) {
-    return (
-      <div className="flex gap-6 min-h-0">
-        <div className="flex-1 min-w-0">
-          <GeneratingPackageState project={project} nextLabel={nextLabel} />
-        </div>
-        {packages.length > 1 && (
-          <aside className="hidden md:block w-56 flex-shrink-0">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-3 px-1">
-              History
-            </p>
-            <div className="space-y-1">
-              {packages.map(pkg => (
-                <HistoryItem
-                  key={pkg.id}
-                  pkg={pkg}
-                  dayLabel={displayLabels.get(pkg.id)}
-                  isSelected={false}
-                  onClick={() => {}}
-                />
-              ))}
-            </div>
-          </aside>
-        )}
-      </div>
-    )
+    return <GeneratingPackageState project={project} nextLabel={nextLabel} />
   }
 
   if (packages.length === 0) {
     return <EmptyPackageState project={project} onGenerate={onGenerate} />
   }
 
-  return (
-    <div className="flex gap-6 min-h-0">
-
-      {/* Left: main package content */}
-      <div className="flex-1 min-w-0">
-
-        {/* Mobile package timeline — scrollable snap strip, desktop hidden */}
-        {packages.length > 1 && (
-          <div className="relative flex md:hidden mb-3 -mx-3">
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-slate-950 to-transparent z-10 pointer-events-none" />
-            <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-slate-950 to-transparent z-10 pointer-events-none" />
-            <div className="flex overflow-x-auto scrollbar-none snap-x snap-mandatory px-4 w-full">
-              {[...packages].reverse().map(pkg => {
-                const label = displayLabels.get(pkg.id)
-                const isSel = pkg.id === selected?.id
-                return (
-                  <button
-                    key={pkg.id}
-                    onClick={() => { setSelectedId(pkg.id); window.history.pushState({ view: 'feed', feedDay: pkg.id }, '') }}
-                    className={`flex-shrink-0 snap-start flex flex-col items-center px-3 py-2 gap-1.5 border-b-2 transition-all duration-150 group ${
-                      isSel ? 'border-blue-500' : 'border-slate-800/60 hover:border-slate-700'
-                    }`}
-                  >
-                    <span className={`text-[11px] font-medium whitespace-nowrap leading-none transition-colors ${
-                      isSel ? 'text-slate-100' : 'text-slate-600 group-hover:text-slate-400'
-                    }`}>
-                      {label}
-                    </span>
-                    <span className={`w-1.5 h-1.5 rounded-full transition-all ${
-                      isSel ? 'bg-blue-400' : 'bg-slate-700'
-                    }`} />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {selected ? (
-          <PackageContent
-            pkg={selected}
-            project={project}
-            generating={generating}
-            onGenerate={onGenerate}
-            onRegenerate={onRegenerate}
-            onOpenInChat={onOpenInChat}
-            isLatestPackage={isLatest}
-            dayLabel={displayLabels.get(selected.id)}
-            generatedTodayCount={isLatest ? generatedTodayCount : 0}
-            nextLabel={isLatest ? nextLabel : undefined}
-            readKeys={isLatest ? readKeys : undefined}
-            onMarkRead={isLatest ? onMarkRead : undefined}
-            onMarkUnread={isLatest ? onMarkUnread : undefined}
-            relatedChatsMap={relatedChatsMap}
-            onLoadRelatedChats={onLoadRelatedChats}
-            onOpenChat={onOpenChat}
-            notesMap={notesMap}
-            onSaveNote={handleSaveNote}
-            onDeleteNote={handleDeleteNote}
-            queuedKeys={queuedKeys}
-            onToggleQueue={handleToggleQueue}
-          />
-        ) : null}
-      </div>
-
-      {/* Right: history sidebar (only if > 1 package) — desktop only */}
-      {packages.length > 1 && (
-        <aside className="hidden md:block w-56 flex-shrink-0">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-3 px-1">
-            History
-          </p>
-          <div className="space-y-1">
-            {packages.map(pkg => (
-              <HistoryItem
-                key={pkg.id}
-                pkg={pkg}
-                dayLabel={displayLabels.get(pkg.id)}
-                isSelected={pkg.id === selected?.id}
-                onClick={() => { setSelectedId(pkg.id); window.history.pushState({ view: 'feed', feedDay: pkg.id }, '') }}
-              />
-            ))}
-          </div>
-        </aside>
-      )}
-    </div>
-  )
+  return selected ? (
+    <PackageContent
+      pkg={selected}
+      project={project}
+      generating={generating}
+      onGenerate={onGenerate}
+      onRegenerate={onRegenerate}
+      onOpenInChat={onOpenInChat}
+      isLatestPackage={isLatest}
+      dayLabel={displayLabels.get(selected.id)}
+      generatedTodayCount={isLatest ? generatedTodayCount : 0}
+      nextLabel={isLatest ? nextLabel : undefined}
+      readKeys={isLatest ? readKeys : undefined}
+      onMarkRead={isLatest ? onMarkRead : undefined}
+      onMarkUnread={isLatest ? onMarkUnread : undefined}
+      relatedChatsMap={relatedChatsMap}
+      onLoadRelatedChats={onLoadRelatedChats}
+      onOpenChat={onOpenChat}
+      notesMap={notesMap}
+      onSaveNote={handleSaveNote}
+      onDeleteNote={handleDeleteNote}
+      queuedKeys={queuedKeys}
+      onToggleQueue={handleToggleQueue}
+      packages={packages}
+      displayLabels={displayLabels}
+      onSelectPackage={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
+    />
+  ) : null
 }
 
 const GENERATION_STEPS = [

@@ -676,7 +676,7 @@ function Sidebar({
   showSettings, onSettingsToggle, settingsRef, isDark, toggleTheme, user,
   collapsed, setCollapsed, open, setOpen,
 }) {
-  const { subsection } = useSidebarSubsection()
+  const { subsections } = useSidebarSubsection()
   const [sidebarQuery, setSidebarQuery] = useState('')
   useEffect(() => { setSidebarQuery('') }, [view])
 
@@ -711,7 +711,7 @@ function Sidebar({
       <aside
         className={[
           'fixed inset-y-0 left-0 z-40 flex flex-col',
-          'bg-slate-900 border-r border-white/[0.06]',
+          'bg-slate-900 border-r border-white/[0.04]',
           'transition-transform duration-300 ease-in-out',
           'md:relative md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
@@ -722,7 +722,7 @@ function Sidebar({
       >
 
         {/* Zone 1: Logo + collapse toggle */}
-        <div className={`flex items-center h-12 flex-shrink-0 border-b border-white/[0.05] px-3 ${collapsed ? 'md:justify-center' : ''}`}>
+        <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:justify-center' : ''}`}>
           <button
             onClick={() => { navigateTo('feed'); setOpen(false) }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
@@ -791,7 +791,7 @@ function Sidebar({
                 value={sidebarQuery}
                 onChange={e => setSidebarQuery(e.target.value)}
                 placeholder={ZONE3_PLACEHOLDER[view] ?? 'Filter…'}
-                className="w-full pl-7 pr-6 py-1.5 bg-white/[0.05] rounded-md text-[12px] text-slate-200 placeholder-slate-500 focus:outline-none focus:bg-white/[0.08] transition-colors"
+                className="w-full pl-7 pr-6 py-1.5 bg-white/[0.04] rounded-lg text-[12px] text-slate-300 placeholder-slate-600 focus:outline-none focus:bg-white/[0.07] transition-colors"
               />
               {sidebarQuery && (
                 <button
@@ -847,9 +847,9 @@ function Sidebar({
           )}
 
           {/* Feed / Bookmarks / Chat / Dashboard — subsection context */}
-          {view !== 'readlater' && subsection && subsection.type === view && (
+          {view !== 'readlater' && subsections[view] && (
             <div className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
-              {subsection.render(sidebarQuery)}
+              {subsections[view](sidebarQuery)}
             </div>
           )}
         </div>
@@ -858,7 +858,7 @@ function Sidebar({
         {collapsed && <div className="hidden md:flex flex-1" />}
 
         {/* Zone 4: User / Settings — always pinned at bottom */}
-        <div className={`flex-shrink-0 border-t border-white/[0.04] py-2 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
+        <div className={`flex-shrink-0 pt-1 pb-2 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
           <div ref={settingsRef} className="relative">
             <button
               onClick={onSettingsToggle}
@@ -923,7 +923,7 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
         {queue.map(item => (
           <div
             key={item.articleKey}
-            className="group flex items-center gap-4 p-4 bg-slate-900/60 border border-slate-800/80 rounded-xl hover:border-slate-700/80 transition-colors cursor-pointer"
+            className="group flex items-center gap-4 p-4 bg-white/[0.03] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer"
             onClick={() => onItemClick(item)}
           >
             <div className="flex-1 min-w-0">
@@ -1206,8 +1206,11 @@ function AppContent() {
           </button>
         </div>
 
-        {/* Chat workspace — outside scrollable container, manages its own height via CSS vars */}
-        <div className={view !== 'chat' ? 'hidden' : ''}>
+        {/* Chat workspace — flex-1 so it fills all remaining space below the mobile bar */}
+        <div className={[
+          'overflow-hidden',
+          view !== 'chat' ? 'hidden' : 'flex-1 flex flex-col',
+        ].join(' ')}>
           <ChatWorkspace
             feedContext={feedContext}
             onClearFeedContext={() => setFeedContext(null)}
@@ -1215,6 +1218,7 @@ function AppContent() {
             targetSessionTitle={targetSessionTitle}
             onClearTargetSession={() => { setTargetSessionId(null); setTargetSessionTitle(null) }}
             userName={user?.name}
+            onSidebarClose={handleSidebarClose}
           />
         </div>
 

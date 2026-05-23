@@ -100,7 +100,7 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
   return (
     <div
       className={`group relative rounded-lg transition-colors ${
-        isActive ? "bg-slate-800" : "hover:bg-slate-900"
+        isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"
       }`}
     >
       {editing ? (
@@ -145,7 +145,7 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
               <Highlight text={session.match_snippet} query={query} />
             </div>
           ) : (
-            <div className="text-slate-500 mt-0.5">
+            <div className="text-slate-600 mt-0.5 text-[10px]">
               {session.message_count} msg{session.message_count !== 1 ? "s" : ""}
               {" · "}
               {formatRelativeTime(session.last_active_at)}
@@ -176,7 +176,103 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
   )
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─── Inline content for unified sidebar Zone 3 ───────────────────────────────
+// No <aside>, no own search input — query comes from the sidebar's Zone 3 field.
+
+export function SessionListContent({ query = "", sessions, currentSessionId, onSelect, onNew, onRename, onDelete }) {
+  const [results,   setResults]   = useState(null)
+  const [searching, setSearching] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    clearTimeout(timerRef.current)
+    if (!query.trim()) {
+      setResults(null)
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    timerRef.current = setTimeout(async () => {
+      try {
+        const data = await searchSessions(query.trim())
+        setResults(data)
+      } catch {
+        setResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 250)
+    return () => clearTimeout(timerRef.current)
+  }, [query])
+
+  const isSearchMode    = query.trim().length > 0
+  const displaySessions = isSearchMode ? (results ?? []) : sessions
+  const showEmpty       = !isSearchMode && sessions.length === 0
+  const showNoResults   = isSearchMode && !searching && results !== null && results.length === 0
+
+  return (
+    <div className="flex flex-col gap-0.5">
+
+      {/* New Chat button */}
+      <button
+        onClick={onNew}
+        className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 mb-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.08] text-slate-400 hover:text-slate-100 text-[12px] font-medium transition-colors"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
+        </svg>
+        New chat
+      </button>
+
+      {/* Section label */}
+      {!isSearchMode && sessions.length > 0 && (
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 px-1 pb-0.5 pt-0.5">
+          Conversations
+        </p>
+      )}
+
+      {/* Search: loading */}
+      {isSearchMode && searching && (
+        <p className="text-[11px] text-slate-600 px-2 py-2 text-center animate-pulse">Searching…</p>
+      )}
+
+      {/* Search: no results */}
+      {showNoResults && (
+        <div className="px-2 py-3 text-center">
+          <p className="text-[11px] text-slate-500">No conversations found</p>
+          <p className="text-[10px] text-slate-700 mt-0.5">for &ldquo;{query}&rdquo;</p>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {showEmpty && (
+        <p className="text-xs text-slate-600 px-2 py-2 text-center">No conversations yet</p>
+      )}
+
+      {/* Search result count */}
+      {isSearchMode && !searching && results && results.length > 0 && (
+        <p className="text-[9px] font-semibold uppercase tracking-widest text-slate-700 px-1 pb-0.5">
+          {results.length} result{results.length !== 1 ? "s" : ""}
+        </p>
+      )}
+
+      {/* Session rows */}
+      {(!isSearchMode || !searching) && displaySessions.map(session => (
+        <SessionRow
+          key={session.session_id}
+          session={session}
+          isActive={session.session_id === currentSessionId}
+          onSelect={onSelect}
+          onRename={onRename}
+          onDelete={onDelete}
+          query={isSearchMode ? query : ""}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ─── Main export (standalone drawer, kept for potential future use) ────────────
 
 export default function SessionList({ sessions, currentSessionId, onSelect, onNew, onRename, onDelete, onMobileClose }) {
   const [query,     setQuery]     = useState("")

@@ -18,12 +18,10 @@ function intensityLabel(count) {
   return "Intensive"
 }
 
-export default function ProjectCard({ project, progression, isActive, onSelect, onDelete, onEdit, displayLabel }) {
+export default function ProjectCard({ project, progression, isActive, onSelect, onDelete, onEdit }) {
   const grad      = COLOR_GRAD[project.color] || COLOR_GRAD.blue
   const level     = progression?.current_level || project.difficulty || "beginner"
   const lvl       = LEVEL_LABEL[level] || LEVEL_LABEL.beginner
-  const dayCount  = project.insight_count || 0
-  const dayLabel  = displayLabel ?? (dayCount > 0 ? `Day ${dayCount}` : null)
   const intensity = intensityLabel(project.daily_core_article_count)
 
   function handleDelete(e) {
@@ -42,8 +40,8 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
       className={`
         group relative flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors select-none
         ${isActive
-          ? "bg-white/[0.07] border border-white/[0.08]"
-          : "border border-transparent hover:bg-white/[0.04] hover:border-white/[0.04]"
+          ? "bg-white/[0.07]"
+          : "hover:bg-white/[0.04]"
         }
       `}
     >
@@ -57,7 +55,6 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
         </p>
         <p className="text-[10px] mt-0.5 flex items-center gap-1.5">
           <span className={lvl.color}>{lvl.label}</span>
-          {dayLabel && <><span className="text-slate-600">·</span><span className="text-slate-500">{dayLabel}</span></>}
           <span className="text-slate-600">·</span>
           <span className="text-slate-500">{intensity}</span>
         </p>
