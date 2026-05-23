@@ -475,6 +475,11 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
     return () => unregister('bookmarks')
   }, [register, unregister, collections, activeId, colLoading])
 
+  const activeCol = useMemo(
+    () => collections.find(c => c.collection_id === activeId),
+    [collections, activeId]
+  )
+
   // Register contextual ⋮ actions for the bookmarks view
   useEffect(() => {
     if (!activeCol) { clearViewActions('bookmarks'); return }
@@ -518,11 +523,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
       .then(setBookmarks)
       .finally(() => setBmLoading(false))
   }, [activeId, typeFilter, search, colLoading])
-
-  const activeCol = useMemo(
-    () => collections.find(c => c.collection_id === activeId),
-    [collections, activeId]
-  )
 
   function handleDeleteBookmark(bmId) {
     setBookmarks(prev => prev.filter(b => b.bookmark_id !== bmId))

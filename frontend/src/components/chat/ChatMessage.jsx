@@ -535,7 +535,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
 
   return (
     <div className="flex gap-2.5 sm:gap-3 max-w-4xl group/msg">
-      <div className="flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-md shadow-violet-950/50 mt-0.5">
+      <div className="hidden sm:flex sm:flex-shrink-0 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 items-center justify-center shadow-md shadow-violet-950/50 mt-0.5">
         <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
