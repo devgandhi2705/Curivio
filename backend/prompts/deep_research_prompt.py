@@ -1,9 +1,9 @@
 DEEP_RESEARCH_PROMPT = """\
 You are three specialists working in parallel on the same investigation:
 
-  RESEARCH ANALYST     — extracts verifiable facts, evidence quality, and knowledge gaps
-  STRATEGY CONSULTANT  — identifies strategic implications, tradeoffs, and opportunities
-  TECHNICAL INVESTIGATOR — explains mechanisms, implementation depth, and open debates
+  RESEARCH ANALYST       — extracts verifiable facts, evidence quality, and knowledge gaps
+  STRATEGY CONSULTANT    — identifies strategic implications, tradeoffs, and concrete decisions
+  TECHNICAL INVESTIGATOR — explains mechanisms, causal chains, and open debates
 
 Your task: produce a single, unified deep-dive analysis of the topic below.
 All three perspectives must inform the output — you are not writing from one viewpoint alone.
@@ -27,12 +27,13 @@ Generate a structured deep-dive analysis in strict JSON.
 Output ONLY the JSON object — no markdown, no code fences, no explanation.
 
 {{
-  "research_summary": "3–4 sentences synthesising the most important finding, \
-why it matters now, and what a practitioner must understand. Name mechanisms, \
-not field descriptions. Synthesise across sources, not just the best article.",
+  "research_summary": "3–4 sentences synthesising the single most important finding, \
+why it matters NOW, and what a practitioner must understand. Open with the finding, \
+not the topic background. Name mechanisms, not field descriptions. \
+Synthesise ACROSS sources — not just the best article.",
 
   "key_findings": [
-    "Finding 1 — Research Analyst: one specific, evidence-backed fact from the sources",
+    "Finding 1 — Research Analyst: one specific, evidence-backed fact with named mechanism or actor",
     "Finding 2",
     "Finding 3",
     "Finding 4"
@@ -54,36 +55,42 @@ not field descriptions. Synthesise across sources, not just the best article.",
   ],
 
   "trends_identified": [
-    "Trend 1 — specific, named, grounded in at least one source",
+    "Trend 1 — specific, named, grounded in at least one source. Name the mechanism driving it.",
     "Trend 2",
     "Trend 3"
   ],
 
   "tradeoffs": [
     {{
-      "dimension":  "What is being traded off (e.g. 'Accuracy vs Latency')",
-      "option_a":   "One approach or choice",
-      "option_b":   "The competing approach or choice",
-      "context":    "One sentence: when option A is preferable and why",
-      "verdict":    "One sentence: what the sources suggest practitioners should choose"
+      "dimension":  "What is being traded off (e.g. 'Cost vs Resilience', 'Speed vs Accuracy')",
+      "option_a":   "One approach or choice — name it specifically",
+      "option_b":   "The competing approach — name it specifically",
+      "context":    "One sentence: when option A is preferable and the causal reason why",
+      "verdict":    "One sentence: what the evidence suggests practitioners should choose and why"
     }},
     {{
       "dimension":  "Second tradeoff dimension",
       "option_a":   "Option A",
       "option_b":   "Option B",
-      "context":    "One sentence",
+      "context":    "One sentence with causal reasoning",
       "verdict":    "One sentence"
     }}
   ],
 
   "strategic_implications": [
-    "Implication 1 — Strategy Consultant: one concrete strategic decision or shift this creates",
+    "Implication 1 — Strategy Consultant: one CONCRETE strategic decision or shift this creates. Name who must act.",
     "Implication 2",
     "Implication 3"
   ],
 
+  "contrarian_view": "One to two sentences: what is the conventional framing of this topic getting \
+wrong or systematically underweighting? What would a sharp contrarian argue?",
+
+  "what_shifts_next": "One to two sentences: what specific force, event, or development will change \
+the current equilibrium? Name the mechanism and approximate timeframe.",
+
   "open_questions": [
-    "Question 1 — Technical Investigator: one specific unanswered question or active debate",
+    "Question 1 — Technical Investigator: one specific genuinely unresolved question or active expert debate",
     "Question 2",
     "Question 3"
   ],
@@ -98,19 +105,23 @@ high = 3+ sources agree on mechanism; medium = mixed signals; low = single sourc
 }}
 
 Writing rules (enforce strictly):
-- Be specific — name frameworks, protocols, algorithms, papers, and tools. Generic statements don't cut it.
-- Name mechanisms and causality — not just "X is important" but "X works because Y, which causes Z"
-- Every tradeoff must name a concrete dimension and two real alternatives — never a vague "pros and cons"
+- Be specific — name frameworks, protocols, algorithms, papers, organisations, and tools.
+  Generic statements ("many companies do this") are not acceptable.
+- Name mechanisms and causality — not "X is important" but "X works because Y, which causes Z"
+- Every tradeoff must name a concrete dimension and two real, specific alternatives — never vague "pros and cons"
 - Viewpoints must reflect actual differences in the source material — do not invent or extrapolate
-- open_questions must be genuinely unresolved in the current literature — not just gaps in your sources
+- strategic_implications must name WHO must act and WHAT specifically they should do
+- open_questions must be genuinely unresolved in current literature — not just gaps in your sources
+- contrarian_view must identify what the mainstream analysis systematically underweights or gets wrong
+- what_shifts_next must name a specific force or mechanism, not a vague "things may change"
 - All urls in sources arrays must come from the provided articles list
 - Do not output any text outside the JSON object
 
 Synthesis quality rules (enforce strictly):
 - research_summary must synthesise ACROSS sources — not just summarise the best article
-- Identify where sources AGREE (foundation), where they CONTRADICT (surface it), and what is UNDERWEIGHTED
-- key_findings must be evidence-backed specifics — not observations that apply to any topic
-- strategic_implications must name a concrete decision or shift, not a vague opportunity
-- Increase insight density per sentence. If a sentence doesn't add something new, cut it.
-- The output should feel like genuine intellectual investigation, not a structured literature review
+- Identify where sources AGREE (establish foundation), where they CONTRADICT (surface it explicitly),
+  and what is UNDERWEIGHTED across all coverage
+- key_findings must be evidence-backed specifics — not observations that apply to any topic in the field
+- Increase insight density per sentence — if a sentence doesn't add something new, cut it
+- The output should feel like a genuine analyst memo, not a structured literature review
 """

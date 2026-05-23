@@ -77,9 +77,10 @@ function formatDate(iso) {
 
 function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
   const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  async function handleDelete(e) {
-    e.stopPropagation()
+  async function handleConfirmDelete() {
+    setConfirmDelete(false)
     setDeleting(true)
     try { await deleteBookmark(bookmark.bookmark_id); onDelete(bookmark.bookmark_id) } catch { setDeleting(false) }
   }
@@ -97,7 +98,7 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
           )}
         </div>
         <button
-          onClick={handleDelete}
+          onClick={e => { e.stopPropagation(); setConfirmDelete(true) }}
           disabled={deleting}
           className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-950/40 transition-all flex-shrink-0"
         >
@@ -106,6 +107,14 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
           </svg>
         </button>
       </div>
+
+      {confirmDelete && (
+        <DeleteConfirmModal
+          name={bookmark.title}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
 
       {/* Title */}
       <h3 className="text-sm font-semibold text-slate-100 leading-snug">
@@ -187,16 +196,38 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
 
 // ── Collection sidebar item ───────────────────────────────────────────────────
 
-function CollectionItem({ col, isActive, onClick }) {
+function DotsIcon() {
   return (
-    <button
+    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+      <circle cx="3" cy="8" r="1.5" />
+      <circle cx="8" cy="8" r="1.5" />
+      <circle cx="13" cy="8" r="1.5" />
+    </svg>
+  )
+}
+
+function CollectionItem({ col, isActive, onClick, onRename, onEdit, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function onMouseDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [menuOpen])
+
+  return (
+    <div
       onClick={() => onClick(col.collection_id)}
-      className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors text-left ${
+      className={`group relative flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
         isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
       }`}
     >
       <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 pr-5">
         <div className="flex items-center justify-between gap-1">
           <span className="text-sm font-medium truncate">{col.name}</span>
           <span className="text-[10px] text-slate-500 flex-shrink-0">{col.bookmark_count}</span>
@@ -207,7 +238,39 @@ function CollectionItem({ col, isActive, onClick }) {
           </p>
         )}
       </div>
-    </button>
+      {/* Desktop per-item action menu */}
+      <div ref={menuRef} className="hidden md:block absolute right-1 top-1/2 -translate-y-1/2">
+        <button
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+          className={`p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          title="Actions"
+        >
+          <DotsIcon />
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename?.(col) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Rename
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit?.(col) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete?.(col) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/[0.08] transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -390,7 +453,7 @@ function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
 
 // ── Collections subsection — rendered inside App sidebar's Zone 3 ─────────────
 
-function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew }) {
+function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew, onRename, onEdit, onDelete }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-1 mb-2 flex-shrink-0">
@@ -419,6 +482,9 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
               col={col}
               isActive={activeId === col.collection_id}
               onClick={onSelect}
+              onRename={onRename}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           ))
         )}
@@ -452,6 +518,9 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
     subsectionHandlers.current = {
       onSelect: (id) => { setActiveId(id); onSidebarClose?.() },
       onNew:    () => setShowNewCol(true),
+      onRename: (col) => { setActiveId(col.collection_id); setRenameColDraft(col.name || ''); setShowRenameCol(true) },
+      onEdit:   (col) => setEditingCol(col),
+      onDelete: (col) => setPendingDeleteCol(col),
     }
   })
 
@@ -469,6 +538,9 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
           colLoading={colLoading}
           onSelect={(id) => subsectionHandlers.current.onSelect(id)}
           onNew={() => subsectionHandlers.current.onNew()}
+          onRename={(c) => subsectionHandlers.current.onRename(c)}
+          onEdit={(c) => subsectionHandlers.current.onEdit(c)}
+          onDelete={(c) => subsectionHandlers.current.onDelete(c)}
         />
       )
     })
@@ -564,7 +636,7 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
   }
 
   return (
-    <div className="pt-2 pb-6 px-4 sm:px-8">
+    <div className="pt-14 pb-6 px-4 sm:px-8 md:pt-6">
 
       {/* Search bar */}
       <div className="flex items-center gap-3 mb-6">

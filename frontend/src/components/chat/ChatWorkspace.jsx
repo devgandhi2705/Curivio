@@ -398,8 +398,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   }, [handleSend])
 
   // Context menu — rename modal state
-  const [showRenameModal, setShowRenameModal] = useState(false)
-  const [renameDraft,     setRenameDraft]     = useState('')
+  const [showRenameModal,   setShowRenameModal]   = useState(false)
+  const [renameDraft,       setRenameDraft]       = useState('')
+  const [renamingSessionId, setRenamingSessionId] = useState(null)
 
   // Register contextual ⋮ actions for the chat view
   const { setViewActions, clearViewActions } = useContextMenu()
@@ -430,6 +431,12 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         currentSessionId={sessionId}
         onSelect={(s) => { handleSelectSession(s); onSidebarClose?.() }}
         onNew={() => { handleNewChat(); onSidebarClose?.() }}
+        onRename={(session) => {
+          setRenamingSessionId(session.session_id)
+          setRenameDraft(session.title || session.first_topic_hint || '')
+          setShowRenameModal(true)
+        }}
+        onDelete={(session) => handleDeleteSession(session.session_id)}
       />
     ))
     return () => unregister('chat')
@@ -443,7 +450,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         <RenameModal
           heading="Rename chat"
           initialValue={renameDraft}
-          onConfirm={async (value) => { await handleRename(sessionId, value); setShowRenameModal(false) }}
+          onConfirm={async (value) => { await handleRename(renamingSessionId ?? sessionId, value); setShowRenameModal(false) }}
           onClose={() => setShowRenameModal(false)}
         />
       )}

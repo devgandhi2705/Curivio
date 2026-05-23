@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 _MAX_PER_CATEGORY = 3
 
 # Reasons injected per category (template strings).
-_REASON_NEXT       = "Closely related to {topic} — a natural next step."
-_REASON_PREREQ     = "Foundational concept that strengthens your understanding of {topic}."
-_REASON_ADVANCED   = "Natural progression after mastering {topic}."
+_REASON_NEXT       = "Builds directly on {topic} — the natural next question to explore."
+_REASON_PREREQ     = "The foundational idea behind {topic} — understanding this unlocks significantly more."
+_REASON_ADVANCED   = "The deeper layer beneath {topic} — where the interesting complexity lives."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

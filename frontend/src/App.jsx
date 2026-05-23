@@ -662,6 +662,7 @@ function Sidebar({
   collapsed, setCollapsed, open, setOpen,
 }) {
   const { subsections } = useSidebarSubsection()
+  const { actionsByView } = useContextMenu()
   const [sidebarQuery, setSidebarQuery] = useState('')
   useEffect(() => { setSidebarQuery('') }, [view])
 
@@ -682,10 +683,20 @@ function Sidebar({
 
   return (
     <>
+      {/* Desktop click-outside backdrop — transparent, collapses sidebar when clicked */}
+      <div
+        className={[
+          'hidden md:block fixed inset-0 z-[54]',
+          !collapsed ? 'pointer-events-auto' : 'pointer-events-none',
+        ].join(' ')}
+        onClick={() => setCollapsed(true)}
+        aria-hidden="true"
+      />
+
       {/* Mobile backdrop */}
       <div
         className={[
-          'fixed inset-0 bg-black/50 z-30 md:hidden',
+          'fixed inset-0 bg-black/50 z-[55] md:hidden',
           'transition-opacity duration-300',
           open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
         ].join(' ')}
@@ -695,7 +706,7 @@ function Sidebar({
 
       <aside
         className={[
-          'fixed inset-y-0 left-0 z-40 flex flex-col',
+          'fixed inset-y-0 left-0 z-[56] flex flex-col',
           'bg-slate-900 border-r border-white/[0.04]',
           'transition-transform duration-300 ease-in-out',
           'md:relative md:translate-x-0',
@@ -709,7 +720,13 @@ function Sidebar({
         {/* Zone 1: Logo + collapse toggle */}
         <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:justify-center' : ''}`}>
           <button
-            onClick={() => { navigateTo('feed'); setOpen(false) }}
+            onClick={() => {
+              if (window.matchMedia('(min-width: 768px)').matches) {
+                setCollapsed(c => !c)
+              } else {
+                navigateTo('feed'); setOpen(false)
+              }
+            }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
           >
             <LogoMark />
@@ -728,19 +745,6 @@ function Sidebar({
             </svg>
           </button>
 
-          {/* Collapse toggle — desktop only */}
-          <button
-            onClick={() => setCollapsed(c => !c)}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`hidden md:flex items-center justify-center w-6 h-6 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors flex-shrink-0 ${collapsed ? 'mt-0' : 'ml-auto'}`}
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-              {collapsed
-                ? <path fillRule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                : <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-              }
-            </svg>
-          </button>
         </div>
 
         {/* Zone 2: Primary nav — never scrolls */}
@@ -877,7 +881,39 @@ function Sidebar({
 // ── Read Later page ───────────────────────────────────────────────────────────
 
 function ReadLaterPage({ queue, onItemClick, onRemove }) {
-  if (queue.length === 0) {
+  const [pendingRemove, setPendingRemove] = useState({})
+  const timers = useRef({})
+  const onRemoveRef = useRef(onRemove)
+  useEffect(() => { onRemoveRef.current = onRemove }, [onRemove])
+
+  // On unmount, finalize all pending removes immediately (user navigated away)
+  useEffect(() => () => {
+    Object.entries(timers.current).forEach(([key, timer]) => {
+      clearTimeout(timer)
+      onRemoveRef.current(key)
+    })
+  }, [])
+
+  function handleRemove(e, item) {
+    e.stopPropagation()
+    const key = item.articleKey
+    setPendingRemove(prev => ({ ...prev, [key]: true }))
+    timers.current[key] = setTimeout(() => {
+      onRemove(key)
+      setPendingRemove(prev => { const n = { ...prev }; delete n[key]; return n })
+      delete timers.current[key]
+    }, 5000)
+  }
+
+  function handleUndo(key) {
+    clearTimeout(timers.current[key])
+    delete timers.current[key]
+    setPendingRemove(prev => { const n = { ...prev }; delete n[key]; return n })
+  }
+
+  const allPending = queue.length > 0 && queue.every(item => pendingRemove[item.articleKey])
+
+  if (queue.length === 0 && Object.keys(pendingRemove).length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-8">
         <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-4">
@@ -892,47 +928,78 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
   }
 
   return (
-    <div className="pt-2 pb-6 px-4 sm:px-8">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Read Later</h1>
-        <button
-          onClick={() => clearQueue()}
-          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-        >
-          Clear all
-        </button>
-      </div>
-      <div className="space-y-2 max-w-2xl">
-        {queue.map(item => (
-          <div
-            key={item.articleKey}
-            className="group flex items-center gap-4 p-4 bg-white/[0.03] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer"
-            onClick={() => onItemClick(item)}
+    <div className="pt-14 pb-6 px-4 sm:px-8 md:pt-6">
+      {/* Clear all — fixed top-right on mobile, inline on desktop */}
+      {!allPending && (
+        <>
+          <button
+            onClick={() => clearQueue()}
+            className="md:hidden fixed top-3.5 right-14 z-40 text-xs text-slate-400 hover:text-slate-200 transition-colors"
           >
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-200 leading-snug group-hover:text-white transition-colors line-clamp-2">
-                {item.title}
-              </p>
-              {item.projectName && (
-                <p className="text-xs text-slate-500 mt-1">{item.projectName}</p>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={e => { e.stopPropagation(); onRemove(item.articleKey) }}
-                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-all"
-                title="Remove"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-                </svg>
-              </button>
-              <svg className="w-3.5 h-3.5 text-slate-700 group-hover:text-slate-500 transition-colors" viewBox="0 0 16 16" fill="currentColor">
-                <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-              </svg>
-            </div>
+            Clear all
+          </button>
+          <div className="hidden md:flex justify-end mb-4">
+            <button
+              onClick={() => clearQueue()}
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              Clear all
+            </button>
           </div>
-        ))}
+        </>
+      )}
+      <div className="space-y-2 max-w-2xl">
+        {queue.map(item => {
+          const isRemoving = !!pendingRemove[item.articleKey]
+
+          if (isRemoving) {
+            return (
+              <div
+                key={item.articleKey}
+                className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-white/[0.03] bg-white/[0.01]"
+              >
+                <p className="text-xs text-slate-600 italic truncate mr-3">{item.title}</p>
+                <button
+                  onClick={() => handleUndo(item.articleKey)}
+                  className="flex-shrink-0 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Undo
+                </button>
+              </div>
+            )
+          }
+
+          return (
+            <div
+              key={item.articleKey}
+              className="flex items-center gap-4 p-4 bg-white/[0.03] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer"
+              onClick={() => onItemClick(item)}
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-200 leading-snug hover:text-white transition-colors line-clamp-2">
+                  {item.title}
+                </p>
+                {item.projectName && (
+                  <p className="text-xs text-slate-500 mt-1">{item.projectName}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  onClick={e => handleRemove(e, item)}
+                  className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-slate-800 transition-all"
+                  title="Remove"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                  </svg>
+                </button>
+                <svg className="w-3.5 h-3.5 text-slate-700" viewBox="0 0 16 16" fill="currentColor">
+                  <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                </svg>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -970,10 +1037,12 @@ function AppContent() {
   const [targetArticleKey, setTargetArticleKey] = useState(null)
   const [showOverflow, setShowOverflow] = useState(false)
   const overflowRef = useRef(null)
+  const [showDesktopOverflow, setShowDesktopOverflow] = useState(false)
+  const desktopOverflowRef = useRef(null)
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
-    localStorage.getItem('sidebar_collapsed') === 'true'
+    localStorage.getItem('sidebar_collapsed') !== 'false'
   )
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), [])
@@ -1012,6 +1081,17 @@ function AppContent() {
   }, [showOverflow])
 
   useEffect(() => { setShowOverflow(false) }, [view])
+
+  useEffect(() => {
+    if (!showDesktopOverflow) return
+    function onDown(e) {
+      if (desktopOverflowRef.current && !desktopOverflowRef.current.contains(e.target)) setShowDesktopOverflow(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [showDesktopOverflow])
+
+  useEffect(() => { setShowDesktopOverflow(false) }, [view])
 
   useEffect(() => {
     window.history.replaceState({ view: 'feed' }, '')
@@ -1177,12 +1257,12 @@ function AppContent() {
         </svg>
       </button>
 
-      {/* Contextual overflow menu — top-right, shown when current view has registered actions */}
+      {/* Mobile ⋮ overflow menu — all actions, hidden on desktop */}
       {(actionsByView[view] ?? []).length > 0 && (
         <div
           ref={overflowRef}
           className={[
-            'fixed top-3.5 right-3.5 z-50 transition-all duration-200',
+            'md:hidden fixed top-3.5 right-3.5 z-50 transition-all duration-200',
             sidebarOpen ? 'opacity-0 pointer-events-none' : 'opacity-100',
           ].join(' ')}
         >
@@ -1222,6 +1302,43 @@ function AppContent() {
         </div>
       )}
 
+      {/* Desktop ⋮ overflow menu — feed export actions only, hidden on mobile */}
+      {view === 'feed' && (actionsByView['feed'] ?? []).filter(a => a.export).length > 0 && (
+        <div
+          ref={desktopOverflowRef}
+          className="hidden md:block fixed top-3.5 right-3.5 z-50"
+        >
+          <button
+            onClick={() => setShowDesktopOverflow(s => !s)}
+            aria-label="Export options"
+            className={[
+              'w-8 h-8 flex items-center justify-center rounded-lg',
+              'bg-slate-950/70 backdrop-blur-sm transition-colors',
+              showDesktopOverflow
+                ? 'text-slate-200 bg-slate-800/80'
+                : 'text-slate-500 hover:text-slate-200',
+            ].join(' ')}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM14.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+            </svg>
+          </button>
+          {showDesktopOverflow && (
+            <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
+              {(actionsByView['feed'] ?? []).filter(a => a.export).map((action, i) => (
+                <button
+                  key={i}
+                  onClick={() => { action.onClick(); setShowDesktopOverflow(false) }}
+                  className="w-full text-left px-3.5 py-2 text-[13px] text-slate-300 hover:text-slate-100 hover:bg-white/[0.05] transition-colors"
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Content area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
@@ -1248,7 +1365,7 @@ function AppContent() {
         ].join(' ')}>
           <div className={[
             'max-w-5xl mx-auto w-full',
-            view !== 'chat' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
+            view === 'feed' || view === 'dashboard' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
           ].join(' ')}>
 
           {/* Feed — always mounted so generating state survives view switches */}

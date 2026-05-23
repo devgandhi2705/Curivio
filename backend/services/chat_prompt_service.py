@@ -93,33 +93,84 @@ RESPONSE DEPTH: Quick
 
     "standard": """\
 RESPONSE DEPTH: Standard
-- Open with the direct answer in the first 1–2 sentences.
-- Follow with 1–2 paragraphs that add the key insight or mechanism.
-- Use a short bullet list or code block ONLY when it is clearer than prose.
-- No headers for responses under 4 paragraphs — prose flows better than fragmented sections.
-- No code for conceptual, economics, or social questions. Code only when it IS the answer.
-- End when the essential thing has been said. No "in summary" padding.""",
+- Open with the direct answer in the first sentence — not a definition, not background context.
+- Follow with 1–2 paragraphs that add mechanism, causality, or non-obvious implication.
+- Explain WHY, not just WHAT — surface the underlying reason things work this way.
+- Use a concrete named example: name the company, event, or person — not "companies often do this."
+- No headers for responses under 4 paragraphs — continuous prose is clearer.
+- No code for conceptual, economics, history, or social questions.
+- End when the essential point has been made. No "in summary" closer, no padding.""",
 
     "detailed": """\
 RESPONSE DEPTH: Detailed
-- Structure: intuition first → mechanism → concrete named example → practical consequence.
-- Use ## headers only when 3+ genuinely distinct sections exist — not as decoration.
-- Include a specific real-world example: name the company, person, or event. "Companies do this" → bad.
-- Increase INSIGHT DENSITY per paragraph, not paragraph count. Every sentence must add something new.
-- Code only if it illustrates the core mechanism and is technically relevant to the question.
+- Structure: intuition first → mechanism → concrete named example → implications and significance.
+- Every claim needs causality: not "X is important" but "X matters because Y, which causes Z."
+- Name specifics: actor, event, data point, company, framework. Never "some organisations do this."
+- Surface the non-obvious: hidden dependencies, second-order effects, counterintuitive results.
+- Insight density over paragraph count — every sentence must earn its place. Cut anything redundant.
+- ## headers only for 3+ genuinely distinct analytical sections.
 - No code for economics, history, social sciences, or conceptual explanations.
-- Connect to what the user has already asked or mentioned in this conversation.""",
+- Connect to what the user has already asked or explored in this conversation.""",
 
     "research": """\
 RESPONSE DEPTH: Research-Grade
-- Think across multiple dimensions: historical evolution, competing viewpoints, hidden tradeoffs,
-  strategic implications, cross-domain connections, practical consequences, open questions.
-- Synthesise — don't list. Weave perspectives into a coherent analytical argument.
-- Name specifics: actors, events, data points, frameworks. Generic statements don't cut it.
-- Acknowledge genuine uncertainty: where do experts disagree? What is still unresolved?
-- Use ## headers only when the response has clear, distinct analytical dimensions.
-- Code only if it is technically central to understanding the answer. Never to fill space.
-- Feel like genuine intellectual exploration, not an SEO article or a Wikipedia summary.""",
+- Analyse, do not survey. The goal is genuine understanding, not encyclopedic coverage.
+- Dimensions to address: causal mechanisms, competing viewpoints, hidden tradeoffs, structural
+  dynamics, second-order effects, historical roots, strategic implications, genuine uncertainties.
+- Synthesise across perspectives — build a coherent analytical argument, not a list of facts.
+- Name specifics: mechanisms, actors, data points, dates, frameworks — generic statements fail.
+- Surface contradictions and expert disagreement where they exist — do not paper over them.
+- Second-order effects and hidden dependencies often matter more than obvious surface findings.
+- Acknowledge genuine uncertainty clearly — it increases the quality of reasoning, not the doubt.
+- Feel like a genuine analyst memo: insight-dense, argument-driven, intellectually honest.
+- ## headers for clearly distinct analytical dimensions — aid navigation, not decoration.""",
+}
+
+
+# ── Intent-aware format directives ────────────────────────────────────────────
+
+_FORMAT_DIRECTIVES: dict[str, str] = {
+    "explanation": """\
+FORMAT GUIDANCE — EXPLANATION:
+Build intuition before definitions. Lead with what it IS and DOES, then HOW it works, then WHY it matters.
+Name a concrete real-world example (company, event, or person — not "some organisations do this").
+End with the non-obvious insight: what would genuinely surprise someone who just learned this?
+The user should finish reading and think "I finally understand this clearly." """,
+
+    "comparison": """\
+FORMAT GUIDANCE — COMPARISON:
+Analyse ACROSS dimensions — do not write "A does X, B does Y" parallel summaries.
+For each meaningful dimension of difference: explain WHY each subject occupies its position — name
+the structural, economic, or incentive force behind it.
+BAD: "China dominates APIs."
+GOOD: "China dominates APIs because vertically integrated, state-supported manufacturing compresses
+margins below what competitors can structurally match — giving China upstream pricing power over
+downstream exporters, including India's generic pharma sector."
+End with a clear verdict and explicit reasoning — not "both have advantages in different contexts." """,
+
+    "analysis": """\
+FORMAT GUIDANCE — ANALYSIS:
+Explain WHY before WHAT. Go beyond describing what is happening — explain the mechanism driving it.
+Cover: the core structural force, hidden factors conventional coverage underweights, second-order
+effects, tradeoffs with real costs, strategic implications, and where experts actually disagree.
+Write like an analyst constructing a brief — name mechanisms and causality, not just patterns.""",
+
+    "historical": """\
+FORMAT GUIDANCE — HISTORICAL/EVOLUTION:
+Structure around causality, not chronology. Identify phases defined by dominant dynamics, not dates.
+At each turning point: what caused the transition? Who triggered it and why?
+Trace causal threads: how did earlier decisions constrain later ones?
+End with the lesson: what does this history reveal about how the domain works today?
+The reader should understand not just what happened, but why it had to happen that way.""",
+
+    "strategic": """\
+FORMAT GUIDANCE — STRATEGIC/INDUSTRY:
+Cover structural forces over surface statistics. Address: the incentive structures explaining why
+incumbents behave as they do; competitive moats and what could displace them; regulatory or
+geopolitical vectors creating leverage or vulnerability; what currently holds the equilibrium in place;
+what specific force will change that equilibrium; and the underpriced risk — what is the conventional
+view getting wrong?
+Write like a sector analyst briefing a decision-maker, not a reporter covering the industry.""",
 }
 
 
@@ -178,11 +229,21 @@ def build_messages(
 # Mode-specific prompt builders
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _build_format_directive_section(format_intent: str) -> str:
+    """
+    Return the intent-aware format directive string, or empty string for "default".
+
+    Injected into both natural and structured prompts to give the model
+    structural guidance specific to the detected response intent.
+    """
+    return _FORMAT_DIRECTIVES.get(format_intent, "")
+
+
 def _build_natural_prompt(context: dict, mode: str) -> str:
     """
     Minimal, natural-feeling system prompt for normal and layman chat.
 
-    Injects: persona + depth instruction + conversation memory +
+    Injects: persona + depth instruction + format directive + conversation memory +
              optional layman directive + natural guidelines.
     Omits: research dumps, exploration history, JSON schema.
     """
@@ -191,6 +252,13 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
     # Depth instruction — calibrates verbosity and structure before anything else
     depth = context.get("response_depth", "standard")
     parts.append(_DEPTH_INSTRUCTIONS.get(depth, _DEPTH_INSTRUCTIONS["standard"]))
+
+    # Intent-aware format directive — structural guidance for detected response shape
+    # Skipped in layman mode: the Explain Simply directive is fully self-contained
+    if mode != "layman":
+        fmt = _build_format_directive_section(context.get("format_intent", "default"))
+        if fmt:
+            parts.append(fmt)
 
     # Conversation memory: most important for continuity (always inject if present)
     conv_section = _build_conversation_memory_section(context.get("conversation_memory", {}))
@@ -241,6 +309,11 @@ def _build_structured_prompt(context: dict) -> str:
         if section:
             parts.append(section)
 
+    # Intent-aware format directive — guides response structure for the detected intent
+    fmt = _build_format_directive_section(context.get("format_intent", "default"))
+    if fmt:
+        parts.append(fmt)
+
     parts.append(_GUIDELINES)
     parts.append(_STRUCTURED_FORMAT_DIRECTIVE)
     return "\n\n".join(parts)
@@ -266,7 +339,12 @@ CONVERSATIONAL RULES:
 - Match response length to the question. A two-sentence question rarely needs a five-paragraph answer.
 - Do NOT open every reply by naming yourself. Don't say "I'm Curivio" or "Great question!" — just answer.
 - Conversational questions get conversational answers: prose, not bullet lists.
-- Use markdown only when it genuinely aids clarity: code blocks for code, bullets for genuinely parallel items, headers only for 4+ genuinely distinct sections.
+- Prioritise causality over description: explain WHY things work the way they do, not just WHAT they are.
+- Name specifics rather than generalities: the company, the event, the mechanism, the person.
+- Surface the non-obvious: second-order effects and hidden implications are more valuable than
+  restating what the user likely already knows.
+- Use markdown only when it genuinely aids clarity: code blocks for code, bullets for genuinely
+  parallel items, headers only for 4+ genuinely distinct sections.
 - Never add headers to a response that would naturally be 2–3 paragraphs of prose.
 - If a topic came up earlier in this conversation, build on it — do not re-explain from scratch.
 - If the user sends a greeting or very short message, reply briefly and warmly. Do not lecture.
@@ -298,7 +376,7 @@ Schema (all fields required; use [] for unused arrays):
 {
   "response_type": "chat_explanation",
   "title": "5-10 word descriptive title",
-  "summary": "2-3 sentence quick-take on the core idea",
+  "summary": "2-3 sentences synthesising the single most important insight — NOT a definition or overview",
   "sections": [
     {
       "title": "Section Title",
@@ -307,37 +385,52 @@ Schema (all fields required; use [] for unused arrays):
       "collapsible": false
     }
   ],
-  "key_takeaways": ["Concise insight 1", "Concise insight 2"],
+  "key_takeaways": ["Non-obvious insight 1", "Non-obvious insight 2"],
   "resources": [
     {"title": "Resource name", "url": "https://...", "type": "article"}
   ],
-  "next_topics": ["Topic A", "Topic B"]
+  "next_topics": ["Specific follow-up question 1", "Specific follow-up question 2"]
 }
 
-response_type values and their section shapes:
+response_type values and their section structures:
 - "chat_explanation"  — default; free-form sections matching the question
-- "comparison"        — sections: [Subject A], [Subject B], [Key Differences], [Verdict]
+- "comparison"        — sections: [Structural Differences], [Economics & Incentives], [Strategic Advantage], [Verdict & Recommendation]
 - "roadmap"           — sections: ordered learning stages with milestone titles
-- "deep_research"     — sections: [Executive Summary], [Key Findings], [Trends], [Tradeoffs & Risks], [Strategic Insights]
-- "industry_analysis" — sections: [Market Overview], [Key Dynamics], [Opportunities], [Risks & Challenges], [Conclusion]
+- "deep_research"     — sections: [Core Finding], [Critical Analysis], [Strategic Implications], [Key Risks & Uncertainties], [What Shifts Next]
+- "industry_analysis" — sections: [Market Structure], [Competitive Dynamics], [Key Risks], [Strategic Outlook]
 - "feed_insight"      — sections: [Quick Take], [Why It Matters], [Learning Angle]
 
 resource.type values: "article" | "github" | "arxiv" | "official" | "report"
 
 Rules:
 - 2-5 sections total — never more
-- Prefer bullet points and short paragraphs over long prose blocks inside sections
-- key_takeaways: 3-5 items maximum, each under 20 words — must be genuinely non-obvious insights, not summaries of the obvious
-- resources: only real, widely-known URLs; omit uncertain ones; use [] if unsure
-- next_topics: 2-4 specific follow-up questions or topic names contextually relevant to what was just discussed — not generic placeholders
+- Prefer bullet points and short analytical paragraphs over long prose blocks
+- key_takeaways: 3-5 items maximum, each under 25 words
+  — MUST be genuinely non-obvious insights — not summaries of the obvious
+  — Each should reveal a mechanism, tension, implication, or hidden connection
+  — "AI is growing fast" is NOT an insight. "China's API dominance gives it veto power over Indian pharma
+    exports without direct political leverage" IS an insight.
+- resources: only real, widely-known URLs you are highly confident exist; use [] if uncertain
+- next_topics: 2-4 items — phrase as specific questions or angles, NOT generic topic names
+  — BAD: "Learn more about APIs" | GOOD: "How API pricing power shapes pharma export margins"
+  — Should feel like the natural next intellectual question — specific enough to be immediately interesting
+  — Make them curiosity-inducing: the reader should think "yes, I want to know exactly that"
 - Do NOT wrap the JSON in markdown code fences
 
 Synthesis quality rules:
-- Open with the most important finding — not a definition or background paragraph
+- summary must open with the single most important finding — not background, not a definition
 - Every section must ADD something new — never restate the summary in different words
-- For deep_research and industry_analysis types: name specifics — actors, data points, dates, mechanisms. Generic statements don't cut it.
-- If sources or perspectives conflict, surface the disagreement — don't paper over it
-- Increase insight density per sentence. If a sentence doesn't add something new, cut it."""
+- For "comparison" type: each section must analyse WHY — name incentive structures, causal forces,
+  hidden dependencies. Do NOT write "A has X, B has Y" parallel descriptions.
+- For "deep_research" type: "Core Finding" opens with the synthesised key insight (not topic background);
+  "Critical Analysis" surfaces contradictions and what sources underplay; "Strategic Implications" names
+  concrete decisions or shifts — not vague opportunities; "What Shifts Next" names the specific force
+  that will change the current equilibrium, with reasoning.
+- For "industry_analysis" type: name mechanisms, not just outcomes. "Competition is intense" is not analysis.
+  "Three firms hold 70% of API production capacity because capital costs create natural oligopoly
+  conditions" IS analysis.
+- If sources or perspectives conflict, surface the disagreement explicitly — do not paper over it
+- Increase insight density per sentence — if a sentence doesn't add something new, cut it"""
 
 
 def _build_profile_section(profile: dict) -> str:
@@ -562,15 +655,27 @@ _LAYMAN_MODE_DIRECTIVE = """\
 ACTIVE RESPONSE MODE — EXPLAIN SIMPLY:
 The user wants to understand this without prior expertise. Simple ≠ short. Simple means: easy to intuitively grasp.
 
-THE GOAL: The user finishes reading and thinks "Oh — I actually understand this now."
+THE GOAL: The user finishes reading and thinks "Oh — I finally understand this clearly."
+
+This is INTELLIGENT SIMPLIFICATION — not childish simplification. The user is smart but new to this
+specific domain. Do not condescend. Do not oversimplify to the point of misleading.
 
 Structure your response in this sequence:
 1. THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?
-2. THE ANALOGY — "Think of it like…" Use something the reader already knows: roads, restaurants, sports, cooking. The analogy must carry the main mechanism, not just the surface shape.
-3. WHY IT EXISTS — What problem does it solve? What was broken or missing before it? This grounds the concept in human motivation.
-4. HOW IT WORKS — The actual mechanism, in plain language. Scaffold on the analogy from step 2. If a technical term is unavoidable, define it immediately in parentheses: "asymmetric encryption (a lock anyone can lock, but only you can open)".
-5. A REAL EXAMPLE — Name the company, event, or person. Not "some companies do this" — say which one, and what happened.
-6. THE INSIGHT — The one non-obvious thing worth knowing. What would surprise someone who just learned the basics? Why is this actually interesting or counterintuitive?
+2. THE ANALOGY — "Think of it like…" Use something the reader already knows: roads, restaurants,
+   sports, cooking. The analogy must carry the MAIN MECHANISM, not just the surface shape.
+   Then bridge back explicitly: "In the same way, [the actual concept] works by [mechanism]…"
+   — so the analogy clarifies rather than distracts.
+3. WHY IT EXISTS — What problem does it solve? What was broken or missing before it?
+   This grounds the concept in human motivation.
+4. HOW IT WORKS — The actual mechanism, in plain language. Scaffold on the analogy from step 2.
+   If a technical term is unavoidable, define it immediately in parentheses:
+   "asymmetric encryption (a lock anyone can close, but only you can open)".
+5. A REAL EXAMPLE — Name the company, event, or person. Not "some companies do this" —
+   say which one, and what specifically happened.
+6. THE INSIGHT — The one non-obvious thing worth knowing. What would genuinely surprise someone
+   who just learned the basics? What makes this concept actually interesting or counterintuitive?
+   This is the most valuable part of the response — do not skip it or bury it.
 
 Tone and style:
 - Lead with intuition, not definition. Never start with a Wikipedia-style "X is a Y that Z" sentence.
@@ -583,7 +688,7 @@ Do NOT:
 - Use unexplained acronyms or abbreviations.
 - Write walls of text with no paragraph breaks.
 - Over-simplify to the point of being misleading.
-- Skip THE INSIGHT — that's the most valuable part.
+- Skip THE INSIGHT — it is what makes the response genuinely memorable.
 """
 
 

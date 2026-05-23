@@ -144,6 +144,9 @@ function FeedSubsection({
   progressions,
   onSelect,
   onNew,
+  onRename,
+  onEdit,
+  onDelete,
 }) {
   return (
     <div className="flex flex-col h-full">
@@ -177,6 +180,9 @@ function FeedSubsection({
               progression={progressions[project.project_id]}
               isActive={project.project_id === activeId}
               onSelect={onSelect}
+              onRename={onRename}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           ))}
         </div>
@@ -258,7 +264,10 @@ export default function ProjectsPage({
         handleSelect(project)
         onSidebarClose?.()
       },
-      onNew: () => setShowCreate(true),
+      onNew:    () => setShowCreate(true),
+      onRename: (project) => { setActiveId(project.project_id); setRenameProjectDraft(project.name || ''); setShowRenameProject(true) },
+      onEdit:   (project) => { setActiveId(project.project_id); setShowEdit(true) },
+      onDelete: (project) => setPendingDelete(project),
     }
   })
 
@@ -277,6 +286,9 @@ export default function ProjectsPage({
           progressions={progressions}
           onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
           onNew={() => subsectionHandlers.current.onNew()}
+          onRename={(p) => subsectionHandlers.current.onRename(p)}
+          onEdit={(p) => subsectionHandlers.current.onEdit(p)}
+          onDelete={(p) => subsectionHandlers.current.onDelete(p)}
         />
       )
     })
@@ -294,8 +306,8 @@ export default function ProjectsPage({
       },
       { label: 'Edit project', onClick: () => setShowEdit(true) },
       ...(exportCallbacks.pdf ? [
-        { label: 'Export as PDF',      onClick: exportCallbacks.pdf },
-        { label: 'Export as Markdown', onClick: exportCallbacks.md },
+        { label: 'Export as PDF',      onClick: exportCallbacks.pdf, export: true },
+        { label: 'Export as Markdown', onClick: exportCallbacks.md,  export: true },
       ] : []),
       { label: 'Delete project', variant: 'danger', onClick: () => setPendingDelete(activeProject) },
     ])

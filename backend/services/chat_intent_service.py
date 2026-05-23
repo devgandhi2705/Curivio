@@ -50,6 +50,52 @@ _ANALYZE_PATTERNS: list[re.Pattern] = [
     re.compile(r'\bindustry\s+(analysis|assessment|breakdown)\b', re.I),
 ]
 
+# ── Format intent patterns (do not affect mode selection — only response structure) ──
+
+_EXPLANATION_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bwhat\s+is\b',            re.I),
+    re.compile(r'\bwhat\s+are\b',           re.I),
+    re.compile(r'\bwhat\s+does\b',          re.I),
+    re.compile(r'\bwhat\s+exactly\b',       re.I),
+    re.compile(r'\bexplain\b',              re.I),
+    re.compile(r'\bteach\s+me\b',           re.I),
+    re.compile(r'\bhow\s+does\b',           re.I),
+    re.compile(r'\bhow\s+do\b',             re.I),
+    re.compile(r'\bhow\s+does\s+it\b',      re.I),
+    re.compile(r'\bdefinition\s+of\b',      re.I),
+    re.compile(r'\bwhat\s+makes\b',         re.I),
+]
+
+_HISTORICAL_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bhistory\s+of\b',         re.I),
+    re.compile(r'\bevolution\s+of\b',       re.I),
+    re.compile(r'\btimeline\b',             re.I),
+    re.compile(r'\borigin[s]?\s+(of|behind)\b', re.I),
+    re.compile(r'\bhow\s+did\b',            re.I),
+    re.compile(r'\bwhen\s+did\b',           re.I),
+    re.compile(r'\bdevelopment\s+of\b',     re.I),
+    re.compile(r'\bhow\s+(?:it\s+)?started\b', re.I),
+    re.compile(r'\bhistorical\b',           re.I),
+    re.compile(r'\bover\s+the\s+(years|decades|time)\b', re.I),
+]
+
+_STRATEGIC_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bmarket\b',               re.I),
+    re.compile(r'\bexport[s]?\b',           re.I),
+    re.compile(r'\bcompetition\b',          re.I),
+    re.compile(r'\bcompetitive\b',          re.I),
+    re.compile(r'\badoption\b',             re.I),
+    re.compile(r'\bregulation[s]?\b',       re.I),
+    re.compile(r'\bindustry\b',             re.I),
+    re.compile(r'\bsupply[\s\-]chain\b',    re.I),
+    re.compile(r'\bgeopolit\w*\b',          re.I),
+    re.compile(r'\bstrateg\w*\b',           re.I),
+    re.compile(r'\bdomin\w+\b',             re.I),
+    re.compile(r'\blandscape\b',            re.I),
+    re.compile(r'\boutlook\b',              re.I),
+    re.compile(r'\bincentive[s]?\b',        re.I),
+]
+
 # Subject extraction — ordered by specificity
 _VS_RE         = re.compile(r'(?:compare\s+)?(.+?)\s+vs\.?\s+(.+)',          re.I)
 _VERSUS_RE     = re.compile(r'(?:compare\s+)?(.+?)\s+versus\s+(.+)',         re.I)
@@ -63,6 +109,52 @@ _STRIP_PREFIX = re.compile(
     r'give\s+me\s+a\s+(comprehensive\s+)?|do\s+a\s+|run\s+a\s+)\s*',
     re.I,
 )
+
+
+# ── Format intent helper ─────────────────────────────────────────────────────
+
+def _detect_format_intent(message: str, intent: str) -> str:
+    """
+    Determine response FORMAT intent from message semantics.
+
+    This controls HOW the response is structured, independently of which
+    retrieval mode is used. Returned value is injected into context so the
+    system prompt can apply intent-specific structural guidance.
+
+    Priority: compare > explicit-analyze > historical > strategic > research > explanation > default.
+    Explicit analytical verbs (analyze, assess) override topic-based detection so that
+    "analyze the implications of AI regulation" → analysis, not strategic.
+
+    Returns one of:
+        "explanation"  — what is X, how does X work
+        "comparison"   — compare A vs B, A versus B
+        "analysis"     — analyze/assess/evaluate causes, implications, dynamics
+        "historical"   — history/evolution/timeline of X
+        "strategic"    — market/industry/competition/exports/geopolitics
+        "default"      — general or unclear intent
+    """
+    # Explicit analytical verbs in the message — strong signal for analysis format
+    _EXPLICIT_ANALYZE = re.compile(
+        r'\b(analyz[ei]|analyse|assess\w*|evaluat\w*|breakdown\s+of|break\s+down)\b', re.I
+    )
+
+    if intent == "compare":
+        return "comparison"
+    # Only override to "analysis" when the user explicitly uses an analytical verb.
+    # Implicit analyze matches (e.g. "supply chain") fall through to topic detection.
+    if intent == "analyze" and _EXPLICIT_ANALYZE.search(message):
+        return "analysis"
+    # Historical is more specific than strategic — check first
+    if _matches_any(message, _HISTORICAL_PATTERNS):
+        return "historical"
+    if _matches_any(message, _STRATEGIC_PATTERNS):
+        return "strategic"
+    # Research/analyze intent without topic-specific signal → general analysis format
+    if intent in ("research", "analyze"):
+        return "analysis"
+    if _matches_any(message, _EXPLANATION_PATTERNS):
+        return "explanation"
+    return "default"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -97,6 +189,7 @@ def detect_intent(message: str) -> dict:
             "query_type":       "comparison",
             "subjects":         subjects,
             "topic":            topic,
+            "format_intent":    _detect_format_intent(msg, "compare"),
         }
 
     # Research (deep knowledge request)
@@ -108,6 +201,7 @@ def detect_intent(message: str) -> dict:
             "query_type":       "research",
             "subjects":         [topic] if topic else [],
             "topic":            topic,
+            "format_intent":    _detect_format_intent(msg, "research"),
         }
 
     # Analyze (structured analysis request)
@@ -119,6 +213,7 @@ def detect_intent(message: str) -> dict:
             "query_type":       "analysis",
             "subjects":         [topic] if topic else [],
             "topic":            topic,
+            "format_intent":    _detect_format_intent(msg, "analyze"),
         }
 
     return {
@@ -127,6 +222,7 @@ def detect_intent(message: str) -> dict:
         "query_type":       "default",
         "subjects":         [],
         "topic":            "",
+        "format_intent":    _detect_format_intent(msg, "normal"),
     }
 
 

@@ -1,3 +1,5 @@
+import { useState, useRef, useEffect } from "react"
+
 const COLOR_GRAD = {
   blue:    "from-blue-500 to-blue-600",
   emerald: "from-emerald-500 to-emerald-600",
@@ -18,7 +20,29 @@ function intensityLabel(count) {
   return "Intensive"
 }
 
-export default function ProjectCard({ project, progression, isActive, onSelect }) {
+function DotsIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+      <circle cx="3" cy="8" r="1.5" />
+      <circle cx="8" cy="8" r="1.5" />
+      <circle cx="13" cy="8" r="1.5" />
+    </svg>
+  )
+}
+
+export default function ProjectCard({ project, progression, isActive, onSelect, onRename, onEdit, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function onMouseDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [menuOpen])
+
   const grad      = COLOR_GRAD[project.color] || COLOR_GRAD.blue
   const level     = progression?.current_level || project.difficulty || "beginner"
   const lvl       = LEVEL_LABEL[level] || LEVEL_LABEL.beginner
@@ -33,7 +57,7 @@ export default function ProjectCard({ project, progression, isActive, onSelect }
       `}
     >
       <div className={`flex-shrink-0 w-[3px] h-7 rounded-full bg-gradient-to-b ${grad} opacity-90`} />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 pr-5">
         <p className={`text-[13px] font-medium leading-snug truncate ${isActive ? "text-white" : "text-slate-300 group-hover:text-white"}`}>
           {project.name}
         </p>
@@ -42,6 +66,38 @@ export default function ProjectCard({ project, progression, isActive, onSelect }
           <span className="text-slate-600">·</span>
           <span className="text-slate-500">{intensity}</span>
         </p>
+      </div>
+      {/* Desktop per-item action menu */}
+      <div ref={menuRef} className="hidden md:block absolute right-1 top-1/2 -translate-y-1/2">
+        <button
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+          className={`p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          title="Actions"
+        >
+          <DotsIcon />
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename?.(project) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Rename
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit?.(project) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete?.(project) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/[0.08] transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

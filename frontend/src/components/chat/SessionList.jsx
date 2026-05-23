@@ -3,6 +3,16 @@ import { searchSessions } from "../../api/chat.js"
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
+function DotsIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+      <circle cx="3" cy="8" r="1.5" />
+      <circle cx="8" cy="8" r="1.5" />
+      <circle cx="13" cy="8" r="1.5" />
+    </svg>
+  )
+}
+
 function SearchIcon() {
   return (
     <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
@@ -30,13 +40,25 @@ function Highlight({ text, query }) {
 
 // ─── Session row ──────────────────────────────────────────────────────────────
 
-function SessionRow({ session, isActive, onSelect, query }) {
+function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function onMouseDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [menuOpen])
+
   const displayTitle = session.title || session.first_topic_hint || "Conversation"
   const showSnippet  = query && session.match_snippet
 
   return (
-    <div className={`rounded-lg transition-colors ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
-      <button onClick={() => onSelect(session)} className="w-full text-left px-3 py-2.5 text-xs">
+    <div className={`group relative rounded-lg transition-colors ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
+      <button onClick={() => onSelect(session)} className="w-full text-left px-3 py-2.5 pr-8 text-xs">
         <div className={`font-medium truncate ${isActive ? "text-slate-100" : "text-slate-300 hover:text-slate-100"}`}>
           <Highlight text={displayTitle} query={query} />
         </div>
@@ -52,6 +74,32 @@ function SessionRow({ session, isActive, onSelect, query }) {
           </div>
         )}
       </button>
+      {/* Desktop per-item action menu */}
+      <div ref={menuRef} className="hidden md:block absolute right-1 top-1/2 -translate-y-1/2">
+        <button
+          onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+          className={`p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-opacity ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          title="Actions"
+        >
+          <DotsIcon />
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+            <button
+              onClick={() => { setMenuOpen(false); onRename?.(session) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Rename
+            </button>
+            <button
+              onClick={() => { setMenuOpen(false); onDelete?.(session) }}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/[0.08] transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -59,7 +107,7 @@ function SessionRow({ session, isActive, onSelect, query }) {
 // ─── Inline content for unified sidebar Zone 3 ───────────────────────────────
 // No <aside>, no own search input — query comes from the sidebar's Zone 3 field.
 
-export function SessionListContent({ query = "", sessions, currentSessionId, onSelect, onNew }) {
+export function SessionListContent({ query = "", sessions, currentSessionId, onSelect, onNew, onRename, onDelete }) {
   const [results,   setResults]   = useState(null)
   const [searching, setSearching] = useState(false)
   const timerRef = useRef(null)
@@ -143,6 +191,8 @@ export function SessionListContent({ query = "", sessions, currentSessionId, onS
           session={session}
           isActive={session.session_id === currentSessionId}
           onSelect={onSelect}
+          onRename={onRename}
+          onDelete={onDelete}
           query={isSearchMode ? query : ""}
         />
       ))}

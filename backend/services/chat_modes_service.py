@@ -258,20 +258,22 @@ def stream_research_progress(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _format_web_search_note(articles: list[dict]) -> str:
-    lines = ["[WEB SEARCH CONTEXT — synthesise these into your answer naturally]"]
+    lines = ["[WEB SEARCH CONTEXT — synthesise these into your answer]"]
     for i, a in enumerate(articles[:_WEB_SEARCH_MAX_ARTICLES], 1):
         title   = a.get("title", "").strip()
         content = (a.get("content") or "").strip()
         url     = a.get("url", "")
-        snippet = content[:250] + ("…" if len(content) > 250 else "")
+        snippet = content[:300] + ("…" if len(content) > 300 else "")
         lines.append(f"\n[{i}] {title}\n    {snippet}\n    Source: {url}")
     lines.append(
-        "\nSynthesis rules:"
+        "\nSynthesis rules — enforce strictly:"
         "\n- Deduplicate: if multiple sources report the same fact, state it ONCE using the most detailed version."
-        "\n- Do not list sources sequentially — weave insights into a coherent argument."
-        "\n- If sources contradict each other, surface the disagreement explicitly."
-        "\n- Cite inline naturally (e.g. 'According to Bloomberg…', 'A recent study found…') — not as footnotes."
-        "\n- Match depth to the complexity of the question — a factual query gets a direct answer, not an essay."
+        "\n- DO NOT repeat the same information in both a paragraph and a bullet list."
+        "\n- Extract PATTERNS across sources — do not summarise sources one by one."
+        "\n- If sources contradict each other, surface the disagreement explicitly — name what each says."
+        "\n- Cite inline naturally ('According to Bloomberg…', 'A recent study found…') — not as footnotes."
+        "\n- Match depth to question complexity: a factual query gets a direct answer, not an essay."
+        "\n- The response should feel like a fast, informed briefing — not a digest of search results."
     )
     return "\n".join(lines)
 
@@ -280,17 +282,24 @@ def _format_comparison_note(mode_context: dict, articles: list[dict]) -> str:
     subjects = mode_context.get("subjects", [])
     label    = f"{subjects[0]} vs {subjects[1]}" if len(subjects) >= 2 else "Comparison"
     lines    = [f"[WEB SEARCH — COMPARISON: {label}]"]
-    lines.append("Retrieved sources:")
+    lines.append("Retrieved context:")
     for i, a in enumerate(articles[:_WEB_SEARCH_MAX_ARTICLES], 1):
         title   = a.get("title", "").strip()
         content = (a.get("content") or "").strip()
         url     = a.get("url", "")
-        snippet = content[:200] + ("…" if len(content) > 200 else "")
+        snippet = content[:250] + ("…" if len(content) > 250 else "")
         lines.append(f"\n[{i}] {title}\n    {snippet}\n    Source: {url}")
     lines.append(
-        "\nCompare these subjects clearly and honestly. Cover the key differences, "
-        "where each excels, and give a practical verdict. Use structure (headers/bullets) "
-        "only where it genuinely aids readability — don't force a rigid template."
+        "\nAnalysis rules — enforce strictly:"
+        "\n- Do NOT write 'A has X, B has Y' parallel descriptions — analyse ACROSS dimensions with causality."
+        "\n  BAD: 'China dominates APIs.' GOOD: 'China dominates APIs because vertically integrated"
+        "\n  state-supported manufacturing creates margins competitors structurally cannot match.'"
+        "\n- For each dimension of difference: explain WHY each subject occupies its position."
+        "\n  Name the structural, economic, or incentive force behind each difference."
+        "\n- Dimensions to analyse: structural differences, economics, competitive moats,"
+        "\n  hidden dependencies, regulatory or geopolitical vectors, and practical verdict."
+        "\n- Deliver a clear verdict with explicit reasoning — not 'both have advantages.'"
+        "\n- Use headers/structure only where genuinely clearer than analytical prose."
     )
     return "\n".join(lines)
 
@@ -301,29 +310,43 @@ def _format_research_note(result: dict) -> str:
     findings = result.get("key_findings", [])
     lines    = [f"[DEEP RESEARCH REPORT: {topic}]"]
     if summary:
-        lines.append(f"Summary: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
+        lines.append(f"Core finding: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
     if findings:
-        lines.append("Key findings:")
+        lines.append("Evidence points:")
         for f in findings[:_DEEP_RESEARCH_FINDINGS]:
             lines.append(f"  • {f}")
-    viewpoints = result.get("viewpoints", [])
+    # viewpoint_comparison is the correct key from deep_research_prompt.py
+    viewpoints = result.get("viewpoint_comparison", []) or result.get("viewpoints", [])
     if viewpoints:
-        lines.append("Perspectives:")
+        lines.append("Perspectives in tension:")
         for v in viewpoints[:2]:
-            angle   = v.get("angle") or v.get("label", "")
-            insight = (v.get("summary") or v.get("insight", ""))[:160]
-            if angle:
-                lines.append(f"  [{angle}] {insight}")
+            perspective = v.get("perspective") or v.get("angle") or v.get("label", "")
+            stance      = (v.get("stance") or v.get("summary") or v.get("insight", ""))[:160]
+            if perspective:
+                lines.append(f"  [{perspective}] {stance}")
+    contrarian = result.get("contrarian_view", "")
+    if contrarian:
+        lines.append(f"Contrarian view: {contrarian[:200]}")
+    shifts = result.get("what_shifts_next", "")
+    if shifts:
+        lines.append(f"What shifts next: {shifts[:200]}")
     lines.append(
-        "\nReasoning framework — work through these before writing:"
-        "\n1. What do the sources AGREE on? (establish the foundation)"
-        "\n2. Where do they CONTRADICT each other? (surface the disagreement — don't paper over it)"
-        "\n3. What are the hidden TRADEOFFS or costs that most sources underplay?"
-        "\n4. What does the HISTORICAL EVOLUTION tell us about why this is the way it is?"
-        "\n5. What are the STRATEGIC IMPLICATIONS for someone making a decision about this?"
-        "\n6. What remains GENUINELY UNRESOLVED?"
-        "\n\nThen synthesise into a coherent analytical response. Use ## headers only for clearly distinct "
-        "analytical dimensions. Prioritise insight and argument over exhaustive coverage."
+        "\nAnalytical framework — work through ALL of these before writing:"
+        "\n1. What do sources AGREE on? (establish the foundation — avoid restating the obvious)"
+        "\n2. Where do they CONTRADICT? (surface disagreement explicitly — name what each position claims)"
+        "\n3. Hidden TRADEOFFS and costs that most coverage underweights?"
+        "\n4. What does HISTORICAL EVOLUTION reveal about why this is the way it is?"
+        "\n5. STRATEGIC IMPLICATIONS — what concrete decision does this create for a practitioner?"
+        "\n6. What remains GENUINELY UNRESOLVED — where do experts still actively disagree?"
+        "\n7. CONTRARIAN VIEW — what is the conventional framing getting wrong or underweighting?"
+        "\n\nWrite like an analyst memo, not a research summary:"
+        "\n- Open with the single most important synthesised insight — not background or topic introduction"
+        "\n- For every claim: name the causal mechanism — not 'X is growing' but 'X grows because Y'"
+        "\n  creates incentive Z, which produces outcome W'"
+        "\n- Include a 'What Shifts Next' section: name the specific force that will change the equilibrium"
+        "\n- Surface the underpriced risk: what is the market or conventional wisdom getting wrong?"
+        "\n- Use ## headers for clearly distinct analytical dimensions — they should aid navigation"
+        "\n- Prioritise insight density over exhaustive coverage"
     )
     return "\n".join(lines)
 
@@ -334,21 +357,27 @@ def _format_analysis_note(result: dict) -> str:
     findings = result.get("key_findings", [])
     lines    = [f"[DEEP RESEARCH — ANALYSIS REQUEST: {topic}]"]
     if summary:
-        lines.append(f"Context: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
+        lines.append(f"Research context: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
     if findings:
-        lines.append("Data points:")
+        lines.append("Evidence points:")
         for f in findings[:_DEEP_RESEARCH_FINDINGS]:
             lines.append(f"  • {f}")
+    contrarian = result.get("contrarian_view", "")
+    if contrarian:
+        lines.append(f"Contrarian view: {contrarian[:200]}")
     lines.append(
-        "\nReasoning framework — work through these before writing:"
-        "\n1. What is the core MECHANISM or dynamic driving this situation?"
-        "\n2. What are the KEY TENSIONS or tradeoffs that practitioners face?"
-        "\n3. What do the data points CONVERGE on, and where do they DIVERGE?"
-        "\n4. What are the STRATEGIC IMPLICATIONS — what decision does this force?"
-        "\n5. What is UNDERWEIGHTED in conventional coverage of this topic?"
-        "\n\nDeliver a sharp, insight-dense analysis. Name specifics: actors, events, data. "
-        "Use clear headers and bullets to make depth scannable. "
-        "Prioritise non-obvious insight over exhaustive listing."
+        "\nAnalytical framework — work through ALL of these before writing:"
+        "\n1. Core MECHANISM: what structural force or dynamic is driving this situation?"
+        "\n2. Hidden DRIVERS: what does conventional coverage underweight or miss entirely?"
+        "\n3. KEY TENSIONS: what tradeoffs do practitioners actually face — with real costs?"
+        "\n4. CONVERGENCE vs DIVERGENCE: where do the data points agree and where do they conflict?"
+        "\n5. STRATEGIC IMPLICATIONS: what concrete decision does this create for a practitioner?"
+        "\n6. SECOND-ORDER EFFECTS: what does this situation cause that will matter in 2–5 years?"
+        "\n\nWrite like a sharp analyst — name mechanisms and causality, not just patterns:"
+        "\n- NOT 'X is growing' — but 'X grows because Y creates incentive Z, which produces outcome W'"
+        "\n- Name specifics: actors, events, data points, named mechanisms"
+        "\n- Surface the non-obvious: what is the conventional framing getting wrong?"
+        "\n- Use ## headers for distinct analytical dimensions; bullets for parallel evidence points"
     )
     return "\n".join(lines)
 

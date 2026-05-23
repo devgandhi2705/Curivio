@@ -120,6 +120,8 @@ def chat(
     auto_mode   = False
     query_type  = "default"
     subjects: list[str] = []
+    # format_intent drives response structure regardless of mode-switching
+    _format_intent = intent.get("format_intent", "default")
 
     if not feed_context and chat_mode == "normal" and intent["intent"] != "normal":
         chat_mode  = intent["recommended_mode"]
@@ -135,6 +137,9 @@ def chat(
 
     # Build memory-injected context
     context = inject_memory(session_id, topic_hint)
+
+    # Inject format intent so system prompt can apply structural guidance
+    context["format_intent"] = _format_intent
 
     # ── Inject layman mode flag into context for system prompt ────────────────
     if chat_mode == "layman":
@@ -326,6 +331,8 @@ def chat_stream(
         # Auto-upgrade mode from intent when user left it on "normal" and no feed context
         from .chat_intent_service import detect_intent as _detect_intent
         intent = _detect_intent(message)
+        # format_intent drives response structure regardless of mode-switching
+        _format_intent = intent.get("format_intent", "default")
         if not feed_context and chat_mode == "normal" and intent["intent"] != "normal":
             chat_mode  = intent["recommended_mode"]
             auto_mode  = True
@@ -339,6 +346,9 @@ def chat_stream(
 
         from .memory_injection_service import inject_memory as _inject
         context = _inject(session_id, topic_hint)
+
+        # Inject format intent so system prompt can apply structural guidance
+        context["format_intent"] = _format_intent
 
         # Inject layman mode flag into context for system prompt
         if chat_mode == "layman":
@@ -623,6 +633,7 @@ def _parse_structured_response(text: str) -> dict | None:
     - Clean JSON
     - JSON wrapped in ```json...``` fences
     - JSON embedded after introductory prose
+    - Truncated JSON (stream interrupted mid-object) — attempts structural repair
 
     Returns the parsed dict if it contains a 'response_type' key, else None.
     """
@@ -636,6 +647,55 @@ def _parse_structured_response(text: str) -> dict | None:
     def _valid(d: dict) -> bool:
         return isinstance(d, dict) and "response_type" in d
 
+    def _repair_truncated(s: str) -> str:
+        """
+        Close unclosed JSON structures caused by stream truncation.
+
+        Uses a stack to determine correct closing order for nested objects/arrays,
+        handling the case where a truncated string ends mid-string-value.
+        """
+        # Pass 1: detect and close open string
+        in_str = False
+        esc = False
+        for ch in s:
+            if esc:
+                esc = False
+                continue
+            if ch == '\\':
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+        if in_str:
+            s = s + '"'
+
+        # Pass 2: build closing sequence via stack
+        stack: list[str] = []
+        in_str = False
+        esc = False
+        for ch in s:
+            if esc:
+                esc = False
+                continue
+            if ch == '\\':
+                esc = True
+                continue
+            if in_str:
+                if ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == '{':
+                stack.append('}')
+            elif ch == '[':
+                stack.append(']')
+            elif ch in ('}', ']'):
+                if stack and stack[-1] == ch:
+                    stack.pop()
+
+        return s + ''.join(reversed(stack))
+
     try:
         data = json.loads(cleaned)
         if _valid(data):
@@ -643,11 +703,30 @@ def _parse_structured_response(text: str) -> dict | None:
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Try repairing truncated JSON before giving up
+    try:
+        repaired = _repair_truncated(cleaned)
+        if repaired != cleaned:
+            data = json.loads(repaired)
+            if _valid(data):
+                return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     # Fallback: find first {...} block spanning the whole string
     match = _re.search(r"\{.*\}", cleaned, _re.DOTALL)
     if match:
+        candidate = match.group()
         try:
-            data = json.loads(match.group())
+            data = json.loads(candidate)
+            if _valid(data):
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Try repairing the extracted block too
+        try:
+            repaired = _repair_truncated(candidate)
+            data = json.loads(repaired)
             if _valid(data):
                 return data
         except (json.JSONDecodeError, ValueError):
