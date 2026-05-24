@@ -334,7 +334,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
     howRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const ctaLabel  = isAuthenticated ? "Signup" : "Start Learning Free"
+  const ctaLabel  = "Signup"
   const ctaAction = isAuthenticated ? onEnterApp : onShowAuth
 
   return (
