@@ -108,6 +108,23 @@ const NAV_ITEMS = [
   { id: 'readlater', label: 'Read Later', icon: ClockIcon    },
 ]
 
+function PanelLeftIcon({ collapsed }) {
+  return (
+    <svg
+      className={`w-[15px] h-[15px] transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
+  )
+}
+
 // ── PwField ───────────────────────────────────────────────────────────────────
 
 function PwField({ value, onChange, placeholder, required, className, onKeyDown, autoComplete }) {
@@ -633,25 +650,36 @@ function LogoMark() {
 function NavItem({ item, active, collapsed, onClick, badge }) {
   const Icon = item.icon
   return (
-    <button
-      onClick={onClick}
-      title={collapsed ? item.label : undefined}
-      className={[
-        'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
-        active
-          ? 'bg-white/[0.07] text-white'
-          : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
-        collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
-      ].join(' ')}
-    >
-      <Icon className="w-[15px] h-[15px] flex-shrink-0" />
-      <span className={`flex-1 text-left ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
-      {badge > 0 && (
-        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none ${collapsed ? 'md:hidden' : ''}`}>
-          {badge}
-        </span>
-      )}
-    </button>
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        className={[
+          'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
+          active
+            ? 'bg-white/[0.07] text-white'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
+          collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
+        ].join(' ')}
+      >
+        <Icon className="w-[15px] h-[15px] flex-shrink-0" />
+        <span className={`flex-1 text-left ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
+        {badge > 0 && (
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none ${collapsed ? 'md:hidden' : ''}`}>
+            {badge}
+          </span>
+        )}
+      </button>
+      {/* Tooltip — desktop collapsed mode only */}
+      <span className={[
+        'pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-[70]',
+        'bg-slate-800 border border-white/[0.08] text-slate-200 text-[12px] font-medium',
+        'px-2.5 py-1 rounded-lg shadow-xl whitespace-nowrap',
+        'opacity-0 transition-opacity duration-150 group-hover:opacity-100',
+        collapsed ? 'hidden md:block' : 'hidden',
+      ].join(' ')}>
+        {item.label}
+      </span>
+    </div>
   )
 }
 
@@ -709,16 +737,6 @@ function Sidebar({
 
   return (
     <>
-      {/* Desktop click-outside backdrop — transparent, collapses sidebar when clicked */}
-      <div
-        className={[
-          'hidden md:block fixed inset-0 z-[54]',
-          !collapsed ? 'pointer-events-auto' : 'pointer-events-none',
-        ].join(' ')}
-        onClick={() => setCollapsed(true)}
-        aria-hidden="true"
-      />
-
       {/* Mobile backdrop */}
       <div
         className={[
@@ -734,17 +752,18 @@ function Sidebar({
         className={[
           'fixed inset-y-0 left-0 z-[56] flex flex-col',
           'bg-slate-900 border-r border-white/[0.04]',
-          'transition-transform duration-300 ease-in-out',
+          'transition-[width,transform] duration-200 ease-in-out',
           'md:relative md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
           'w-[280px]',
           collapsed ? 'md:w-[68px]' : 'md:w-[280px]',
         ].join(' ')}
-        style={{ willChange: 'transform' }}
+        style={{ willChange: 'width, transform' }}
       >
 
-        {/* Zone 1: Logo + collapse toggle */}
-        <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:justify-center' : ''}`}>
+        {/* Zone 1: Logo + sidebar toggle */}
+        <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:px-1' : ''}`}>
+          {/* Logo — navigates to landing ONLY, never controls sidebar state */}
           <button
             onClick={() => { navigateTo('landing'); setOpen(false) }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
@@ -754,7 +773,17 @@ function Sidebar({
               Curivio
             </span>
           </button>
-          {/* Close button — mobile only */}
+
+          {/* Desktop sidebar toggle — the ONLY element that collapses/expands sidebar */}
+          <button
+            onClick={() => setCollapsed(c => !c)}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden md:flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors flex-shrink-0 ml-auto"
+          >
+            <PanelLeftIcon collapsed={collapsed} />
+          </button>
+
+          {/* Mobile close button — mobile only */}
           <button
             onClick={() => setOpen(false)}
             aria-label="Close sidebar"
@@ -764,7 +793,6 @@ function Sidebar({
               <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
             </svg>
           </button>
-
         </div>
 
         {/* Zone 2: Primary nav — never scrolls */}

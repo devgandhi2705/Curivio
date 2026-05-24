@@ -462,7 +462,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
 
       {/* Messages — scrollable */}
-      <div className="flex-1 overflow-y-auto py-3 px-4 sm:py-5 sm:px-4">
+      <div className="flex-1 overflow-y-auto pt-16 pb-3 px-4 sm:pt-5 sm:pb-5 sm:px-4">
         <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4">
           {messages.length === 0 && !isLoading && (
             <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} onSelectSession={handleSelectSession} />
