@@ -266,6 +266,7 @@ def inject_memory(session_id: str, topic_hint: str | None = None) -> dict:
     from .chat_context_service import build_full_context
     from .adaptive_explanation_service import build_learner_profile
     from .continuity_service import get_continuity_context
+    from .conversation_state_service import get_state as get_knowledge_state
 
     base       = build_full_context(topic_hint)
     conv       = build_conversation_memory(session_id)
@@ -273,12 +274,14 @@ def inject_memory(session_id: str, topic_hint: str | None = None) -> dict:
     prefs      = build_preference_snapshot()
     learner    = build_learner_profile(session_id)
     continuity = get_continuity_context(topic_hint, session_id) if topic_hint else {}
+    knowledge  = get_knowledge_state(session_id)
 
     return {
         **base,
-        "conversation_memory":  conv,
-        "exploration_breadth":  breadth,
-        "preference_snapshot":  prefs,
-        "learner_profile":      learner,
-        "continuity":           continuity,
+        "conversation_memory":       conv,
+        "exploration_breadth":       breadth,
+        "preference_snapshot":       prefs,
+        "learner_profile":           learner,
+        "continuity":                continuity,
+        "conversation_knowledge":    knowledge,
     }

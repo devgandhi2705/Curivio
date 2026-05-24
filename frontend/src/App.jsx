@@ -666,6 +666,32 @@ function Sidebar({
   const [sidebarQuery, setSidebarQuery] = useState('')
   useEffect(() => { setSidebarQuery('') }, [view])
 
+  // Undo state for sidebar Read Later removals
+  const [sidebarPendingRemove, setSidebarPendingRemove] = useState({})
+  const sidebarRemoveTimers = useRef({})
+  useEffect(() => () => {
+    Object.entries(sidebarRemoveTimers.current).forEach(([key, timer]) => {
+      clearTimeout(timer)
+      removeFromQueue(key)
+    })
+  }, [])
+
+  function handleSidebarRemove(e, key) {
+    e.stopPropagation()
+    setSidebarPendingRemove(prev => ({ ...prev, [key]: true }))
+    sidebarRemoveTimers.current[key] = setTimeout(() => {
+      removeFromQueue(key)
+      setSidebarPendingRemove(prev => { const n = { ...prev }; delete n[key]; return n })
+      delete sidebarRemoveTimers.current[key]
+    }, 5000)
+  }
+
+  function handleSidebarUndo(key) {
+    clearTimeout(sidebarRemoveTimers.current[key])
+    delete sidebarRemoveTimers.current[key]
+    setSidebarPendingRemove(prev => { const n = { ...prev }; delete n[key]; return n })
+  }
+
   // Lock body scroll while mobile drawer is open
   useEffect(() => {
     if (!open) return
@@ -720,13 +746,7 @@ function Sidebar({
         {/* Zone 1: Logo + collapse toggle */}
         <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:justify-center' : ''}`}>
           <button
-            onClick={() => {
-              if (window.matchMedia('(min-width: 768px)').matches) {
-                setCollapsed(c => !c)
-              } else {
-                navigateTo('feed'); setOpen(false)
-              }
-            }}
+            onClick={() => { navigateTo('landing'); setOpen(false) }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
           >
             <LogoMark />
@@ -810,26 +830,45 @@ function Sidebar({
                 <p className="text-xs text-slate-600 px-1 py-2">{q ? 'No matches.' : 'No queued items.'}</p>
               ) : (
                 <div className="space-y-0.5">
-                  {visibleQueue.map(item => (
-                    <div
-                      key={item.articleKey}
-                      className="group flex items-start gap-2 px-2 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
-                      onClick={() => onQueueItemClick(item)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium leading-snug line-clamp-2">{item.title}</p>
-                        {item.projectName && <p className="text-[10px] text-slate-500 mt-0.5">{item.projectName}</p>}
-                      </div>
-                      <button
-                        onClick={e => { e.stopPropagation(); removeFromQueue(item.articleKey) }}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-600 hover:text-slate-300 flex-shrink-0 mt-0.5 transition-all"
+                  {visibleQueue.map(item => {
+                    const isPending = !!sidebarPendingRemove[item.articleKey]
+                    if (isPending) {
+                      return (
+                        <div
+                          key={item.articleKey}
+                          className="flex items-center justify-between px-2 py-2 rounded-lg"
+                        >
+                          <p className="text-[11px] text-slate-600 italic truncate mr-2 flex-1 min-w-0">{item.title}</p>
+                          <button
+                            onClick={() => handleSidebarUndo(item.articleKey)}
+                            className="flex-shrink-0 text-[11px] font-medium text-blue-400 hover:text-blue-300 transition-colors"
+                          >
+                            Undo
+                          </button>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div
+                        key={item.articleKey}
+                        className="group flex items-start gap-2 px-2 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
+                        onClick={() => onQueueItemClick(item)}
                       >
-                        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                          <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium leading-snug line-clamp-2">{item.title}</p>
+                          {item.projectName && <p className="text-[10px] text-slate-500 mt-0.5">{item.projectName}</p>}
+                        </div>
+                        <button
+                          onClick={e => handleSidebarRemove(e, item.articleKey)}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-600 hover:text-slate-300 flex-shrink-0 mt-0.5 transition-all"
+                        >
+                          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                          </svg>
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1046,6 +1085,9 @@ function AppContent() {
   )
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), [])
+  const handleBeforeModal  = useCallback((fn) => {
+    if (sidebarOpen) { setSidebarOpen(false); setTimeout(fn, 300) } else { fn() }
+  }, [sidebarOpen])
 
   useEffect(() => {
     localStorage.setItem('sidebar_collapsed', sidebarCollapsed ? 'true' : 'false')
@@ -1355,6 +1397,7 @@ function AppContent() {
             onClearTargetSession={() => { setTargetSessionId(null); setTargetSessionTitle(null) }}
             userName={user?.name}
             onSidebarClose={handleSidebarClose}
+            onBeforeModal={handleBeforeModal}
           />
         </div>
 
@@ -1380,6 +1423,7 @@ function AppContent() {
               userId={user?.user_id}
               userName={user?.name}
               onSidebarClose={handleSidebarClose}
+              onBeforeModal={handleBeforeModal}
             />
           </div>
 
@@ -1388,7 +1432,7 @@ function AppContent() {
           )}
 
           {view === 'bookmarks' && (
-            <BookmarksPage onOpenChat={handleOpenChat} onSidebarClose={handleSidebarClose} />
+            <BookmarksPage onOpenChat={handleOpenChat} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />
           )}
 
           {view === 'readlater' && (

@@ -483,6 +483,42 @@ def _fetch_curiosity_articles(
 # Daily package generation
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Jargon terms that are too dense for beginner content — each hit adds weight
+_BEGINNER_JARGON: list[str] = [
+    "value chain", "supply chain fragility", "supply fragility", "dependency risk",
+    "competitive dynamics", "market fragmentation", "regulatory pathway",
+    "regulatory framework", "operational efficiency", "cost structure",
+    "margin compression", "demand elasticity", "vertical integration",
+    "horizontal integration", "economies of scale", "first-mover advantage",
+    "network effects", "platform economics", "monopsony", "oligopoly",
+    "cartelization", "geopolitical", "macroeconomic", "systemic risk",
+    "strategic imperative", "value proposition", "market positioning",
+    "capital allocation", "risk-adjusted return", "portfolio optimization",
+    # Pharma / domain-specific abbreviations (ok in context but jargon-heavy alone)
+    " anda ", " nda ", " cmo ", " cro ", " ich ", " cdsco ", " who-gmp ",
+]
+
+_BEGINNER_JARGON_THRESHOLD = 18  # total jargon-term occurrences across the package
+
+
+def _score_beginner_calibration(package: dict) -> int:
+    """
+    Count jargon-term occurrences across all card text fields.
+    Returns total hit count; compare against _BEGINNER_JARGON_THRESHOLD.
+    """
+    all_cards = (package.get("insights", []) or []) + (package.get("curiosity_insights", []) or [])
+    total_hits = 0
+    for card in all_cards:
+        text = " ".join(filter(None, [
+            card.get("summary", ""),
+            card.get("educational_explanation", ""),
+            card.get("why_it_matters", ""),
+        ])).lower()
+        for term in _BEGINNER_JARGON:
+            total_hits += text.count(term)
+    return total_hits
+
+
 def generate_project_insight(project_id: str) -> dict:
     """
     Generate a progressive daily learning package for a project.
@@ -526,20 +562,71 @@ def generate_project_insight(project_id: str) -> dict:
         explored_concepts     = []
         suggested_next_topics = []
 
+    # ── Load learning memory + filter suggestions for semantic novelty ─────────
+    learning_memory: dict = {}
+    try:
+        from .learning_memory_service import get_memory, filter_novel_topics
+        learning_memory       = get_memory(project_id)
+        if suggested_next_topics:
+            suggested_next_topics = filter_novel_topics(
+                suggested_next_topics, learning_memory, max_results=6,
+            )
+    except Exception:
+        logger.warning("[project_service] learning memory load failed for %s (non-fatal)", project_id)
+
     # ── Build rich previous-package summaries (last 3, oldest-first) ──────────
     previous_pkgs = list_project_insights(project_id, limit=3)
     existing_labels = _compute_display_labels(project_id)
     previous_packages: list[dict] = []
     for p in reversed(previous_pkgs):
-        cards      = p.get("insights", [])
-        categories = list({c.get("category", "") for c in cards if c.get("category")})
-        day_num    = p.get("day_number")
-        day_label  = existing_labels.get(day_num, f"Day {day_num}")
+        cards       = p.get("insights", [])
+        all_cards   = cards + (p.get("curiosity_insights", []) or [])
+        categories  = list({c.get("category", "") for c in cards if c.get("category")})
+        titles      = [c.get("title", "") for c in all_cards if c.get("title")]
+        day_num     = p.get("day_number")
+        day_label   = existing_labels.get(day_num, f"Day {day_num}")
         previous_packages.append({
             "day":        day_label,
             "headline":   p.get("package_headline", ""),
             "categories": categories[:5],
+            "titles":     titles[:8],
         })
+
+    # ── Build inter-article memory references ────────────────────────────────
+    memory_references: dict = {"priorInsights": [], "unresolvedQuestions": [], "nextProgressionGoals": []}
+    try:
+        prior_insights: list[dict] = []
+        unresolved_questions: list[dict] = []
+        for p in reversed(previous_pkgs):  # oldest-first → chronological
+            day_num   = p.get("day_number")
+            day_label = existing_labels.get(day_num, f"Day {day_num}")
+            for card in (p.get("insights") or []):
+                title = (card.get("title") or "").strip()
+                why   = (card.get("why_it_matters") or "").strip()
+                summ  = (card.get("summary") or "").strip()
+                if not title:
+                    continue
+                # First sentence of mechanism reveal; fall back to summary
+                insight_text = (why or summ).split(".")[0].strip()
+                prior_insights.append({"day": day_label, "title": title, "insight": insight_text})
+            for card in (p.get("curiosity_insights") or []):
+                title = (card.get("title") or "").strip()
+                if title:
+                    unresolved_questions.append({"day": day_label, "question": title})
+
+        next_goals: list[str] = []
+        if learning_memory:
+            _stage = learning_memory.get("progression_stage", "foundation")
+            from .learning_memory_service import _STAGE_TODAY_MANDATE as _STM  # noqa: PLC0415
+            next_goals = _STM.get(_stage, [])
+
+        memory_references = {
+            "priorInsights":        prior_insights[-6:],
+            "unresolvedQuestions":  unresolved_questions[-4:],
+            "nextProgressionGoals": next_goals,
+        }
+    except Exception:
+        logger.warning("[project_service] memory references build failed for %s (non-fatal)", project_id)
 
     # ── Retrieve articles — two separate pipelines ────────────────────────────
     core_articles = _fetch_core_articles(
@@ -571,6 +658,8 @@ def generate_project_insight(project_id: str) -> dict:
         explored_concepts=explored_concepts,
         suggested_next_topics=suggested_next_topics,
         daily_core_article_count=daily_core_article_count,
+        learning_memory=learning_memory or None,
+        memory_references=memory_references or None,
     )
 
     try:
@@ -585,6 +674,39 @@ def generate_project_insight(project_id: str) -> dict:
     if not raw.get("insights"):
         logger.error("[project_service] generation returned no insight cards for %s", project_id)
         raise RuntimeError("Generation produced no insight cards — please try again.")
+
+    # ── Beginner calibration check + single retry ─────────────────────────────
+    if difficulty == "beginner":
+        jargon_hits = _score_beginner_calibration(raw)
+        if jargon_hits > _BEGINNER_JARGON_THRESHOLD:
+            logger.warning(
+                "[project_service] beginner calibration failed for %s — jargon_hits=%d, retrying",
+                project_id, jargon_hits,
+            )
+            retry_addendum = (
+                "\n\n══════════════════════════════════════\n"
+                "CALIBRATION RETRY — SIMPLIFY FURTHER\n"
+                "══════════════════════════════════════\n"
+                "The previous generation was too abstract for beginner level.\n"
+                "Apply MAXIMUM conceptual laddering:\n"
+                "  • Every technical term needs an immediate plain-English definition.\n"
+                "  • Open every summary with a concrete, picturable anchor — not an abstraction.\n"
+                "  • Do NOT use: value chain, supply fragility, dependency risk, geopolitical,\n"
+                "    competitive dynamics, regulatory framework — without first establishing\n"
+                "    the concrete situation in plain language.\n"
+                "  • If in doubt, use an analogy first, then name the domain concept."
+            )
+            try:
+                from .grok_service import ask_grok as _ask_grok_retry
+                retry_text = _ask_grok_retry(prompt + retry_addendum, json_mode=True)
+                retry_raw  = _extract_json(retry_text)
+                if retry_raw.get("insights"):
+                    raw = retry_raw
+                    logger.info("[project_service] beginner calibration retry succeeded for %s", project_id)
+                else:
+                    logger.warning("[project_service] beginner calibration retry returned no insights — using original")
+            except Exception as retry_err:
+                logger.warning("[project_service] beginner calibration retry failed for %s: %s (using original)", project_id, retry_err)
 
     # Guarantee curiosity_insights key exists (older LLM outputs may omit it)
     if "curiosity_insights" not in raw:
@@ -607,6 +729,13 @@ def generate_project_insight(project_id: str) -> dict:
         update_progression_from_package(project_id, package)
     except Exception:
         logger.warning("[project_service] progression update failed for %s (non-fatal)", project_id)
+
+    # Auto-update learning memory — semantic coverage tracking (non-fatal)
+    try:
+        from .learning_memory_service import update_from_package as _update_memory
+        _update_memory(project_id, package)
+    except Exception:
+        logger.warning("[project_service] learning memory update failed for %s (non-fatal)", project_id)
 
     return package
 

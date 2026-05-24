@@ -75,7 +75,7 @@ function getGreeting(name, rand) {
   return firstName ? `${time}, ${firstName}` : time
 }
 
-export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName, onSidebarClose }) {
+export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName, onSidebarClose, onBeforeModal }) {
   const [sessionId, setSessionId]     = useState(() => generateSessionId())
   const [messages, setMessages]       = useState([])
   const [sessions, setSessions]       = useState([])
@@ -432,16 +432,19 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         onSelect={(s) => { handleSelectSession(s); onSidebarClose?.() }}
         onNew={() => { handleNewChat(); onSidebarClose?.() }}
         onRename={(session) => {
-          setRenamingSessionId(session.session_id)
-          setRenameDraft(session.title || session.first_topic_hint || '')
-          setShowRenameModal(true)
+          const open = () => {
+            setRenamingSessionId(session.session_id)
+            setRenameDraft(session.title || session.first_topic_hint || '')
+            setShowRenameModal(true)
+          }
+          onBeforeModal ? onBeforeModal(open) : open()
         }}
         onDelete={(session) => handleDeleteSession(session.session_id)}
       />
     ))
     return () => unregister('chat')
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions, sessionId, handleSelectSession, handleNewChat, handleRename, handleDeleteSession, onSidebarClose, register, unregister])
+  }, [sessions, sessionId, handleSelectSession, handleNewChat, handleRename, handleDeleteSession, onSidebarClose, onBeforeModal, register, unregister])
 
   return (
     <div className="flex flex-col h-full">

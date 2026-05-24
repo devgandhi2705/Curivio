@@ -198,6 +198,7 @@ export default function ProjectsPage({
   targetProjectId, targetInsightId, targetArticleKey, onClearQueueTarget,
   userId, userName,
   onSidebarClose,
+  onBeforeModal,
 }) {
   // Project list
   const [projects,       setProjects]       = useState([])
@@ -259,15 +260,16 @@ export default function ProjectsPage({
   // Stable ref for handlers so the subsection render fn always calls current handlers
   const subsectionHandlers = useRef({})
   useEffect(() => {
+    const run = (fn) => onBeforeModal ? onBeforeModal(fn) : fn()
     subsectionHandlers.current = {
       handleSelect: (project) => {
         handleSelect(project)
         onSidebarClose?.()
       },
-      onNew:    () => setShowCreate(true),
-      onRename: (project) => { setActiveId(project.project_id); setRenameProjectDraft(project.name || ''); setShowRenameProject(true) },
-      onEdit:   (project) => { setActiveId(project.project_id); setShowEdit(true) },
-      onDelete: (project) => setPendingDelete(project),
+      onNew:    () => run(() => setShowCreate(true)),
+      onRename: (project) => run(() => { setActiveId(project.project_id); setRenameProjectDraft(project.name || ''); setShowRenameProject(true) }),
+      onEdit:   (project) => run(() => { setActiveId(project.project_id); setShowEdit(true) }),
+      onDelete: (project) => run(() => setPendingDelete(project)),
     }
   })
 

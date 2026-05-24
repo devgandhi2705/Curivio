@@ -171,6 +171,37 @@ geopolitical vectors creating leverage or vulnerability; what currently holds th
 what specific force will change that equilibrium; and the underpriced risk — what is the conventional
 view getting wrong?
 Write like a sector analyst briefing a decision-maker, not a reporter covering the industry.""",
+
+    # ── Semantic-layer intent types (no regex fast-path equivalent) ───────────
+
+    "causal": """\
+FORMAT GUIDANCE — CAUSAL ANALYSIS:
+The question asks WHY — start with the mechanism, not the outcome.
+Trace backward from effect to root cause. Don't stop at the first explanation — ask what produced THAT.
+Name actors, structural forces, and constraints specifically. Generic explanations fail.
+Surface the counterintuitive: why did rational actors produce this outcome?
+End with the implication: what does the causal logic reveal about what would change the outcome?""",
+
+    "prediction": """\
+FORMAT GUIDANCE — PREDICTIVE ANALYSIS:
+Anchor predictions in current structural dynamics — not optimism or trend extrapolation.
+Name the specific forces that would accelerate, decelerate, or reverse for different outcomes.
+Surface where genuine uncertainty exists vs. where the trajectory is relatively clear.
+A good prediction names the conditions under which it fails — that is what makes it useful.""",
+
+    "critique": """\
+FORMAT GUIDANCE — CRITICAL ANALYSIS:
+Start with the strongest version of the position being critiqued. No strawmen.
+Name specific flaws: which assumption fails? Where does evidence not support the claim?
+Distinguish fatal flaws from superficial weaknesses.
+End with the verdict: what does the critique change about how we should understand or use this?""",
+
+    "synthesis": """\
+FORMAT GUIDANCE — SYNTHESIS:
+The goal is integration, not summary. What do the pieces reveal together that no single part shows?
+Surface hidden connections, unexpected tensions, and emergent patterns.
+The synthetic insight should be something you couldn't have said before seeing the whole picture.
+End with the one load-bearing insight the rest of the answer supports.""",
 }
 
 
@@ -229,13 +260,24 @@ def build_messages(
 # Mode-specific prompt builders
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_format_directive_section(format_intent: str) -> str:
+def _build_format_directive_section(format_intent: str, intent_profile: dict | None = None) -> str:
     """
-    Return the intent-aware format directive string, or empty string for "default".
+    Return the intent-aware format directive string.
 
-    Injected into both natural and structured prompts to give the model
-    structural guidance specific to the detected response intent.
+    When the semantic intent profile signals a blended multi-intent prompt
+    (blended_format=True), the composed_directive from the semantic layer
+    takes precedence over the single-intent fallback.
+
+    Falls back to the single-intent directive from _FORMAT_DIRECTIVES, or
+    empty string for "default" with no semantic signal.
     """
+    # Blended path — use the composed directive from semantic scoring
+    if intent_profile and intent_profile.get("blended_format"):
+        composed = intent_profile.get("composed_directive", "")
+        if composed:
+            return composed
+
+    # Single-intent path — look up in the directive table
     return _FORMAT_DIRECTIVES.get(format_intent, "")
 
 
@@ -249,14 +291,24 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
     """
     parts = [_PERSONA_NATURAL]
 
+    # Learning system framing — positions this interaction in the depth hierarchy.
+    # Injected first so every subsequent directive is read within the learning journey context.
+    learning_section = _build_learning_system_section(context, mode)
+    if learning_section:
+        parts.append(learning_section)
+
     # Depth instruction — calibrates verbosity and structure before anything else
     depth = context.get("response_depth", "standard")
     parts.append(_DEPTH_INSTRUCTIONS.get(depth, _DEPTH_INSTRUCTIONS["standard"]))
 
-    # Intent-aware format directive — structural guidance for detected response shape
-    # Skipped in layman mode: the Explain Simply directive is fully self-contained
+    # Intent-aware format directive — structural guidance for detected response shape.
+    # Skipped in layman mode: the Explain Simply directive is fully self-contained.
+    # Passes intent_profile so blended multi-intent prompts get composed directives.
     if mode != "layman":
-        fmt = _build_format_directive_section(context.get("format_intent", "default"))
+        fmt = _build_format_directive_section(
+            context.get("format_intent", "default"),
+            intent_profile=context.get("intent_profile"),
+        )
         if fmt:
             parts.append(fmt)
 
@@ -265,15 +317,36 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
     if conv_section:
         parts.append(conv_section)
 
+    # Active analytical thread — mechanisms, unresolved tensions, comparative frame.
+    # Injected when the session has 2+ turns and at least one established mechanism.
+    # Enables compound reasoning without re-explaining prior context.
+    knowledge_section = _build_knowledge_state_section(context.get("conversation_knowledge", {}))
+    if knowledge_section:
+        parts.append(knowledge_section)
+
+    # Cognitive tension directive — forces intellectual friction over flat informational phrasing.
+    # Skipped in layman mode (directive conflicts with ELI5 framing) and for trivial messages.
+    if mode != "layman":
+        tension_section = _build_tension_section(context, mode)
+        if tension_section:
+            parts.append(tension_section)
+
     # User profile: only inject a one-liner if interesting
     profile = context.get("user_profile", {})
     profile_line = _build_compact_profile(profile)
     if profile_line:
         parts.append(profile_line)
 
+    # Dynamic narrative rhythm — rotates structural mode to prevent response homogeneity.
+    # Skipped for layman (has its own structure) and quick depth (no structure needed).
+    if mode != "layman":
+        narrative = _build_narrative_section(context, mode)
+        if narrative:
+            parts.append(narrative)
+
     # Layman directive when explain-simply mode is active
     if mode == "layman":
-        layman = _build_layman_mode_section(context.get("layman_mode_context", {}))
+        layman = _build_layman_mode_section(context)
         if layman:
             parts.append(layman)
 
@@ -289,6 +362,13 @@ def _build_structured_prompt(context: dict) -> str:
     """
     parts = [_PERSONA]
 
+    # Learning system framing — anchors the structured response to the user's learning journey.
+    # Structured modes (web_search, deep_research) carry the most state; this ensures the AI
+    # builds on established mechanisms rather than re-starting from scratch each time.
+    learning_section = _build_learning_system_section(context, mode="deep_research")
+    if learning_section:
+        parts.append(learning_section)
+
     profile  = context.get("user_profile", {})
     research = context.get("research", {})
     session  = context.get("session", {})
@@ -298,6 +378,7 @@ def _build_structured_prompt(context: dict) -> str:
         (_build_research_section,              research),
         (_build_session_section,               session),
         (_build_conversation_memory_section,   context.get("conversation_memory", {})),
+        (_build_knowledge_state_section,       context.get("conversation_knowledge", {})),
         (_build_exploration_breadth_section,   context.get("exploration_breadth", {})),
         (_build_preference_snapshot_section,   context.get("preference_snapshot", {})),
         (_build_explanation_directive_section, context.get("learner_profile", {})),
@@ -309,10 +390,19 @@ def _build_structured_prompt(context: dict) -> str:
         if section:
             parts.append(section)
 
-    # Intent-aware format directive — guides response structure for the detected intent
-    fmt = _build_format_directive_section(context.get("format_intent", "default"))
+    # Intent-aware format directive — guides response structure for the detected intent.
+    # Passes intent_profile so blended multi-intent prompts get composed directives.
+    fmt = _build_format_directive_section(
+        context.get("format_intent", "default"),
+        intent_profile=context.get("intent_profile"),
+    )
     if fmt:
         parts.append(fmt)
+
+    # Cognitive tension — short version for structured modes; informs key_takeaway quality.
+    tension_section = _build_tension_section(context, mode="deep_research")
+    if tension_section:
+        parts.append(tension_section)
 
     parts.append(_GUIDELINES)
     parts.append(_STRUCTURED_FORMAT_DIRECTIVE)
@@ -692,11 +782,119 @@ Do NOT:
 """
 
 
-def _build_layman_mode_section(layman_context: dict) -> str:
-    """Inject the Explain Simply directive when layman mode is active."""
-    if not layman_context.get("active"):
+def _build_learning_system_section(context: dict, mode: str) -> str:
+    """
+    Inject the learning system framing section.
+
+    Positions the current mode in the depth hierarchy (Discover → Understand →
+    Explore → Validate → Master) and anchors the response to what the user
+    already understands.  Appears at the top of every system prompt so all
+    subsequent directives are interpreted through the learning journey lens.
+
+    Returns empty string for quick-depth responses (no framing needed).
+    """
+    try:
+        from .learning_system_context_service import build_learning_system_section
+        return build_learning_system_section(context, mode)
+    except Exception:
         return ""
-    return _LAYMAN_MODE_DIRECTIVE.strip()
+
+
+def _build_layman_mode_section(context: dict) -> str:
+    """
+    Inject the mechanism-preserving simplification directive when layman mode is active.
+
+    Pulls domain, topic_hint, and card mechanism from context so the analogy bank
+    is tailored to the subject matter and the specific mechanism is explicitly preserved.
+    Falls back to the static directive when the service is unavailable.
+    """
+    layman_ctx = context.get("layman_mode_context", {}) or {}
+    if not layman_ctx.get("active"):
+        return ""
+    domain     = context.get("domain_context", {}).get("domain", "")
+    topic_hint = context.get("research",       {}).get("topic") or None
+    mechanism  = layman_ctx.get("mechanism", "")
+    try:
+        from .layman_mode_service import build_layman_directive
+        directive = build_layman_directive(domain=domain, topic_hint=topic_hint)
+    except Exception:
+        directive = _LAYMAN_MODE_DIRECTIVE.strip()
+    # Prepend mechanism-preservation instruction when available
+    if mechanism:
+        prefix = (
+            f"MECHANISM TO PRESERVE: \"{mechanism[:200]}\"\n"
+            "This is the core causal claim from the feed card. "
+            "Your simplification MUST carry this mechanism — simplified vocabulary, preserved logic.\n\n"
+        )
+        return prefix + directive
+    return directive
+
+
+def _build_knowledge_state_section(knowledge: dict) -> str:
+    """
+    Inject the active conversation knowledge state.
+
+    Uses conversation_state_service.format_state_for_prompt to produce
+    a compact, ready-to-use section. Returns empty string when the state
+    is too sparse to be useful (first turn, no mechanisms established).
+    """
+    if not knowledge:
+        return ""
+    try:
+        from .conversation_state_service import format_state_for_prompt
+        return format_state_for_prompt(knowledge)
+    except Exception:
+        return ""
+
+
+def _build_narrative_section(context: dict, mode: str = "normal") -> str:
+    """
+    Inject the dynamic narrative rhythm directive.
+
+    Skipped for layman mode (its own structure is complete) and for quick-depth
+    responses (greetings, one-liners). The service records the selected mode in
+    its session fingerprint so subsequent turns automatically rotate away from it.
+    """
+    if mode == "layman":
+        return ""
+    depth = context.get("response_depth", "standard")
+    if depth == "quick":
+        return ""
+    session_id = (context.get("conversation_memory", {}) or {}).get("session_id", "")
+    try:
+        from .narrative_rhythm_service import build_narrative_directive
+        return build_narrative_directive(
+            session_id     = session_id,
+            intent_profile = context.get("intent_profile", {}),
+            domain         = context.get("domain_context", {}).get("domain", ""),
+            response_depth = depth,
+        )
+    except Exception:
+        return ""
+
+
+def _build_tension_section(context: dict, mode: str = "normal") -> str:
+    """
+    Inject cognitive tension directive from the tension engine.
+
+    Skipped for layman mode, trivial messages, and when no message is in context.
+    Short version used for structured modes (web_search, deep_research) since
+    the JSON format directive already enforces insight density.
+    """
+    message = context.get("current_message", "")
+    if not message:
+        return ""
+    try:
+        from .tension_engine import build_tension_directive
+        return build_tension_directive(
+            message        = message,
+            intent_profile = context.get("intent_profile", {}),
+            domain         = context.get("domain_context", {}).get("domain", ""),
+            conv_state     = context.get("conversation_knowledge", {}),
+            mode           = mode,
+        )
+    except Exception:
+        return ""
 
 
 def _build_continuity_section(continuity: dict) -> str:

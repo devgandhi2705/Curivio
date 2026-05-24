@@ -93,8 +93,9 @@ def chat(
     if not message:
         raise ValueError("message must not be empty")
 
-    # ── Feed context: override topic and mode before intent detection ─────────
+    # ── Feed context: enrich + override topic and mode before intent detection ─
     if feed_context:
+        _enrich_feed_context(feed_context)
         if topic_hint is None:
             topic_hint = feed_context.get("insight_title") or _detect_topic_hint(message)
         if chat_mode == "normal":
@@ -138,12 +139,18 @@ def chat(
     # Build memory-injected context
     context = inject_memory(session_id, topic_hint)
 
-    # Inject format intent so system prompt can apply structural guidance
-    context["format_intent"] = _format_intent
+    # Inject format intent and semantic profile so the prompt builder can apply
+    # single-intent directives or blended composed directives as appropriate.
+    context["format_intent"]  = _format_intent
+    context["intent_profile"] = intent.get("intent_profile", {})
+    context["current_message"] = message
 
     # ── Inject layman mode flag into context for system prompt ────────────────
     if chat_mode == "layman":
-        context["layman_mode_context"] = {"active": True}
+        context["layman_mode_context"] = {
+            "active":    True,
+            "mechanism": (feed_context or {}).get("mechanism", ""),
+        }
 
     # Classify domain — prefer feed_context domain when available
     from .domain_classifier_service import get_domain_context as _get_domain
@@ -174,7 +181,11 @@ def chat(
     else:
         mode_context = prepare_mode_context(
             chat_mode, message, topic_hint,
-            query_type=query_type, subjects=subjects,
+            query_type      = query_type,
+            subjects        = subjects,
+            intent_profile  = context.get("intent_profile", {}),
+            domain          = context.get("domain_context", {}).get("domain", ""),
+            feed_context    = feed_context,
         )
 
     # Build messages for Groq
@@ -251,6 +262,38 @@ def chat(
         except Exception:
             logger.exception("chat_service: continuity recording failed (non-fatal)")
 
+    # Update conversation knowledge state (non-blocking; enables compound reasoning)
+    try:
+        from .conversation_state_service import update_state as _update_ks
+        _update_ks(
+            session_id          = session_id,
+            user_message        = message,
+            response_text       = response_text,
+            topic_hint          = topic_hint,
+            structured_response = _parse_structured_response(response_text),
+            domain              = context.get("domain_context", {}).get("domain"),
+        )
+    except Exception:
+        logger.exception("chat_service: knowledge state update failed (non-fatal)")
+
+    # Enrich recommendations with thread-aware, category-specific follow-ups
+    try:
+        from .conversation_state_service import get_state as _get_ks, enrich_with_thread_followups
+        recommendations = enrich_with_thread_followups(
+            recommendations,
+            _get_ks(session_id),
+            intent_profile = context.get("intent_profile", {}),
+            domain         = context.get("domain_context", {}).get("domain", ""),
+        )
+    except Exception:
+        pass
+
+    try:
+        from .tension_engine import score_tension as _score_tension
+        tension_scores = _score_tension(response_text)
+    except Exception:
+        tension_scores = {}
+
     return {
         "session_id":         session_id,
         "message_id":         msg_id,
@@ -261,6 +304,7 @@ def chat(
         "action":             action_result.get("action") if action_result else None,
         "recommendations":    recommendations,
         "structured_response": _parse_structured_response(response_text),
+        "tension_scores":     tension_scores,
         "context_used": {
             "has_deep_research":    research.get("has_deep_research",    False),
             "has_learning_path":    research.get("has_learning_path",    False),
@@ -308,8 +352,9 @@ def chat_stream(
     subjects: list[str] = []
 
     try:
-        # Feed context: override topic and mode before intent detection
+        # Feed context: enrich + override topic and mode before intent detection
         if feed_context:
+            _enrich_feed_context(feed_context)
             if topic_hint is None:
                 topic_hint = feed_context.get("insight_title") or _detect_topic_hint(message)
             if chat_mode == "normal":
@@ -348,11 +393,16 @@ def chat_stream(
         context = _inject(session_id, topic_hint)
 
         # Inject format intent so system prompt can apply structural guidance
-        context["format_intent"] = _format_intent
+        context["format_intent"]   = _format_intent
+        context["intent_profile"]  = intent.get("intent_profile", {})
+        context["current_message"] = message
 
         # Inject layman mode flag into context for system prompt
         if chat_mode == "layman":
-            context["layman_mode_context"] = {"active": True}
+            context["layman_mode_context"] = {
+                "active":    True,
+                "mechanism": (feed_context or {}).get("mechanism", ""),
+            }
 
         from .domain_classifier_service import get_domain_context as _get_domain
         context["domain_context"] = _get_domain(
@@ -403,7 +453,7 @@ def chat_stream(
             pass  # no retrieval, mode_context stays empty
         elif chat_mode == "deep_research":
             for event_type, event_val in stream_research_progress(
-                message, topic_hint, query_type=query_type
+                message, topic_hint, query_type=query_type, feed_context=feed_context,
             ):
                 if event_type == "status":
                     yield json.dumps({"t": "status", "v": event_val}) + "\n"
@@ -415,7 +465,11 @@ def chat_stream(
                 yield status
             mode_context = prepare_mode_context(
                 chat_mode, message, topic_hint,
-                query_type=query_type, subjects=subjects,
+                query_type     = query_type,
+                subjects       = subjects,
+                intent_profile = context.get("intent_profile", {}),
+                domain         = context.get("domain_context", {}).get("domain", ""),
+                feed_context   = feed_context,
             )
 
         mode_note = build_mode_system_note(mode_context)
@@ -461,6 +515,12 @@ def chat_stream(
         return
 
     response_text = "".join(collected)
+
+    try:
+        from .tension_engine import score_tension as _score_tension
+        tension_scores = _score_tension(response_text)
+    except Exception:
+        tension_scores = {}
 
     # ── Extract sources to include in done event ─────────────────────────────
     sources: list[dict] = []
@@ -544,6 +604,32 @@ def chat_stream(
         except Exception:
             logger.exception("chat_stream: continuity recording failed (non-fatal)")
 
+    # Update conversation knowledge state (non-blocking; enables compound reasoning)
+    try:
+        from .conversation_state_service import update_state as _update_ks
+        _update_ks(
+            session_id          = session_id,
+            user_message        = message,
+            response_text       = response_text,
+            topic_hint          = topic_hint,
+            structured_response = _parse_structured_response(response_text),
+            domain              = context.get("domain_context", {}).get("domain"),
+        )
+    except Exception:
+        logger.exception("chat_stream: knowledge state update failed (non-fatal)")
+
+    # Enrich recommendations with thread-aware, category-specific follow-ups
+    try:
+        from .conversation_state_service import get_state as _get_ks, enrich_with_thread_followups
+        recommendations = enrich_with_thread_followups(
+            recommendations,
+            _get_ks(session_id),
+            intent_profile = context.get("intent_profile", {}),
+            domain         = context.get("domain_context", {}).get("domain", ""),
+        )
+    except Exception:
+        pass
+
     yield json.dumps({
         "t":                   "done",
         "message_id":          msg_id,
@@ -556,6 +642,7 @@ def chat_stream(
         "action":              action_result.get("action") if action_result else None,
         "recommendations":     recommendations,
         "structured_response": _parse_structured_response(response_text),
+        "tension_scores":      tension_scores,
         "context_used": {
             "has_deep_research":     research.get("has_deep_research",    False),
             "has_learning_path":     research.get("has_learning_path",    False),
@@ -847,3 +934,34 @@ def _extract_concepts_from_context(context: dict) -> list[str]:
             _add(step.get("concept", ""))
 
     return result[:12]
+
+
+def _enrich_feed_context(feed_context: dict) -> None:
+    """
+    Enrich feed_context in-place with mechanism extract + project learning state.
+
+    Adds:
+      mechanism          — first sentence of why_it_matters (or summary)
+      progression_stage  — current learning stage from project memory
+      recent_mechanisms  — last 3 mechanisms covered in this project
+      difficulty_level   — project difficulty setting
+
+    All keys are only set if not already present.  Non-fatal — errors silently ignored.
+    """
+    try:
+        # Extract mechanism from why_it_matters; fall back to summary
+        why  = (feed_context.get("why_it_matters")    or "").strip()
+        summ = (feed_context.get("insight_summary")   or "").strip()
+        mechanism = (why or summ).split(".")[0].strip()
+        if mechanism:
+            feed_context.setdefault("mechanism", mechanism)
+
+        # Load project learning state when project_id is available
+        project_id = feed_context.get("project_id", "")
+        if project_id:
+            from .learning_memory_service import get_memory as _get_mem  # noqa: PLC0415
+            memory = _get_mem(project_id)
+            feed_context.setdefault("progression_stage",  memory.get("progression_stage", "foundation"))
+            feed_context.setdefault("recent_mechanisms",  memory.get("covered_mechanisms", [])[-3:])
+    except Exception:
+        logger.debug("[chat_service] _enrich_feed_context failed (non-fatal)")

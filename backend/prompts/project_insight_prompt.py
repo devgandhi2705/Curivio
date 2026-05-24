@@ -27,6 +27,8 @@ def make_daily_package_prompt(
     explored_concepts: list[str],
     suggested_next_topics: list[str],
     daily_core_article_count: int = 4,
+    learning_memory: dict | None = None,
+    memory_references: dict | None = None,
 ) -> str:
     kw_str    = ", ".join(keywords) if keywords else project_name
     focus_str = ", ".join(focus_areas) if focus_areas else "general developments"
@@ -54,15 +56,23 @@ def make_daily_package_prompt(
             "Introduce cross-domain connections and adjacent ideas."
         )
 
-    # Learning history
+    # Learning history + recently used titles for pattern avoidance
     if previous_packages:
         history_lines = []
+        all_recent_titles: list[str] = []
         for p in previous_packages:
             cats = ", ".join(p.get("categories", [])) or "general"
             history_lines.append(f"  {p['day']}: {p['headline']}  [covered: {cats}]")
+            all_recent_titles.extend(p.get("titles", []))
         history_str = "\n".join(history_lines)
     else:
         history_str = f"  (none — this is {display_label}, introduce accessible but intellectually sharp foundations)"
+        all_recent_titles = []
+
+    if all_recent_titles:
+        recent_titles_str = "\n".join(f"  — {t}" for t in all_recent_titles[-12:])
+    else:
+        recent_titles_str = "  (none — first package)"
 
     # Explored concepts
     if explored_concepts:
@@ -76,6 +86,117 @@ def make_daily_package_prompt(
 
     # Suggested next topics
     nt_str = ", ".join(suggested_next_topics[:4]) if suggested_next_topics else "follow natural curriculum progression"
+
+    # Beginner calibration section (only injected when difficulty == "beginner")
+    if difficulty == "beginner":
+        beginner_section_str = f"""══════════════════════════════════════
+BEGINNER CALIBRATION — MANDATORY OVERRIDES
+══════════════════════════════════════
+Learner level is BEGINNER. All content MUST follow CONCEPTUAL LADDERING — no exceptions.
+
+CONCEPTUAL LADDERING RULE:
+  Every advanced idea must travel this path before the abstract framing appears:
+
+  STEP 1 — CONCRETE ANCHOR: one tangible thing the reader can picture right now
+  STEP 2 — MECHANISM: how the domain concept connects to that anchor
+  STEP 3 — IMPLICATION: the strategic/systemic consequence, now grounded
+
+  BAD (abstract first):
+    "API dependency creates pharmaceutical supply chain fragility at scale."
+  GOOD (concrete first):
+    "Most of the raw ingredients in Indian-made medicines come from factories in China.
+     When those factories slow down or a port closes, Indian drug companies run out of
+     the chemicals they need — even if every Indian factory is working perfectly."
+  THEN add the implication:
+    "This is why Indian pharma companies are racing to build domestic ingredient
+     manufacturing — not because it's cheaper, but because one political decision
+     in Beijing can stop their entire production line."
+
+JARGON RULE — every technical term needs an immediate plain-English definition on first use:
+  BAD:  "APIs constitute the upstream input in the pharmaceutical value chain."
+  GOOD: "APIs — the active chemical compounds that make medicines actually work — come
+         mostly from a handful of factories in China."
+
+FORBIDDEN IN BEGINNER MODE:
+  × Opening a summary with the abstract concept before the concrete anchor
+  × Stacking two or more domain-specific concepts without grounding each one
+  × Geopolitical analysis without first establishing the basic economic stakes in one sentence
+  × Phrases: "value chain", "supply fragility", "dependency risk" — unless explained immediately
+  × Strategic framing in the first two sentences before the mechanism is grounded
+  × "competitive dynamics", "market fragmentation", "regulatory pathway" without plain-English context
+  × Assuming knowledge of acronyms (API, CMO, ANDA, EMA, CDSCO) without one-phrase explanations
+
+ANALOGY REQUIREMENT:
+  At least 1 card per package must use a cross-domain analogy to explain a mechanism.
+  Useful bridges: logistics → medicine delivery; phone hardware → drug ingredients;
+  restaurant supply chain → pharma raw materials; copyright law → drug patents.
+
+CARD LENGTH FOR BEGINNER:
+  Summaries: 2–3 sentences max. Concrete hook → plain-language mechanism. No compression.
+  Educational explanation: build up one idea fully before introducing the next.
+  No multi-clause sentences that require domain knowledge to parse.
+
+SELF-CHECK before writing each card — ask yourself:
+  "Could a smart 18-year-old who has never studied {project_name} understand the first sentence?"
+  If NO → rewrite it. Concrete first. Abstract second. Always."""
+    else:
+        beginner_section_str = ""
+
+    # Learning memory section (progression stage + coverage avoidance)
+    memory_section_str = ""
+    if learning_memory:
+        try:
+            from ..services.learning_memory_service import build_memory_prompt_section
+            memory_section_str = build_memory_prompt_section(learning_memory)
+        except Exception:
+            pass
+
+    # Inter-article continuity section (prior insights + unresolved threads)
+    continuity_str = ""
+    if memory_references:
+        prior_insights_list = memory_references.get("priorInsights") or []
+        unresolved_list     = memory_references.get("unresolvedQuestions") or []
+        if prior_insights_list or unresolved_list:
+            lines: list[str] = []
+            lines.append("══════════════════════════════════════")
+            lines.append("INTER-ARTICLE CONTINUITY — MANDATORY")
+            lines.append("══════════════════════════════════════")
+            lines.append("The reader has been learning across multiple sessions. They carry prior insights.")
+            lines.append("The feed must feel CUMULATIVE — not a fresh slate each day.")
+            lines.append("")
+            lines.append("AT LEAST 1 core card per package MUST open with or include a callback to a prior insight.")
+            lines.append("Use one of these callback phrase forms (verbatim or close variant):")
+            lines.append('  "As we established in {Day}, [prior mechanism]..."')
+            lines.append('  "Building on {Day}\'s insight about [topic]: here is the next layer."')
+            lines.append('  "{Day} showed that [X]. Today\'s pattern confirms / contradicts that:"')
+            lines.append('  "Recall [title] from {Day}? This is what happens next:"')
+            lines.append('  "The [mechanism from {Day}] now explains why [today\'s development]:"')
+            lines.append("")
+            lines.append("WHAT MAKES A GOOD CALLBACK:")
+            lines.append("  GOOD: \"Day 2 established FDA approval as a global trust certificate.")
+            lines.append("         Today's pattern shows what happens when that certificate is revoked mid-export.\"")
+            lines.append("  BAD:  \"Building on our previous discussion...\"  (too vague — name the mechanism)")
+            lines.append("  BAD:  \"As mentioned before...\"  (never say this — be specific)")
+            lines.append("")
+            if prior_insights_list:
+                lines.append("PRIOR INSIGHTS AVAILABLE FOR CALLBACKS:")
+                for pi in prior_insights_list:
+                    lines.append(f'  [{pi["day"]}] "{pi["title"]}"')
+                    if pi.get("insight"):
+                        lines.append(f'        Mechanism: {pi["insight"]}')
+            if unresolved_list:
+                lines.append("")
+                lines.append("OPEN THREADS (curiosity cards that surfaced questions — deepen or resolve if relevant today):")
+                for uq in unresolved_list:
+                    lines.append(f'  [{uq["day"]}] {uq["question"]}')
+            lines.append("")
+            lines.append("CONTINUITY MANDATE:")
+            lines.append("  • At least 1 card summary or educational_explanation must contain a named callback")
+            lines.append("    to a prior session insight — using the card's title or mechanism, not generic phrasing.")
+            lines.append("  • learning_thread MUST reference specific prior content by concept name or card title —")
+            lines.append("    not vague 'continues the journey' language.")
+            lines.append("  • If an open thread directly connects to today's content, reference it by title.")
+            continuity_str = "\n".join(lines)
 
     def fmt_articles(articles: list[dict], tag: str) -> str:
         if not articles:
@@ -120,6 +241,13 @@ Suggested next topics (introduce 1–2 that fit naturally):
 Recent learning history:
 {history_str}
 
+Recent card titles — DO NOT produce structurally similar titles or reuse these phrasings:
+{recent_titles_str}
+
+{memory_section_str}
+
+{continuity_str}
+
 ══════════════════════════════════════
 EDITORIAL PHILOSOPHY  ← READ FIRST
 ══════════════════════════════════════
@@ -137,6 +265,8 @@ GOOD CARD ANGLE: "The reason ML engineers obsess over data quality isn't accurac
 
 BAD CARD ANGLE: "Digital manufacturing uses automation."
 GOOD CARD ANGLE: "Indian manufacturers are accelerating automation because global compliance pressure from Western regulators is creating an adoption gap that late movers may not recover from."
+
+{beginner_section_str}
 
 ══════════════════════════════════════
 ACCELERATION PHILOSOPHY
@@ -262,6 +392,38 @@ The user is intelligent, already curious, and not reading a textbook.
   • Speed through the "what" to arrive at the "why it's strange" and "what happens next"
 
 ══════════════════════════════════════
+WHY THIS WORKS — MANDATORY RULES
+══════════════════════════════════════
+The "why_it_matters" field is NOT a summary. It is a MECHANISM REVEAL.
+
+It must answer ONE question: "What hidden mechanism causes this phenomenon?"
+
+RULE: Every why_it_matters must expose one of:
+  • A hidden leverage point (what small input drives a disproportionate output)
+  • An invisible incentive structure (why actors behave the way they do, beneath the surface)
+  • A causal chain the summary did not explain (A causes B causes C — and most people see only C)
+  • A systemic behavior (how a feedback loop, constraint, or structural force produces the outcome)
+  • A counterintuitive mechanism (the thing that sounds like it should work one way but actually works another)
+
+LENGTH: 90–120 words. Never shorter. Never longer.
+DENSITY: Every sentence must carry signal. Zero filler. Zero repetition of the summary.
+STYLE: Expert annotation. The voice of someone who has worked inside the system.
+
+WHAT "WHY THIS WORKS" IS NOT:
+  ✗ A restatement of the article headline
+  ✗ A definition of the topic
+  ✗ A generic "this is important" wrap-up
+  ✗ A second summary
+
+BAD EXAMPLE:
+  "FDA approvals are rigorous and require extensive clinical trials. This matters because it ensures medicines are safe and effective for patients around the world."
+  (This is a topic description — it reveals no mechanism.)
+
+GOOD EXAMPLE:
+  "FDA approval functions as a global trust certificate, not a domestic regulation. Countries that lack their own robust inspection capacity use FDA approval as a proxy audit — they're outsourcing due diligence to a credible third party. This creates a structural asymmetry: Indian manufacturers selling into FDA-approved channels enjoy automatic trust in 60+ countries that would otherwise require independent audits. Lose FDA standing and you don't just lose US market access — you collapse the trust signal that underpins your entire international distribution network."
+  (This exposes the mechanism: trust-certificate signaling, proxy auditing, the asymmetric value of a single approval.)
+
+══════════════════════════════════════
 WRITING STYLE STANDARDS
 ══════════════════════════════════════
 Write like: FT Alphaville, premium Substack analytical pieces, The Economist data briefings, expert analyst memos.
@@ -304,6 +466,110 @@ GOOD endings (pick the form that fits the card's argument):
   Strategic implication: "[Actor] now holds a structural advantage — and most competitors haven't priced it in yet."
   Prediction with stakes: "The next 18 months will test whether [specific claim] holds when [specific condition] changes."
   Exposed contradiction:  "The uncomfortable implication is that [conventional wisdom] may be precisely wrong."
+
+══════════════════════════════════════
+BANNED PHRASES — ZERO TOLERANCE
+══════════════════════════════════════
+These phrases make the feed sound AI-generated. If any appear, rewrite immediately.
+
+BANNED IN TITLES:
+  × "The Future of X"                      → "How X Is Quietly Rewiring Y"
+  × "The Rise of X"                        → "Why X Took 20 Years to Become Inevitable"
+  × "Hidden Drivers of X"                  → "The Structural Constraint Nobody Prices In"
+  × "What's Changing in X"                 → "The Specific Rule Change That Shifted Everything"
+  × "Unexpected Reason X"                  → "Why X Works Backwards from What the Model Predicts"
+  × "What Surprised Experts"               → name the specific expert and the specific surprise
+  × "The X Revolution"                     → "How X Broke One Industry Without Touching Another"
+  × "Understanding X"                      → never use as a title or header
+  × "Deep Dive Into X"                     → never use as a title or header
+  × "The Power of X"                       → name the specific mechanism that creates the power
+  × "X Explained"                          → name the specific mechanism that confuses people
+  × "Everything You Need to Know About X"  → never use
+  × "X: A Comprehensive Guide"             → never use
+
+BANNED IN SUMMARIES AND EXPLANATIONS:
+  × "In recent years, X has..."            → name the year and the specific event
+  × "X is a rapidly evolving field"        → say what changed last quarter
+  × "As X continues to grow..."            → specify the growth and what triggered it
+  × "In today's world..."                  → never use
+  × "X has become increasingly important"  → state WHY now, not that it's growing
+  × "It is worth noting that..."           → delete; just say the thing
+  × "This highlights the importance of..." → delete; state the implication directly
+  × "X plays a crucial role in..."         → say what causal mechanism it activates
+  × "transformative impact"               → name what specifically transformed
+  × "innovation ecosystem"                → name the specific actors and their relationships
+  × "strategic importance"                → state the strategic logic explicitly
+  × "significant/major/key development"   → quantify it or name the specific consequence
+
+══════════════════════════════════════
+TITLE STYLE LIBRARY — ROTATE MANDATORY
+══════════════════════════════════════
+Every title MUST fit one of these 9 structural patterns.
+Different cards in the same package MUST use different patterns.
+Check the "Recent card titles" list above and avoid repeating the same pattern type.
+
+1. MYTH-BUSTING
+   Structure: Challenge a widely-held assumption directly.
+   Examples:
+     "Why India's Pharma 'Quality Problem' Is Actually a Regulatory Strategy"
+     "The FDA Warning Letter That Wasn't a Warning About Quality"
+     "China Isn't Winning the Semiconductor War — It's Fighting a Different One"
+
+2. CONTRADICTION
+   Structure: Name two things that should be in tension but aren't — or should align but don't.
+   Examples:
+     "Why Pharma Supply Chains Are Strongest Where Regulation Is Weakest"
+     "The More India Exports, the Less It Controls What It Makes"
+     "Cheaper Generics Keep Winning While the Companies Making Them Keep Losing"
+
+3. HIDDEN DEPENDENCY
+   Structure: Expose what an outcome is actually contingent on, which the standard story misses.
+   Examples:
+     "India's $27B Export Machine Runs on a Single US Approval Cycle"
+     "The Billion-Dollar Weakness Hiding Inside India's Export Boom"
+     "Why Pharma Supply Chains Are Quietly Rewiring Around One Regulatory Agency"
+
+4. ECONOMIC LEVERAGE
+   Structure: Surface the specific economic mechanism that creates disproportionate power or return.
+   Examples:
+     "The 3% Margin That Controls 40% of Global Generic Supply"
+     "How a $5 API Becomes a $200 Drug — and Who Captures the Difference"
+     "The Price Floor That Saved India's Generics Industry From Its Own Growth"
+
+5. HISTORICAL COMPARISON
+   Structure: Use a past event to sharpen understanding of the present.
+   Examples:
+     "The 1998 FDA Inspection Blitz That Shaped Everything India Exports Today"
+     "How Japan Lost the Manufacturing Lead India Is Still Trying to Hold"
+     "What the 1970 Patent Act Got Right That Nobody Credits"
+
+6. GEOPOLITICAL TENSION
+   Structure: Surface the political-economic constraint or competition reshaping a domain.
+   Examples:
+     "The US-India Trade Deal That Will Rewrite the Generic Drug Market"
+     "Why China's API Dominance Is a Problem India Can't Solve Through Manufacturing"
+     "The WTO Loophole That Let India Build a Global Drug Empire"
+
+7. OPERATIONAL FAILURE
+   Structure: Use a specific failure as the lens for understanding how a system works.
+   Examples:
+     "The Ranbaxy Collapse That Rewrote How the FDA Inspects Foreign Plants"
+     "What Sun Pharma's Quality Crisis Revealed About the CMO Business Model"
+     "The 12-Month Data Integrity Failure That Cost India Its Top Drug Market Access"
+
+8. STRATEGIC MOAT
+   Structure: Identify the specific structural advantage that incumbents hold (or are losing).
+   Examples:
+     "Why Cipla's 30-Year Generics Lead Is Harder to Replicate Than It Looks"
+     "The Regulatory Barrier That Keeps Biosimilar Profits Inside One Country"
+     "What India's CMOs Have That Contract Manufacturers in China Can't Copy"
+
+9. INVISIBLE INFRASTRUCTURE
+   Structure: Surface the hidden system, platform, or network that quietly enables a visible outcome.
+   Examples:
+     "The Cold Chain Network That Decides Which Vaccines Reach Emerging Markets"
+     "India's Parallel Import Channel: The Distribution Layer Nobody Reports On"
+     "The API Supplier Database That Controls Access to 80% of Global Generics"
 
 ══════════════════════════════════════
 SOURCE SIGNAL EXTRACTION
@@ -399,6 +665,10 @@ SECTION 1 — "insights" array  (EXACTLY {count} CORE LEARNING cards)
   • Titles must be specific and compelling — ≤ 12 words, never generic.
     BAD: "Understanding Neural Networks in Finance"
     GOOD: "Why Neural Networks Overfit — and What Quants Actually Do About It"
+  • Each title MUST use one of the 9 structural patterns from TITLE STYLE LIBRARY above.
+    Different cards in the same package MUST use different pattern types.
+    Compare against the "Recent card titles" list — reject any title structurally similar to a recent one.
+  • Never use banned phrases from BANNED PHRASES section above.
   • summary: 2–3 sentences structured as HOOK → INSIGHT. Not a definition summary.
   • educational_explanation: 4–6 sentences following INSIGHT → EVIDENCE → IMPLICATION.
     Assume the user knows the basics. Skip definitions. Surface what's non-obvious.
@@ -407,35 +677,139 @@ SECTION 1 — "insights" array  (EXACTLY {count} CORE LEARNING cards)
   • Each card must use a DIFFERENT narrative frame.
 
 SECTION 2 — "curiosity_insights" array  (EXACTLY 2 curiosity cards)
-  PURPOSE: Create intellectual rabbit holes. Users should think "I would never have searched this myself."
+  ───────────────────────────────────────────────────────────────────
+  EMOTIONAL TARGET: "Wait… seriously?" — NOT "That's informative."
 
-  TARGET ANGLES (pick the most emotionally charged, story-driven option):
-  • The disaster officially classified as a success — and why insiders knew it wasn't
-  • The founder or researcher who built the thing everyone uses, received no credit, and disappeared
-  • The economic paradox that economists still cannot explain cleanly
-  • The regulation written for one purpose that accidentally created an entire industry
-  • The company that tried the "obvious" solution first — and why it spectacularly failed
-  • The hidden subsidy, political deal, or backroom arrangement that explains a supposedly "market" outcome
-  • The metric everyone tracks that actively makes the thing it measures worse
-  • The scientific consensus that reversed — and the decade of harm before it did
-  • The cross-domain connection that makes an expert in Field A immediately understand Field B
-  • The historical accident so random that without it, the entire industry would not exist
-  • The industry myth so persistent that even practitioners believe it — and the data that kills it
-  • The labor, environmental, or social cost quietly absorbed so the headline numbers look clean
+  If you read the summary and think "that's interesting" → it's not good enough. Find something better.
+  If you read it and think "that can't be right" → you're close.
+  If you read it and feel mild anger, disbelief, or delight → write it.
 
-  RULES for curiosity cards:
+  ── TENSION SCORING (internal only — do NOT include in JSON output) ────────────
+  Before finalising the two cards, score each candidate on these 4 dimensions (0–3 each).
+  Select the two candidates with the highest combined scores. Minimum acceptable: 7/12.
+
+  NOVELTY (0–3)
+    0 = widely known to anyone who read a headline
+    1 = known to domain experts
+    2 = known inside the industry but never framed this way
+    3 = almost nobody has connected these two things
+
+  CONTRADICTION (0–3)
+    0 = confirms common belief
+    1 = slightly unexpected
+    2 = inverts a common belief
+    3 = destroys a firmly held assumption — the reader's mental model has to change
+
+  EMOTIONAL SURPRISE (0–3)
+    0 = neutral
+    1 = mildly interesting
+    2 = genuinely shocking or counterintuitive
+    3 = makes the reader angry, unsettled, or feel like they were misled
+
+  NARRATIVE TENSION (0–3)
+    0 = no protagonist, no stakes
+    1 = clear outcome
+    2 = irony or reversal
+    3 = institutional betrayal, villain/victim structure, or billion-dollar mistake arc
+
+  ── TENSION CATEGORY LIBRARY ─────────────────────────────────────────────────
+  Pick ONE category per card. The two cards MUST use different categories.
+
+  1. HIDDEN FAILURE
+     The outcome everyone calls a success hides unreported damage.
+     Core emotion: betrayal. "We were celebrating the wrong thing."
+     "India's generic drug export record hides a 15-year data falsification wave
+      the FDA systematically missed — and only found when US manufacturers sued."
+
+  2. UNINTENDED CONSEQUENCE
+     Solving problem A quietly created problem B that nobody wanted to admit.
+     Core emotion: irony. "The solution became the new problem."
+     "The 1970 Patent Act that made India a generic drug powerhouse also built its
+      dependence on China for the raw inputs that make those drugs work."
+
+  3. SCANDAL / INSTITUTIONAL FAILURE
+     A trusted institution was either complicit in or blind to the exact harm it was meant to prevent.
+     Core emotion: outrage. "The watchdog was in on it."
+     "The FDA inspector whose approvals enabled $2B of Indian pharma exports was later
+      found to have accepted bribes. Every approval he issued is now legally uncertain."
+
+  4. INVISIBLE DEPENDENCY
+     The entire outcome depends on a hidden input nobody tracks until it fails.
+     Core emotion: vertigo. "This is hanging by a thread I didn't know existed."
+     "80% of the world's paracetamol supply chain runs through one chemical step
+      performed in three factories — all in the same Chinese province."
+
+  5. SURPRISING INCENTIVE
+     The actors operated on a hidden incentive that explains the outcome better than the official story.
+     Core emotion: suspicion. "Of course they weren't doing it for the reason they claimed."
+     "The FDA's aggressive India inspection campaign of 2013–2016 coincided precisely with
+      a lobbying blitz by US generic manufacturers losing market share to Indian imports."
+
+  6. GEOPOLITICAL MANIPULATION
+     A market outcome is not a market outcome — it's a political decision dressed as one.
+     Core emotion: disillusionment. "There is no such thing as a neutral supply chain."
+     "China's API dominance was not an accident of cost efficiency — it was a deliberate
+      state subsidy campaign designed to create pharmaceutical dependency in export markets."
+
+  7. BILLION-DOLLAR MISTAKE
+     An institution made a catastrophically expensive decision that seemed perfectly reasonable at the time.
+     Core emotion: schadenfreude + dread. "How did they not see it coming?"
+     "The US government's 1990s policy to offshore API manufacturing to cut drug costs worked —
+      it reduced production costs by 40% and created the supply fragility that now keeps the
+      Pentagon awake."
+
+  8. INDUSTRY MYTH
+     The thing everyone inside the domain believes is true — demonstrably isn't.
+     Core emotion: vindication or betrayal depending on which side you're on.
+     "The industry assumes FDA warning letters track quality failures. The data suggests they
+      correlate more reliably with US trade policy shifts than with actual inspection findings."
+
+  9. INVERSE CAUSALITY
+     The cause and effect are reversed from what the industry story claims.
+     Core emotion: disorientation. "I was looking at this backwards the whole time."
+     "Indian companies didn't improve quality because of FDA pressure. FDA pressure
+      intensified because Indian companies grew large enough to threaten American generics players."
+
+  ── TITLE RULES ───────────────────────────────────────────────────────────────
+  Titles must make the reader think: "I have to know how this ends."
+
+  TIER 1 (aim for these):
+    Titles containing implicit betrayal: "The [trusted actor] That [betrayed something]"
+    Titles inverting belief: "Why [conventional wisdom] Is [the opposite truth]"
+    Titles naming a figure + consequence: "The [amount/$] [decision] That [specific outcome]"
+
+  FORBIDDEN titles (never use):
+    "The Future of [X]"
+    "Hidden Drivers of [X]"
+    "What's Changing in [X]"
+    "Understanding [X]"
+    "The Rise of [X]"
+    Any title that could appear on a textbook chapter or Wikipedia article
+
+  GOOD titles:
+    "The Chinese Dependency India's Pharma Boom Has Been Hiding for 20 Years"
+    "The FDA Inspector Whose Approvals Turned Out to Be Bribes"
+    "How a Cold War Nuclear Policy Accidentally Created India's Generic Drug Empire"
+    "The Quality Audit System That Made Indian Exports Possible — and Meaningless Simultaneously"
+    "The US Lobbying Campaign That Launched India's FDA Inspection Crisis"
+
+  ── SUMMARY RULES ─────────────────────────────────────────────────────────────
+  First sentence: the specific "Wait… seriously?" fact — name the thing, the actor, the consequence
+  Second sentence: who it affects and what the stakes are
+  Third sentence: tease the payoff — what does this reveal about the system's hidden structure?
+
+  BAD opening: "India's pharmaceutical industry has faced significant challenges in recent years."
+  GOOD opening: "Every major US flu vaccine shortage was determined 6 months earlier in a single
+  factory complex in Ankleshwar, Gujarat — and the FDA had no mechanism to track it."
+
+  ── CARD RULES ────────────────────────────────────────────────────────────────
   • content_type MUST be "curiosity"
-  • Title: story-driven, intriguing — something you'd click at 11pm.
-    NOT: "The History of Quantitative Finance"
-    YES: "The Spreadsheet Error That Almost Collapsed a Sovereign Debt Market"
-  • summary: The hook — 2–3 sentences that set up the surprising discovery.
-    Start with what's strange, counterintuitive, or dramatic. Not background context.
-  • educational_explanation: The payoff — 3–5 sentences revealing what this discovery exposes
-    about {project_name} or the broader domain. Should feel like "oh — that explains everything."
-  • These must feel like DISCOVERIES, not mini-lessons.
-  • Still connected to {project_name} domain, but through a fascinating angle.
-  • Use CURIOSITY articles if available; otherwise synthesise from domain knowledge.
-  • The two curiosity cards must cover different angles (e.g., one failure story + one hidden system).
+  • summary: 2–3 sentences — first sentence IS the "Wait… seriously?" trigger
+  • educational_explanation: 3–5 sentences of payoff — what this reveals about the system's hidden structure
+  • Must feel like a DISCOVERY, not a mini-lesson — the reader should feel they've been let in on something
+  • Still connected to {project_name}, but through a surprising angle
+  • Use CURIOSITY articles if available; otherwise synthesise from domain knowledge
+  • The two cards MUST use different tension categories from the library above
 
 RULES FOR ALL CARDS:
   • source_links ONLY from provided articles (never fabricate URLs)
@@ -447,13 +821,73 @@ RULES FOR ALL CARDS:
       NO:  "WHY THIS MATTERS", "DEEP LEARNING", "KEY INSIGHT", "BACKGROUND", "CONCLUSION"
   • Each card's narrative_frame field must be populated — it determines the card's angle and structure
 
+══════════════════════════════════════
+ACTION DESIGN — MANDATORY
+══════════════════════════════════════
+The "action_item" is NOT homework. It is an investigative mission.
+
+PHILOSOPHY:
+  A good action makes the reader DO something active — not just research more.
+  It should create mild intellectual discomfort, deepen retention, and connect
+  directly to a specific mechanism, company, or claim from TODAY's cards.
+  It must be completable in 10–15 minutes with a web search.
+
+  BAD: "Research the FDA approval process."
+  BAD: "Learn about APIs in pharma."
+  GOOD: "Find the last 3 FDA warning letters issued to Indian manufacturing plants.
+         What was the most common violation type? Compare against today's card on data integrity."
+  GOOD: "Today's feed mentioned API supply concentration in China.
+         Find one generic medicine you've taken and trace which company makes the active ingredient.
+         Is it Chinese-sourced?"
+
+CHOOSE ONE of these 8 action types — pick the one that best fits today's dominant mechanism or insight:
+
+  COMPARE
+    Put two things from today in direct tension. Force a structural difference to surface.
+    Template: "Compare how [X] and [Y] approach [Z from today's cards] — what does the difference reveal?"
+
+  INVESTIGATE
+    Send the reader to find a real case that proves or complicates today's mechanism.
+    Template: "Find one real instance of [specific claim from today's cards] — name the company, date, and outcome."
+
+  FIND CONTRADICTION
+    Force the reader to locate evidence that breaks the narrative from today.
+    Template: "Today's analysis assumes [claim]. Find one market/company/event that contradicts this."
+
+  ANALYZE COMPANY
+    Apply today's mechanism to a specific company named in the cards (or closely related).
+    Template: "Look at [company from today's cards]: does their [metric/strategy/filing] match today's thesis?"
+
+  IDENTIFY REAL-WORLD EXAMPLE
+    Make abstract concrete by finding a living instance of the mechanism.
+    Template: "Find one real example of [mechanism from today] happening right now — name the specific actors."
+
+  PREDICT OUTCOME
+    Anchor forward reasoning in today's mechanism and force a specific forecast.
+    Template: "Given [mechanism from today], what happens to [specific actor] if [condition changes]? State your reasoning."
+
+  CHALLENGE ASSUMPTION
+    Pick the most confident claim from today and find evidence that complicates it.
+    Template: "Today claimed [X]. Find one piece of evidence that suggests this is incomplete, wrong, or overstated."
+
+  MAP DEPENDENCY
+    Build a dependency chain directly from today's content.
+    Template: "From today's content: trace [specific process] step by step. Where are the 2–3 fragile points?"
+
+SELECTION RULES:
+  • The action MUST name something specific from today's package — a company, mechanism, claim, or data point
+  • Beginner level → prefer COMPARE or IDENTIFY; avoid PREDICT and MAP DEPENDENCY
+  • Advanced level → prefer FIND CONTRADICTION, PREDICT, CHALLENGE ASSUMPTION
+  • Intermediate → any type works; vary from prior days if possible
+  • The action should feel like a natural continuation of the most intellectually charged card
+
 Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:
 
 {{
   "package_headline": "Compelling, specific 10-word headline capturing today's editorial theme",
   "content_mix": "e.g. '2 news · 3 educational + 2 curiosity picks'",
-  "learning_thread": "1–2 sentences: how today builds on {prev_display_label or 'Day 1'} and where it leads next",
-  "action_item": "One concrete, startable-today task for a {difficulty}-level learner of {project_name}",
+  "learning_thread": "1–2 sentences: NAME the specific prior insight or mechanism being built on (not generic 'continues from Day X') — then state where today's content advances it and what question it leaves open next.",
+  "action_item": "INVESTIGATIVE MISSION: one specific, startable-in-10-minutes action using one of the 8 types above — references a named mechanism, company, or claim from today's cards — ends with a concrete thing to find, verify, compare, or build.",
   "insights": [
     {{
       "id": "card-1",
@@ -463,7 +897,8 @@ Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:
       "title": "Specific, compelling title ≤ 12 words — never generic",
       "summary": "HOOK: 2–3 sentences — curiosity tension first, then the core insight. No definition openings.",
       "educational_explanation": "INSIGHT → EVIDENCE → IMPLICATION: 4–6 sentences assuming user knows the basics. Surface what's non-obvious, name a specific example, and state what it means for the domain.",
-      "why_it_matters": "1–2 sentences specific to a {difficulty}-level {project_name} learner — strategic or practical consequence.",
+      "why_it_matters": "HIDDEN MECHANISM: 90–120 words. Expose the underlying causal chain, invisible incentive, or system behavior that produces this outcome. Must answer 'What hidden mechanism causes this?' NOT a topic summary. NOT a restatement of the article. See WHY THIS WORKS rules above.",
+      "memory_callback": "ONLY if this card explicitly references a prior session insight — include the callback phrase used (1 sentence). Omit entirely if this card does not reference prior learning.",
       "source_links": [{{"title": "source title", "url": "https://..."}}],
       "difficulty": "{difficulty}",
       "estimated_read_time": "X min"
@@ -477,7 +912,7 @@ Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:
       "title": "Story-driven, intriguing title ≤ 12 words — something you'd click at 11pm",
       "summary": "The hook: 2–3 sentences starting with what's strange, counterintuitive, or dramatic — not background. Make the reader say 'wait, really?'",
       "educational_explanation": "The payoff: 3–5 sentences revealing what this discovery exposes about {project_name}. Should feel like 'oh — that explains everything.'",
-      "why_it_matters": "Why a {project_name} learner would find this genuinely fascinating — specific, not generic.",
+      "why_it_matters": "HIDDEN MECHANISM: 90–120 words. Expose what this discovery reveals about how {project_name} actually works — the structural behavior, hidden incentive, or causal chain the surface story conceals. NOT a restatement of the discovery.",
       "source_links": [{{"title": "...", "url": "..."}}],
       "difficulty": "intermediate",
       "estimated_read_time": "3 min"
@@ -489,7 +924,7 @@ Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:
       "title": "...",
       "summary": "...",
       "educational_explanation": "...",
-      "why_it_matters": "...",
+      "why_it_matters": "HIDDEN MECHANISM: 90–120 words — see rules above.",
       "source_links": [],
       "difficulty": "intermediate",
       "estimated_read_time": "3 min"

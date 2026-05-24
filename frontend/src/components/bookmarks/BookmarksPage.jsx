@@ -495,7 +495,7 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
+export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModal }) {
   const [collections,    setCollections]    = useState([])
   const [bookmarks,      setBookmarks]      = useState([])
   const [activeId,       setActiveId]       = useState(null)
@@ -515,12 +515,13 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose }) {
 
   // Update handler refs every render so the registered render fn always calls current handlers
   useEffect(() => {
+    const run = (fn) => onBeforeModal ? onBeforeModal(fn) : fn()
     subsectionHandlers.current = {
       onSelect: (id) => { setActiveId(id); onSidebarClose?.() },
-      onNew:    () => setShowNewCol(true),
-      onRename: (col) => { setActiveId(col.collection_id); setRenameColDraft(col.name || ''); setShowRenameCol(true) },
-      onEdit:   (col) => setEditingCol(col),
-      onDelete: (col) => setPendingDeleteCol(col),
+      onNew:    () => run(() => setShowNewCol(true)),
+      onRename: (col) => run(() => { setActiveId(col.collection_id); setRenameColDraft(col.name || ''); setShowRenameCol(true) }),
+      onEdit:   (col) => run(() => setEditingCol(col)),
+      onDelete: (col) => run(() => setPendingDeleteCol(col)),
     }
   })
 

@@ -1,8 +1,13 @@
 """
-Research intent detection for conversational chat messages.
+Hybrid intent detection for conversational chat messages.
 
-Detects when a user message contains a research intent (compare, research,
-analyze) and returns the recommended chat mode and structured query metadata.
+Fast-path: regex patterns select mode (compare / research / analyze / normal)
+and provide a baseline format_intent. These are deterministic and low-latency.
+
+Semantic layer: semantic_intent_service scores the message across 9 dimensions
+and produces a blended format directive for multi-intent prompts. This runs
+after the regex fast-path and enriches the result without overriding mode
+selection.
 
 Only activates when the user's selected mode is "normal" — explicit mode
 selections always win.
@@ -173,17 +178,23 @@ def detect_intent(message: str) -> dict:
         "query_type":       "comparison" | "research" | "analysis" | "default",
         "subjects":         list[str],   # filled for comparison intent
         "topic":            str,         # cleaned topic string
+        "format_intent":    str,         # drives response structure
+        "intent_profile":   dict,        # semantic scoring profile
     }
 
     Priority: compare > research > analyze > normal.
+    Regex controls mode routing; semantic layer enriches format_intent and
+    provides blended directive for multi-intent prompts.
     """
     msg = message.strip()
+
+    # ── Regex fast-path (mode selection) ─────────────────────────────────────
 
     # Compare — most specific, check first
     if _matches_any(msg, _COMPARE_PATTERNS):
         subjects = extract_comparison_subjects(msg)
         topic    = " vs ".join(subjects) if subjects else _clean_topic(msg, "compare")
-        return {
+        result = {
             "intent":           "compare",
             "recommended_mode": "web_search",
             "query_type":       "comparison",
@@ -193,9 +204,9 @@ def detect_intent(message: str) -> dict:
         }
 
     # Research (deep knowledge request)
-    if _matches_any(msg, _RESEARCH_PATTERNS):
+    elif _matches_any(msg, _RESEARCH_PATTERNS):
         topic = _clean_topic(msg, "research")
-        return {
+        result = {
             "intent":           "research",
             "recommended_mode": "deep_research",
             "query_type":       "research",
@@ -205,9 +216,9 @@ def detect_intent(message: str) -> dict:
         }
 
     # Analyze (structured analysis request)
-    if _matches_any(msg, _ANALYZE_PATTERNS):
+    elif _matches_any(msg, _ANALYZE_PATTERNS):
         topic = _clean_topic(msg, "analyze")
-        return {
+        result = {
             "intent":           "analyze",
             "recommended_mode": "deep_research",
             "query_type":       "analysis",
@@ -216,14 +227,28 @@ def detect_intent(message: str) -> dict:
             "format_intent":    _detect_format_intent(msg, "analyze"),
         }
 
-    return {
-        "intent":           "normal",
-        "recommended_mode": "normal",
-        "query_type":       "default",
-        "subjects":         [],
-        "topic":            "",
-        "format_intent":    _detect_format_intent(msg, "normal"),
-    }
+    else:
+        result = {
+            "intent":           "normal",
+            "recommended_mode": "normal",
+            "query_type":       "default",
+            "subjects":         [],
+            "topic":            "",
+            "format_intent":    _detect_format_intent(msg, "normal"),
+        }
+
+    # ── Semantic scoring layer ────────────────────────────────────────────────
+    # Scores the message across 9 dimensions; produces blended format directive
+    # for multi-intent prompts. Does NOT override mode routing above.
+    from .semantic_intent_service import score_intents
+    intent_profile = score_intents(msg)
+
+    # When regex produced no format signal ("default"), let semantic primary win
+    if result["format_intent"] == "default" and intent_profile["primary_intent"] != "default":
+        result["format_intent"] = intent_profile["primary_intent"]
+
+    result["intent_profile"] = intent_profile
+    return result
 
 
 def extract_comparison_subjects(message: str) -> list[str]:

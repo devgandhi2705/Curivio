@@ -452,6 +452,36 @@ CREATE INDEX IF NOT EXISTS idx_card_notes_insight
     ON card_notes (project_id, insight_id);
 """
 
+CREATE_CONVERSATION_KNOWLEDGE_STATE = """
+CREATE TABLE IF NOT EXISTS conversation_knowledge_state (
+    session_id TEXT    PRIMARY KEY,
+    state_json TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_PROJECT_LEARNING_MEMORY = """
+CREATE TABLE IF NOT EXISTS project_learning_memory (
+    project_id         TEXT    NOT NULL PRIMARY KEY
+                               REFERENCES learning_projects(project_id) ON DELETE CASCADE,
+    covered_concepts   TEXT    NOT NULL DEFAULT '[]',
+    covered_mechanisms TEXT    NOT NULL DEFAULT '[]',
+    covered_industries TEXT    NOT NULL DEFAULT '[]',
+    covered_examples   TEXT    NOT NULL DEFAULT '[]',
+    covered_geographies TEXT   NOT NULL DEFAULT '[]',
+    covered_narratives TEXT    NOT NULL DEFAULT '[]',
+    curiosity_angles   TEXT    NOT NULL DEFAULT '[]',
+    progression_stage  TEXT    NOT NULL DEFAULT 'foundation',
+    days_at_stage      INTEGER NOT NULL DEFAULT 0,
+    updated_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_PROJECT_LEARNING_MEMORY_IDX = """
+CREATE INDEX IF NOT EXISTS idx_project_learning_memory_project
+    ON project_learning_memory (project_id);
+"""
+
 # Add conversation_mode column to chat_sessions (tracks layman / normal session type)
 MIGRATE_ADD_CHAT_SESSION_CONVERSATION_MODE = (
     "ALTER TABLE chat_sessions ADD COLUMN conversation_mode TEXT NOT NULL DEFAULT 'normal'"
@@ -502,6 +532,13 @@ MIGRATE_ADD_USER_ID_PRIOR_RECS = (
     "ALTER TABLE prior_recommendations ADD COLUMN user_id TEXT REFERENCES users(user_id)"
 )
 
+MIGRATE_ADD_TITLE_PATTERNS_USED = (
+    "ALTER TABLE project_learning_memory ADD COLUMN title_patterns_used TEXT NOT NULL DEFAULT '[]'"
+)
+MIGRATE_ADD_OPENING_HOOKS_USED = (
+    "ALTER TABLE project_learning_memory ADD COLUMN opening_hooks_used TEXT NOT NULL DEFAULT '[]'"
+)
+
 MIGRATIONS = [
     MIGRATE_ADD_PREFERRED_SOURCES,
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
@@ -514,6 +551,8 @@ MIGRATIONS = [
     MIGRATE_ADD_USER_ID_PREFERENCES,
     MIGRATE_ADD_USER_ID_CONCEPT_MEMORY,
     MIGRATE_ADD_USER_ID_PRIOR_RECS,
+    MIGRATE_ADD_TITLE_PATTERNS_USED,
+    MIGRATE_ADD_OPENING_HOOKS_USED,
 ]
 
 ALL_TABLES = [
@@ -565,4 +604,7 @@ ALL_TABLES = [
     CREATE_CARD_NOTES,
     CREATE_CARD_NOTES_IDX,
     CREATE_PASSWORD_RESET_TOKENS,
+    CREATE_CONVERSATION_KNOWLEDGE_STATE,
+    CREATE_PROJECT_LEARNING_MEMORY,
+    CREATE_PROJECT_LEARNING_MEMORY_IDX,
 ]

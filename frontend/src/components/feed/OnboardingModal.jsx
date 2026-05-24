@@ -134,7 +134,7 @@ const DIFFICULTY = [
     id: "beginner", label: "Beginner", tag: "New to this domain",
     detail: "Foundational vocabulary and mental models — no assumed expertise.",
     icon: (
-      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+      <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M9.664 1.319a.75.75 0 0 1 .672 0 41.059 41.059 0 0 1 8.198 5.424.75.75 0 0 1-.254 1.285 31.372 31.372 0 0 0-7.86 3.83.75.75 0 0 1-.84 0 31.508 31.508 0 0 0-2.08-1.287V9.394c0-.244.116-.463.315-.6a32.442 32.442 0 0 1 3.08-1.9l-5.95 3.03-.034.018A4.152 4.152 0 0 0 2.003 14c0 .494.08.972.229 1.417a.75.75 0 0 1-1.428.462 5.648 5.648 0 0 1-.301-1.879c0-2.239 1.317-4.18 3.229-5.066L9.664 1.319Z" clipRule="evenodd" />
         <path d="M9.161 17.478a31.617 31.617 0 0 1-5.813-3.637A4.126 4.126 0 0 0 2 17.25c0 .828.252 1.599.685 2.236A17.585 17.585 0 0 0 9.25 21.5a17.585 17.585 0 0 0 6.565-2.014 4.126 4.126 0 0 0-1.348-3.41 31.503 31.503 0 0 1-5.306 3.442Z" />
       </svg>
@@ -144,7 +144,7 @@ const DIFFICULTY = [
     id: "intermediate", label: "Intermediate", tag: "Some background knowledge",
     detail: "Dives into mechanisms, tradeoffs, and real-world applications.",
     icon: (
-      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+      <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 20 20" fill="currentColor">
         <path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.238a1 1 0 0 0 0 1.962l1.192.238a1 1 0 0 1 .785.785l.238 1.192a1 1 0 0 0 1.962 0l.238-1.192a1 1 0 0 1 .785-.785l1.192-.238a1 1 0 0 0 0-1.962l-1.192-.238a1 1 0 0 1-.785-.785l-.238-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684Z" />
         <path d="M13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.632.633l-.551.183a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.633l.183.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .632-.633l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.632l-.183-.551Z" />
       </svg>
@@ -154,7 +154,7 @@ const DIFFICULTY = [
     id: "advanced", label: "Advanced", tag: "Deep domain expertise",
     detail: "Latest research, nuanced analysis, practitioner-level context.",
     icon: (
-      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+      <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 20 20" fill="currentColor">
         <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
         <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
       </svg>
@@ -190,35 +190,35 @@ function dominantColor(selectedIds, domainId) {
   return group?.color || "blue"
 }
 
-// ── Step indicator ────────────────────────────────────────────────────────────
+// ── Step indicator — compact on mobile, full on desktop ───────────────────────
 
 function StepDots({ step, onBack }) {
   const labels = ["Domain", "Topics", "Launch"]
   return (
-    <div className="flex items-center gap-0">
+    <div className="flex items-center">
       {labels.map((label, i) => (
         <div key={i} className="flex items-center">
           <div
-            className={`flex items-center gap-2 ${i < step ? "cursor-pointer" : ""}`}
+            className={`flex items-center gap-1 sm:gap-2 ${i < step ? "cursor-pointer" : ""}`}
             onClick={() => i < step && onBack(i)}
           >
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all ${
+            <div className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] font-bold transition-all flex-shrink-0 ${
               i < step   ? "bg-blue-600 text-white" :
               i === step ? "bg-blue-500 text-white ring-2 ring-blue-400/25" :
                            "bg-slate-800 text-slate-600"
             }`}>
               {i < step ? (
-                <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg className="w-2.5 h-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M2 6l3 3 5-5" />
                 </svg>
               ) : i + 1}
             </div>
-            <span className={`text-xs font-medium ${i === step ? "text-slate-300" : i < step ? "text-slate-500" : "text-slate-700"}`}>
+            <span className={`text-[10px] sm:text-xs font-medium ${i === step ? "text-slate-300" : i < step ? "text-slate-500" : "text-slate-700"}`}>
               {label}
             </span>
           </div>
           {i < labels.length - 1 && (
-            <div className={`w-3 sm:w-6 mx-1 sm:mx-2 h-px rounded-full ${i < step ? "bg-blue-600" : "bg-slate-800"}`} />
+            <div className={`w-2 sm:w-6 mx-1 sm:mx-2 h-px rounded-full ${i < step ? "bg-blue-600" : "bg-slate-800"}`} />
           )}
         </div>
       ))}
@@ -230,9 +230,9 @@ function StepDots({ step, onBack }) {
 
 export default function OnboardingModal({ onCreate, creating, userId }) {
   const [step,            setStep]            = useState(0)
-  const [domainId,        setDomainId]        = useState(null)      // selected domain id or "custom"
+  const [domainId,        setDomainId]        = useState(null)
   const [customDomainName, setCustomDomainName] = useState("")
-  const [selected,        setSelected]        = useState(new Set()) // topic IDs
+  const [selected,        setSelected]        = useState(new Set())
   const [customTopics,    setCustomTopics]    = useState([])
   const [customInput,     setCustomInput]     = useState("")
   const [difficulty,      setDifficulty]      = useState("intermediate")
@@ -307,44 +307,52 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
   const canProceedFromTopics = selected.size > 0 || customTopics.length > 0
 
   return (
+    // Mobile: fullscreen. Desktop: centered dialog with backdrop.
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      className="fixed inset-0 z-50 md:flex md:items-center md:justify-center md:px-4"
       style={{ background: "rgba(2,6,23,0.92)", backdropFilter: "blur(10px)" }}
     >
-      <div className="w-full max-w-2xl bg-slate-900 border border-slate-700/60 rounded-3xl shadow-2xl shadow-black/70 flex flex-col" style={{ maxHeight: "90vh" }}>
+      <div className="
+        w-full h-full flex flex-col
+        md:h-auto md:max-h-[90vh] md:max-w-2xl
+        bg-slate-900
+        md:border md:border-slate-700/60 md:rounded-3xl md:shadow-2xl md:shadow-black/70
+      ">
 
         {/* ── Header ── */}
-        <div className="px-5 sm:px-8 pt-6 sm:pt-7 pb-5 flex-shrink-0">
-          <div className="flex items-center gap-2 mb-6">
-            <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-900/40">
-              <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
+        <div className="px-4 sm:px-8 pt-5 sm:pt-7 pb-4 sm:pb-5 flex-shrink-0">
+          {/* Branding */}
+          <div className="flex items-center gap-2 mb-4 sm:mb-6">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-900/40">
+              <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
               </svg>
             </div>
-            <span className="text-[13px] font-semibold text-slate-400 tracking-tight">Curivio</span>
+            <span className="text-[12px] sm:text-[13px] font-semibold text-slate-400 tracking-tight">Curivio</span>
           </div>
 
-          <div className="mb-5">
+          {/* Step heading */}
+          <div className="mb-4 sm:mb-5">
             {step === 0 && (
               <>
-                <h1 className="text-[18px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">Let's build your first project</h1>
-                <p className="text-sm text-slate-500">Choose a domain to focus on. A single focused domain makes for the sharpest daily brief.</p>
+                <h1 className="text-[16px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">Let's build your first project</h1>
+                <p className="text-[13px] sm:text-sm text-slate-500 leading-snug">Choose a domain to focus on. A single focused domain makes for the sharpest daily brief.</p>
               </>
             )}
             {step === 1 && (
               <>
-                <h1 className="text-[18px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">
-                  {isCustom ? "What topics do you want to learn?" : `Which ${domainGroup?.label} topics interest you?`}
+                <h1 className="text-[16px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">
+                  {isCustom ? "What topics do you want to learn?" : `Which ${domainGroup?.label} topics?`}
                 </h1>
-                <p className="text-sm text-slate-500">
-                  {isCustom ? "Add your own keywords — we'll build your feed around them." : "Pick one or more — or add your own. We'll tailor your daily brief around them."}
+                <p className="text-[13px] sm:text-sm text-slate-500 leading-snug">
+                  {isCustom ? "Add your own keywords — we'll build your feed around them." : "Pick one or more. We'll tailor your daily brief around them."}
                 </p>
               </>
             )}
             {step === 2 && (
               <>
-                <h1 className="text-[18px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">Almost there — set your level</h1>
-                <p className="text-sm text-slate-500">This shapes how deep and technical your daily cards get.</p>
+                <h1 className="text-[16px] sm:text-[22px] font-bold text-slate-100 leading-tight mb-1">Almost there — set your level</h1>
+                <p className="text-[13px] sm:text-sm text-slate-500 leading-snug">This shapes how deep and technical your daily cards get.</p>
               </>
             )}
           </div>
@@ -352,41 +360,43 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
           <StepDots step={step} onBack={goToStep} />
         </div>
 
-        {/* ── Body ── */}
-        <div className="flex-1 overflow-y-auto px-5 sm:px-8 pb-2 min-h-0">
+        {/* ── Scrollable body ── */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-8 pb-2 min-h-0">
 
           {/* Step 0 — Domain */}
           {step === 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 pb-2">
               {TOPIC_GROUPS.map(group => {
-                const c       = CHIP[group.color]
-                const iconBg  = ICON_BG[group.color]
-                const isOn    = domainId === group.id
+                const c      = CHIP[group.color]
+                const iconBg = ICON_BG[group.color]
+                const isOn   = domainId === group.id
                 return (
                   <button
                     key={group.id}
                     type="button"
                     onClick={() => selectDomain(group.id)}
-                    className={`flex items-start gap-3 px-4 py-4 rounded-2xl border text-left transition-all ${
+                    className={`flex items-center gap-3 px-3.5 sm:px-4 py-3 sm:py-4 rounded-2xl border text-left transition-all ${
                       isOn
                         ? `${c.card} border-2 ${c.ring.replace("ring-", "border-").replace("/30", "/60")} ring-1 ${c.ring}`
-                        : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60"
+                        : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60 active:bg-slate-800/80"
                     }`}
                   >
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isOn ? iconBg : "bg-slate-800 text-slate-500"}`}>
                       {group.icon}
                     </div>
-                    <div className="min-w-0">
-                      <p className={`text-sm font-semibold mb-0.5 ${isOn ? "text-slate-100" : "text-slate-300"}`}>{group.label}</p>
-                      <p className="text-[11px] text-slate-500 leading-snug">{group.description}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-[13px] sm:text-sm font-semibold mb-0.5 ${isOn ? "text-slate-100" : "text-slate-300"}`}>{group.label}</p>
+                      <p className="text-[11px] text-slate-500 leading-snug truncate">{group.description}</p>
                     </div>
-                    {isOn && (
-                      <div className={`ml-auto flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center ${c.dot}`}>
+                    <div className={`flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${
+                      isOn ? `border-transparent ${c.dot}` : "border-slate-700"
+                    }`}>
+                      {isOn && (
                         <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M2 6l3 3 5-5" />
                         </svg>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </button>
                 )
               })}
@@ -398,10 +408,10 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                   <button
                     type="button"
                     onClick={() => selectDomain(CUSTOM_DOMAIN_ID)}
-                    className={`flex items-start gap-3 px-4 py-4 rounded-2xl border text-left transition-all col-span-2 ${
+                    className={`flex items-start gap-3 px-3.5 sm:px-4 py-3 sm:py-4 rounded-2xl border text-left transition-all sm:col-span-2 ${
                       isOn
                         ? "bg-slate-700/30 border-slate-500/60 ring-1 ring-slate-500/30"
-                        : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60"
+                        : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60 active:bg-slate-800/80"
                     }`}
                   >
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isOn ? "bg-slate-600/60 text-slate-300" : "bg-slate-800 text-slate-500"}`}>
@@ -410,7 +420,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                       </svg>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-semibold mb-0.5 ${isOn ? "text-slate-100" : "text-slate-300"}`}>Your Own Domain</p>
+                      <p className={`text-[13px] sm:text-sm font-semibold mb-0.5 ${isOn ? "text-slate-100" : "text-slate-300"}`}>Your Own Domain</p>
                       <p className="text-[11px] text-slate-500 leading-snug">Define your own learning area with custom keywords and topics</p>
                       {isOn && (
                         <input
@@ -420,12 +430,12 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                           onClick={e => e.stopPropagation()}
                           placeholder="e.g. Sports Analytics, Fashion Tech…"
                           maxLength={50}
-                          className="mt-2 w-full px-3 py-1.5 rounded-lg text-xs bg-slate-800/70 border border-slate-600/60 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500"
+                          className="mt-2.5 w-full px-3 py-2 rounded-lg text-xs bg-slate-800/70 border border-slate-600/60 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500"
                         />
                       )}
                     </div>
                     {isOn && (
-                      <div className="ml-auto flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center bg-slate-500 mt-0.5">
+                      <div className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center bg-slate-500 mt-0.5">
                         <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M2 6l3 3 5-5" />
                         </svg>
@@ -451,7 +461,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                         key={topic.id}
                         type="button"
                         onClick={() => toggleTopic(topic.id)}
-                        className={`px-4 py-2 rounded-xl text-[13px] font-medium border transition-all ${
+                        className={`px-3.5 sm:px-4 py-2 rounded-xl text-[13px] font-medium border transition-all active:scale-95 ${
                           isOn ? c.sel : `bg-slate-800/50 border-slate-700/50 text-slate-400 ${c.unsel}`
                         }`}
                       >
@@ -463,7 +473,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
               )}
 
               {/* Custom keywords */}
-              <div className={!isCustom ? "pt-2 border-t border-slate-800/60" : ""}>
+              <div className={!isCustom ? "pt-3 border-t border-slate-800/60" : ""}>
                 {!isCustom && (
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2.5">Add your own keywords</p>
                 )}
@@ -473,7 +483,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                       key={topic.id}
                       type="button"
                       onClick={() => toggleTopic(topic.id)}
-                      className={`px-4 py-2 rounded-xl text-[13px] font-medium border transition-all ${
+                      className={`px-3.5 sm:px-4 py-2 rounded-xl text-[13px] font-medium border transition-all active:scale-95 ${
                         selected.has(topic.id)
                           ? CHIP.slate.sel
                           : `bg-slate-800/50 border-slate-700/50 text-slate-400 ${CHIP.slate.unsel}`
@@ -482,7 +492,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                       {topic.label}
                     </button>
                   ))}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
                     <input
                       type="text"
                       value={customInput}
@@ -490,13 +500,13 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
                       onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addCustomTopic() } }}
                       placeholder={isCustom ? "Type a topic or keyword…" : "Add your own…"}
                       maxLength={40}
-                      className="px-3.5 py-2 rounded-xl text-[13px] bg-slate-800/50 border border-slate-700/50 text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-500 w-48"
+                      className="flex-1 sm:flex-none sm:w-44 px-3.5 py-2 rounded-xl text-[13px] bg-slate-800/50 border border-slate-700/50 text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-500 min-w-0"
                     />
                     {customInput.trim() && (
                       <button
                         type="button"
                         onClick={addCustomTopic}
-                        className="px-3 py-2 rounded-xl text-[13px] font-semibold bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 transition-colors"
+                        className="px-3 py-2 rounded-xl text-[13px] font-semibold bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 transition-colors flex-shrink-0"
                       >
                         +
                       </button>
@@ -513,33 +523,34 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
           {/* Step 2 — Level + Name + Color */}
           {step === 2 && (
-            <div className="space-y-5 pb-2">
+            <div className="space-y-4 sm:space-y-5 pb-2">
+
               {/* Difficulty */}
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {DIFFICULTY.map(opt => (
                   <button
                     key={opt.id}
                     type="button"
                     onClick={() => setDifficulty(opt.id)}
-                    className={`w-full flex items-start gap-4 px-5 py-4 rounded-2xl border text-left transition-all ${
+                    className={`w-full flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-3 sm:py-4 rounded-2xl border text-left transition-all active:scale-[0.99] ${
                       difficulty === opt.id
                         ? "bg-slate-800 border-slate-500/70 ring-1 ring-blue-500/25"
                         : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60"
                     }`}
                   >
-                    <div className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center mt-0.5 transition-all ${
+                    <div className={`flex-shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-all ${
                       difficulty === opt.id ? "bg-blue-500/20 text-blue-400" : "bg-slate-800 text-slate-500"
                     }`}>
                       {opt.icon}
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-baseline gap-2 mb-1">
-                        <span className="font-semibold text-slate-100 text-sm">{opt.label}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-1.5 sm:gap-2 flex-wrap">
+                        <span className="font-semibold text-slate-100 text-[13px] sm:text-sm">{opt.label}</span>
                         <span className="text-[11px] text-slate-500">{opt.tag}</span>
                       </div>
-                      <p className="text-[12px] text-slate-500 leading-relaxed">{opt.detail}</p>
+                      <p className="text-[11px] sm:text-[12px] text-slate-500 leading-relaxed mt-0.5 line-clamp-1 sm:line-clamp-none">{opt.detail}</p>
                     </div>
-                    <div className={`flex-shrink-0 w-4 h-4 rounded-full border-2 mt-1 flex items-center justify-center transition-all ${
+                    <div className={`flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${
                       difficulty === opt.id ? "border-blue-500 bg-blue-500" : "border-slate-600"
                     }`}>
                       {difficulty === opt.id && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
@@ -550,28 +561,28 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
               {/* Daily Learning Intensity */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-2">Daily Learning Intensity</label>
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-400 mb-2">Daily Learning Intensity</label>
                 <div className="grid grid-cols-3 gap-2">
                   {INTENSITY.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => setIntensity(opt.id)}
-                      className={`flex flex-col px-4 py-3 rounded-xl border text-left transition-all ${
+                      className={`flex flex-col px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl border text-left transition-all active:scale-95 ${
                         intensity === opt.id
                           ? "bg-slate-800 border-slate-500/70 ring-1 ring-blue-500/25"
                           : "bg-slate-800/40 border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/60"
                       }`}
                     >
-                      <span className={`text-sm font-semibold mb-0.5 ${intensity === opt.id ? "text-slate-100" : "text-slate-400"}`}>{opt.label}</span>
-                      <span className="text-[11px] text-slate-500 leading-snug">{opt.sub}</span>
+                      <span className={`text-[12px] sm:text-sm font-semibold mb-0.5 ${intensity === opt.id ? "text-slate-100" : "text-slate-400"}`}>{opt.label}</span>
+                      <span className="text-[10px] sm:text-[11px] text-slate-500 leading-snug">{opt.sub}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
               {/* Summary chip strip */}
-              <div className="px-4 py-3 rounded-2xl bg-slate-800/40 border border-slate-700/40">
+              <div className="px-3.5 sm:px-4 py-3 rounded-2xl bg-slate-800/40 border border-slate-700/40">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-2">Your selections</p>
                 <div className="flex flex-wrap gap-1.5">
                   {[...selected].map(id => {
@@ -589,7 +600,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
               {/* Project name */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1.5">Project name</label>
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1.5">Project name</label>
                 <input
                   value={name}
                   onChange={e => setName(e.target.value)}
@@ -601,14 +612,14 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
               {/* Color */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-2">Accent color</label>
+                <label className="block text-[11px] sm:text-xs font-medium text-slate-400 mb-2">Accent color</label>
                 <div className="flex gap-3">
                   {COLORS.map(c => (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => setColor(c.id)}
-                      className={`w-8 h-8 rounded-full ${c.cls} transition-all ${
+                      className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full ${c.cls} transition-all ${
                         color === c.id
                           ? "ring-2 ring-white/60 ring-offset-2 ring-offset-slate-900 scale-110"
                           : "opacity-40 hover:opacity-70"
@@ -619,11 +630,11 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
               </div>
 
               {/* What happens next */}
-              <div className="flex items-start gap-3 px-4 py-3.5 rounded-2xl bg-blue-950/30 border border-blue-900/40">
-                <svg className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="currentColor">
+              <div className="flex items-start gap-2.5 sm:gap-3 px-3.5 sm:px-4 py-3 rounded-2xl bg-blue-950/30 border border-blue-900/40">
+                <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM6.5 5.75a.75.75 0 0 0-1.5 0v.5c0 .414.336.75.75.75H6v3h-.25a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 0-1.5H8V5.75a.75.75 0 0 0-.75-.75H6.5ZM8 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
                 </svg>
-                <p className="text-[12px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] sm:text-[12px] text-slate-400 leading-relaxed">
                   We'll immediately generate your <span className="text-slate-200 font-medium">Day 1 brief</span> — tailored news, deep-dives, and concepts for your chosen topics.
                 </p>
               </div>
@@ -632,24 +643,29 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
         </div>
 
-        {/* ── Footer ── */}
-        <div className="px-5 sm:px-8 py-5 border-t border-slate-800/70 flex-shrink-0 flex items-center justify-between gap-4">
+        {/* ── Footer — fixed at bottom, lightweight on mobile ── */}
+        <div className="
+          px-4 sm:px-8 py-3 sm:py-5
+          border-t border-slate-800/70
+          flex-shrink-0 flex items-center justify-between gap-3
+          bg-slate-900/95 backdrop-blur-sm
+        ">
           <button
             type="button"
             onClick={() => step > 0 && setStep(step - 1)}
-            className={`text-sm text-slate-500 hover:text-slate-300 transition-colors ${step === 0 ? "invisible pointer-events-none" : ""}`}
+            className={`text-[13px] sm:text-sm text-slate-500 hover:text-slate-300 transition-colors ${step === 0 ? "invisible pointer-events-none" : ""}`}
           >
             ← Back
           </button>
 
           {step === 0 && (
-            <div className="flex items-center gap-3">
-              {!domainId && <span className="text-[11px] text-slate-600">Pick a domain to continue</span>}
+            <div className="flex items-center gap-2.5">
+              {!domainId && <span className="text-[11px] text-slate-600 hidden sm:block">Pick a domain to continue</span>}
               <button
                 type="button"
                 onClick={() => setStep(1)}
                 disabled={!domainId}
-                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+                className="px-5 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] sm:text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
               >
                 Continue →
               </button>
@@ -657,15 +673,17 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
           )}
 
           {step === 1 && (
-            <div className="flex items-center gap-3">
-              {!canProceedFromTopics && <span className="text-[11px] text-slate-600">Select at least one topic</span>}
+            <div className="flex items-center gap-2.5">
+              {!canProceedFromTopics && <span className="text-[11px] text-slate-600 hidden sm:block">Select at least one topic</span>}
               <button
                 type="button"
                 onClick={() => goToStep(2)}
                 disabled={!canProceedFromTopics}
-                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+                className="px-5 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] sm:text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
               >
-                {canProceedFromTopics ? `Continue with ${selected.size + customTopics.filter(t => !selected.has(t.id) ? false : true).length} topic${selected.size !== 1 ? "s" : ""} →` : "Continue →"}
+                {canProceedFromTopics
+                  ? `Continue (${selected.size + customTopics.length}) →`
+                  : "Continue →"}
               </button>
             </div>
           )}
@@ -675,7 +693,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
               type="button"
               onClick={handleLaunch}
               disabled={creating || !(name.trim() || suggestedName)}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-5 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] sm:text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
             >
               {creating ? (
                 <>

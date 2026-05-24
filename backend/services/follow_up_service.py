@@ -30,11 +30,6 @@ logger = logging.getLogger(__name__)
 # Maximum items returned per recommendation category.
 _MAX_PER_CATEGORY = 3
 
-# Reasons injected per category (template strings).
-_REASON_NEXT       = "Builds directly on {topic} — the natural next question to explore."
-_REASON_PREREQ     = "The foundational idea behind {topic} — understanding this unlocks significantly more."
-_REASON_ADVANCED   = "The deeper layer beneath {topic} — where the interesting complexity lives."
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
@@ -88,9 +83,9 @@ def get_recommendations(
     # Apply learner-level caps and suppression
     next_limit, prereq_limit, adv_limit = _limits_for_level(learner_level)
 
-    next_topics     = _build_items(related[:next_limit],   _REASON_NEXT,     topic)
-    prerequisites   = _build_items(prereqs[:prereq_limit], _REASON_PREREQ,   topic)
-    advanced_topics = _build_items(advanced[:adv_limit],   _REASON_ADVANCED, topic)
+    next_topics     = _build_items(related[:next_limit],   "next",     topic)
+    prerequisites   = _build_items(prereqs[:prereq_limit], "prereq",   topic)
+    advanced_topics = _build_items(advanced[:adv_limit],   "advanced", topic)
 
     if not next_topics and not prerequisites and not advanced_topics:
         return empty
@@ -141,9 +136,37 @@ def _limits_for_level(level: str) -> tuple[int, int, int]:
     return 3, 1, 2
 
 
-def _build_items(topics: list[str], reason_template: str, base_topic: str) -> list[dict]:
-    reason = reason_template.format(topic=base_topic)
-    return [{"topic": t, "reason": reason} for t in topics]
+_REASON_TEMPLATES: dict[str, list[str]] = {
+    "next": [
+        "What specifically does {item} change about how {topic} works?",
+        "How does {item} extend or complicate the mechanism behind {topic}?",
+        "Where does {item} fit in the causal chain that {topic} sits in?",
+    ],
+    "prereq": [
+        "Without {item}, what part of {topic} stops making sense?",
+        "How does {item} constrain the space of possible outcomes in {topic}?",
+        "{item} is the structural foundation — which part of {topic} depends on it most?",
+    ],
+    "advanced": [
+        "What does {item} reveal about {topic} that the standard framing misses?",
+        "At the {item} level, which assumption behind {topic} starts to break?",
+        "How does {item} change the strategic calculus of {topic}?",
+    ],
+}
+
+# Simple rotation index per reason type, shared across calls in one process
+_reason_rotation: dict[str, int] = {}
+
+
+def _build_items(topics: list[str], category: str, base_topic: str) -> list[dict]:
+    templates = _REASON_TEMPLATES.get(category, _REASON_TEMPLATES["next"])
+    items = []
+    for t in topics:
+        idx     = _reason_rotation.get(category, 0) % len(templates)
+        reason  = templates[idx].format(topic=base_topic, item=t)
+        _reason_rotation[category] = idx + 1
+        items.append({"topic": t, "reason": reason})
+    return items
 
 
 def _empty_result(topic: str | None) -> dict:

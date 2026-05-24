@@ -358,11 +358,16 @@ export default function InsightCard({
         </div>
       )}
 
-      {/* Why it matters */}
+      {/* Hidden mechanism — expert annotation */}
       {card.why_it_matters && (
-        <div className="mx-3 mb-2 md:mx-4 md:mb-3 px-3 py-2 md:py-2.5 bg-slate-800/[0.28] md:bg-slate-800/50 rounded-lg md:rounded-xl border-0 md:border md:border-slate-700/40">
-          <p className="text-[10px] font-medium text-slate-600 uppercase tracking-wide mb-1">Why it matters</p>
-          <p className="text-[12px] md:text-xs text-slate-400 md:text-slate-300 leading-relaxed">{card.why_it_matters}</p>
+        <div className="mx-3 mb-2.5 md:mx-4 md:mb-3 flex gap-2.5">
+          <div className="w-px flex-shrink-0 self-stretch rounded-full bg-indigo-500/35" />
+          <div className="min-w-0 py-0.5">
+            <p className="text-[9px] font-semibold uppercase tracking-widest text-indigo-400/55 mb-1.5">
+              Hidden Mechanism
+            </p>
+            <p className="text-[11px] text-slate-500 leading-relaxed">{card.why_it_matters}</p>
+          </div>
         </div>
       )}
 

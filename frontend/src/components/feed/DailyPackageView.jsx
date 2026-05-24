@@ -737,16 +737,14 @@ export default function DailyPackageView({
 
   return selected ? (
     <>
-      {packages.length > 1 && (
-        <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50">
-          <DayDropdown
-            packages={packages}
-            displayLabels={displayLabels}
-            selectedId={selectedId}
-            onSelect={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
-          />
-        </div>
-      )}
+      <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50">
+        <DayDropdown
+          packages={packages}
+          displayLabels={displayLabels}
+          selectedId={selectedId}
+          onSelect={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
+        />
+      </div>
       <PackageContent
         pkg={selected}
         project={project}
