@@ -29,7 +29,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..utils.db import get_connection
-from ..prompts.topic_expansion_prompt import TOPIC_EXPANSION_PROMPT
+from ..prompts.topic_expansion_prompt import build_topic_expansion_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def list_expansions(limit: int = 20) -> list[dict]:
 def _generate_expansion(topic: str) -> dict:
     from .grok_service import ask_grok  # deferred to avoid circular import
 
-    prompt = TOPIC_EXPANSION_PROMPT.format(topic=topic.strip())
+    prompt = build_topic_expansion_prompt(topic)
     raw    = ask_grok(prompt)
     result = _parse_json_response(raw)
 

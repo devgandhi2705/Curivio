@@ -32,7 +32,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..utils.db import get_connection
-from ..prompts.learning_path_prompt import LEARNING_PATH_PROMPT
+from ..prompts.learning_path_prompt import build_learning_path_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def _generate_learning_path(topic: str) -> dict:
     learning_stage        = get_learning_stage()
     difficulty_preference = get_overall_difficulty_preference() or "no preference"
 
-    prompt = LEARNING_PATH_PROMPT.format(
+    prompt = build_learning_path_prompt(
         topic=topic.strip(),
         learning_stage=learning_stage,
         difficulty_preference=difficulty_preference,

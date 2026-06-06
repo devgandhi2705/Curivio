@@ -628,19 +628,62 @@ def generate_project_insight(project_id: str) -> dict:
     except Exception:
         logger.warning("[project_service] memory references build failed for %s (non-fatal)", project_id)
 
-    # ── Retrieve articles — two separate pipelines ────────────────────────────
-    core_articles = _fetch_core_articles(
-        project["name"], keywords, suggested_next_topics,
-        preferred_sources=preferred_sources,
-    )
-    curiosity_articles = _fetch_curiosity_articles(project["name"], keywords)
+    # ── Phase 4.7: Load quality feedback from previous evaluation ────────────
+    quality_feedback: str | None = None
+    try:
+        from .learning_evaluator import get_quality_feedback_block
+        quality_feedback = get_quality_feedback_block(project_id) or None
+    except Exception:
+        logger.debug("[project_service] quality feedback load failed (non-fatal)")
 
-    logger.info(
-        "[project_service] %s day=%d core=%d curiosity=%d next_topics=%s",
-        project_id, day_number,
-        len(core_articles), len(curiosity_articles),
-        suggested_next_topics[:2],
-    )
+    # ── Phase 4.5: Feed Intelligence Layer ───────────────────────────────────
+    # Determine what to learn next, then retrieve articles that support it.
+    # Falls back to keyword-based retrieval when the knowledge graph is empty.
+    _stage = learning_memory.get("progression_stage", "foundation") if learning_memory else "foundation"
+    intelligence_plan = None
+    intelligence_context: str | None = None
+    try:
+        from .feed_intelligence import build_feed_intelligence
+        intelligence_plan = build_feed_intelligence(
+            project_id=project_id,
+            project=project,
+            progression_stage=_stage,
+        )
+        if intelligence_plan:
+            intelligence_context = intelligence_plan.intelligence_summary or None
+    except Exception:
+        logger.debug("[project_service] feed_intelligence unavailable (non-fatal)")
+
+    # ── Retrieve articles — intelligence-driven or keyword fallback ──────────
+    if intelligence_plan and intelligence_plan.core_articles:
+        core_articles      = intelligence_plan.core_articles
+        curiosity_articles = intelligence_plan.curiosity_articles or []
+        logger.info(
+            "[project_service] %s day=%d [intelligence] stage=%s targets=%s core=%d curiosity=%d",
+            project_id, day_number, _stage,
+            [ct.concept for ct in intelligence_plan.concept_targets],
+            len(core_articles), len(curiosity_articles),
+        )
+    else:
+        core_articles = _fetch_core_articles(
+            project["name"], keywords, suggested_next_topics,
+            preferred_sources=preferred_sources,
+        )
+        curiosity_articles = _fetch_curiosity_articles(project["name"], keywords)
+        logger.info(
+            "[project_service] %s day=%d [keyword fallback] core=%d curiosity=%d next_topics=%s",
+            project_id, day_number,
+            len(core_articles), len(curiosity_articles),
+            suggested_next_topics[:2],
+        )
+
+    # ── Curiosity strategy (Phase 4.4) ────────────────────────────────────────
+    curiosity_directives: str | None = None
+    try:
+        from .curiosity_orchestrator import get_curiosity_directives
+        curiosity_directives = get_curiosity_directives(project_id) or None
+    except Exception:
+        logger.debug("[project_service] curiosity_orchestrator unavailable (non-fatal)")
 
     # ── Build and send prompt ─────────────────────────────────────────────────
     from ..prompts.project_insight_prompt import make_daily_package_prompt
@@ -660,7 +703,60 @@ def generate_project_insight(project_id: str) -> dict:
         daily_core_article_count=daily_core_article_count,
         learning_memory=learning_memory or None,
         memory_references=memory_references or None,
+        curiosity_directives=curiosity_directives,
+        intelligence_context=intelligence_context,
+        quality_feedback=quality_feedback,
     )
+
+    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
+    try:
+        from .token_budget import estimate_tokens, estimate_total_request, BudgetReport, log_budget_report
+        from .model_registry import get_model_config
+        from ..config import GROQ_MODEL as _MODEL
+
+        _cfg        = get_model_config(_MODEL)
+        _total_tok  = estimate_total_request(prompt=prompt)
+        _core_tok   = sum(
+            estimate_tokens((a.get("content") or "")[:700]) + estimate_tokens(a.get("title", ""))
+            for a in core_articles
+        )
+        _curiosity_tok = sum(
+            estimate_tokens((a.get("content") or "")[:700]) + estimate_tokens(a.get("title", ""))
+            for a in curiosity_articles
+        )
+        _instructions_tok = max(0, _total_tok - _core_tok - _curiosity_tok)
+        _od_tpm     = _cfg.tier_limits.get("on_demand", {}).get("tpm")
+        _remaining  = _cfg.prompt_budget - _total_tok
+        _util       = (_total_tok / _cfg.prompt_budget * 100) if _cfg.prompt_budget > 0 else 0.0
+        _warnings: list[str] = []
+        if _remaining < 0:
+            _warnings.append(
+                f"OVER SAFE BUDGET: {_total_tok:,} > {_cfg.prompt_budget:,} "
+                f"by {-_remaining:,} tokens"
+            )
+        if _od_tpm and _total_tok > _od_tpm:
+            _warnings.append(
+                f"EXCEEDS GROQ ON_DEMAND TIER LIMIT: {_total_tok:,} > {_od_tpm:,} "
+                f"(delta: +{_total_tok - _od_tpm:,}) — will fail HTTP 413 on free tier"
+            )
+        log_budget_report(BudgetReport(
+            operation        = f"package_generation/day_{day_number}/{project_id[:8]}",
+            model_name       = _MODEL,
+            context_window   = _cfg.context_window,
+            safe_budget      = _cfg.prompt_budget,
+            output_reserve   = _cfg.output_budget,
+            prompt_tokens    = _total_tok,
+            remaining_budget = _remaining,
+            utilization_pct  = _util,
+            sections         = {
+                "prompt_instructions": _instructions_tok,
+                "core_articles":       _core_tok,
+                "curiosity_articles":  _curiosity_tok,
+            },
+            warnings = _warnings,
+        ), logger)
+    except Exception:
+        logger.debug("[project_service] budget instrumentation failed (non-fatal)", exc_info=True)
 
     try:
         from .grok_service import ask_grok
@@ -696,6 +792,36 @@ def generate_project_insight(project_id: str) -> dict:
                 "    the concrete situation in plain language.\n"
                 "  • If in doubt, use an analogy first, then name the domain concept."
             )
+            # Budget instrumentation for retry (prompt is larger due to addendum)
+            try:
+                from .token_budget import estimate_total_request, BudgetReport, log_budget_report
+                from .model_registry import get_model_config
+                from ..config import GROQ_MODEL as _MODEL_R
+                _retry_prompt = prompt + retry_addendum
+                _cfg_r        = get_model_config(_MODEL_R)
+                _retry_tok    = estimate_total_request(prompt=_retry_prompt)
+                _od_tpm_r     = _cfg_r.tier_limits.get("on_demand", {}).get("tpm")
+                _ret_warn: list[str] = []
+                if _od_tpm_r and _retry_tok > _od_tpm_r:
+                    _ret_warn.append(
+                        f"RETRY EXCEEDS ON_DEMAND TIER LIMIT: {_retry_tok:,} > {_od_tpm_r:,} "
+                        f"(delta: +{_retry_tok - _od_tpm_r:,})"
+                    )
+                log_budget_report(BudgetReport(
+                    operation        = f"package_generation_retry/day_{day_number}/{project_id[:8]}",
+                    model_name       = _MODEL_R,
+                    context_window   = _cfg_r.context_window,
+                    safe_budget      = _cfg_r.prompt_budget,
+                    output_reserve   = _cfg_r.output_budget,
+                    prompt_tokens    = _retry_tok,
+                    remaining_budget = _cfg_r.prompt_budget - _retry_tok,
+                    utilization_pct  = (_retry_tok / _cfg_r.prompt_budget * 100) if _cfg_r.prompt_budget > 0 else 0.0,
+                    sections         = {"prompt_with_addendum": _retry_tok},
+                    warnings         = _ret_warn,
+                ), logger)
+            except Exception:
+                logger.debug("[project_service] retry budget instrumentation failed (non-fatal)", exc_info=True)
+
             try:
                 from .grok_service import ask_grok as _ask_grok_retry
                 retry_text = _ask_grok_retry(prompt + retry_addendum, json_mode=True)
@@ -736,6 +862,18 @@ def generate_project_insight(project_id: str) -> dict:
         _update_memory(project_id, package)
     except Exception:
         logger.warning("[project_service] learning memory update failed for %s (non-fatal)", project_id)
+
+    # Phase 4.7: evaluate learning quality and store for next generation (non-fatal)
+    try:
+        from .learning_evaluator import evaluate as _evaluate, store_evaluation as _store_eval
+        _report = _evaluate(project_id, package=package)
+        _store_eval(_report)
+        logger.info(
+            "[project_service] learning quality score for %s day=%d: %.2f",
+            project_id, day_number, _report.overall_score,
+        )
+    except Exception:
+        logger.warning("[project_service] quality evaluation failed for %s (non-fatal)", project_id)
 
     return package
 

@@ -33,7 +33,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..utils.db import get_connection, get_preference
-from ..prompts.deep_research_prompt import DEEP_RESEARCH_PROMPT
+from ..prompts.deep_research_prompt import build_deep_research_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,7 @@ class DeepResearchWorkflow:
             self.state["articles"],
             self.state.get("source_analysis", {}),
             self.state.get("viewpoints", {}),
+            project_id=self.state.get("project_id", ""),
         )
         return self
 
@@ -230,12 +231,15 @@ def list_research_topics(limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def run_deep_research(topic: str) -> dict:
+def run_deep_research(topic: str, project_id: str = "") -> dict:
     """
     Return deep research for a topic, running the full workflow on a cache miss.
 
     Always checks get_stored_research() first so that repeated calls — including
     those from background auto-triggers — are not expensive.
+
+    project_id: optional — when present, injects shared learning context so the
+                research builds on what the user has already learned (Phase 4.6).
     """
     cached = get_stored_research(topic)
     if cached is not None:
@@ -243,7 +247,10 @@ def run_deep_research(topic: str) -> dict:
         return cached
 
     logger.info("[deep_research] starting workflow for topic %r", topic)
-    return DeepResearchWorkflow(topic).run()
+    wf = DeepResearchWorkflow(topic)
+    if project_id:
+        wf.state["project_id"] = project_id
+    return wf.run()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -304,6 +311,7 @@ def _generate_analysis(
     articles: list[dict],
     source_analysis: dict | None = None,
     viewpoints: dict | None = None,
+    project_id: str = "",
 ) -> dict:
     """
     Call Groq with the upgraded three-persona deep research prompt.
@@ -320,13 +328,57 @@ def _generate_analysis(
     formatted_source    = format_analysis_for_prompt(source_analysis or {})
     formatted_viewpoints = format_viewpoints_for_prompt(viewpoints or {})
 
-    prompt = DEEP_RESEARCH_PROMPT.format(
+    # Phase 4.6: load shared learning context when project_id is available
+    shared_context: str = ""
+    if project_id:
+        try:
+            from .shared_learning_context import get_shared_prompt_block
+            shared_context = get_shared_prompt_block(project_id, mode="deep_research")
+        except Exception:
+            logger.debug("[deep_research] shared_learning_context unavailable (non-fatal)")
+
+    prompt = build_deep_research_prompt(
         topic              = topic,
-        articles           = formatted_articles,
         source_count       = len(articles),
         source_analysis    = formatted_source,
         viewpoint_analysis = formatted_viewpoints,
+        articles           = formatted_articles,
+        shared_context     = shared_context or None,
     )
+
+    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
+    try:
+        from .token_budget import estimate_tokens, estimate_total_request, BudgetReport, log_budget_report
+        from .model_registry import get_model_config
+        from ..config import GROQ_MODEL as _MODEL_DR
+        _cfg_dr        = get_model_config(_MODEL_DR)
+        _articles_tok  = estimate_tokens(formatted_articles)
+        _source_tok    = estimate_tokens(formatted_source)
+        _viewpts_tok   = estimate_tokens(formatted_viewpoints)
+        _total_dr      = estimate_total_request(prompt=prompt)
+        _base_tok      = max(0, _total_dr - _articles_tok - _source_tok - _viewpts_tok)
+        _remain_dr     = _cfg_dr.prompt_budget - _total_dr
+        log_budget_report(BudgetReport(
+            operation        = f"deep_research/{topic[:40]}",
+            model_name       = _MODEL_DR,
+            context_window   = _cfg_dr.context_window,
+            safe_budget      = _cfg_dr.prompt_budget,
+            output_reserve   = _cfg_dr.output_budget,
+            prompt_tokens    = _total_dr,
+            remaining_budget = _remain_dr,
+            utilization_pct  = (_total_dr / _cfg_dr.prompt_budget * 100) if _cfg_dr.prompt_budget > 0 else 0.0,
+            sections         = {
+                "articles":         _articles_tok,
+                "source_analysis":  _source_tok,
+                "viewpoints":       _viewpts_tok,
+                "prompt_base":      _base_tok,
+            },
+            warnings = [
+                f"OVER SAFE BUDGET: {_total_dr:,} > {_cfg_dr.prompt_budget:,}"
+            ] if _remain_dr < 0 else [],
+        ), logger)
+    except Exception:
+        logger.debug("[deep_research] budget instrumentation failed (non-fatal)", exc_info=True)
 
     raw    = ask_grok(prompt)
     result = _parse_json_response(raw)

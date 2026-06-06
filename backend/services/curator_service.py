@@ -14,7 +14,7 @@ from .source_ranker import rank_articles
 from .source_analyzer import analyze_sources, format_analysis_for_prompt
 from .digest_storage_service import list_digests
 from .topic_cluster import assign_category, format_category_context
-from ..prompts.learning_prompt import LEARNING_PROMPT
+from ..prompts.learning_prompt import build_learning_prompt
 
 
 def _get_recent_news_titles(limit: int = 5) -> list[str]:
@@ -184,7 +184,7 @@ def generate_learning_feed(interests: str) -> dict:
     formatted       = _format_articles(articles)
     memory_context  = _build_memory_context()
 
-    prompt = LEARNING_PROMPT.format(
+    prompt = build_learning_prompt(
         interests=interests,
         articles=formatted,
         memory_context=memory_context,

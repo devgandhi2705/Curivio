@@ -14,6 +14,8 @@ build_layman_directive(domain: str, topic_hint: str | None) -> str
 
 from __future__ import annotations
 
+from ..prompts.instruction_packs.core_learning_pack import LAYMAN_SIMPLIFICATION_DIRECTIVE as _DIRECTIVE_TEMPLATE
+
 # ── Domain → analogy bank ──────────────────────────────────────────────────────
 # Each entry:
 #   domains   — familiar systems to draw analogies from
@@ -128,75 +130,19 @@ _DEFAULT_ANALOGY_BANK: dict = {
 
 
 # ── Directive template ─────────────────────────────────────────────────────────
-# {{ANALOGY_BANK}} is replaced at runtime with domain-specific content.
-
-_DIRECTIVE_TEMPLATE = """\
-ACTIVE RESPONSE MODE — MECHANISM-PRESERVING SIMPLIFICATION:
-
-THE FUNDAMENTAL RULE:
-Simplify vocabulary, abstraction, and jargon.
-NEVER simplify the underlying mechanism.
-
-The user is smart but new to this domain. They can handle complexity — they cannot handle unfamiliar vocabulary.
-Give them the full intelligence of the idea in language they already know.
-
-WHAT TO SIMPLIFY:
-- Technical jargon → plain English (define immediately in parentheses when unavoidable)
-- Abbreviations → full names on first use
-- Abstract structure → concrete analogies grounded in familiar systems
-
-WHAT TO NEVER SIMPLIFY:
-- Causal logic: WHY A caused B — not just that it did
-- Incentive structures: WHY actors made the choices they made — not just what they chose
-- Strategic insight: WHAT the mechanism reveals about power, position, or outcome
-- Hidden mechanisms: the non-obvious force that produces the surprising result
-
-BAD:  "FDA helps exports because countries trust approved medicines."
-GOOD: "FDA approval works like a global trust certificate — buyers assume a company that passed strict inspections is less likely to fail them, and that assumption is worth more than a marketing budget because scrutiny earned it, money didn't."
-
-Structure your response in this sequence:
-1. THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?
-2. THE ANALOGY BRIDGE — See analogy system below. Carry the mechanism, not just the shape.
-   Bridge back explicitly: "In the same way, [concept] works by [mechanism]…"
-3. THE MECHANISM — How it actually works, in plain language.
-   Every step of the causal chain must survive. If a term is unavoidable, define it inline:
-   "asymmetric encryption (a lock anyone can close, but only you can open)".
-4. WHY IT EXISTS — What problem did it solve? What was broken or missing before it?
-5. THE INSIGHT — The one genuinely non-obvious thing worth knowing. What would surprise
-   someone who just learned the basics? This is the most important section — never skip it.
-
-{{ANALOGY_BANK}}
-
-ANALOGY QUALITY TEST (apply before using any analogy):
-- Does it carry the causal mechanism, or just the visual shape?
-  SHAPE ONLY: "Like a filter."
-  MECHANISM:  "Like a bouncer with a list — the stricter the door policy, the more the implicit guarantee of quality inside is worth to the people who got in."
-- Could someone use the analogy to explain the mechanism back, not just identify it?
-- Does it preserve WHO benefits, WHO pays the cost, and WHY?
-
-ABSTRACTION SELF-CHECK (run internally before finalising):
-1. Jargon: Can a smart person new to this domain understand every sentence without stopping?
-   — If not: replace or immediately define the term in parentheses.
-2. Mechanism vs. shape: Are you describing the causal chain, or just what it looks like?
-   — "It acts like a filter" is shape. "It selects by X because actors face incentive Y" is mechanism.
-3. Compression: Have you simplified away the key tension or strategic insight?
-   — The full intelligence of the idea must survive. Only the vocabulary is simplified.
-
-STRATEGIC MEANING TEST (confirm before finalising):
-- Does this still show WHY the outcome happened? (causal logic preserved)
-- Does this show WHO drove it and WHAT motivated them? (incentive structure preserved)
-- Does this surface something non-obvious? (insight density preserved)
-- Would a smart person feel genuinely smarter after reading this, not just more informed?
-
-Tone: speak like a brilliant friend explaining over coffee — direct, warm, not condescending.
-Never open with a definition. Lead with intuition, then mechanism, then implication."""
+# Sourced from core_learning_pack.LAYMAN_SIMPLIFICATION_DIRECTIVE.
+# {{ANALOGY_BANK}} is replaced at runtime with domain-specific content via .replace().
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_layman_directive(domain: str = "", topic_hint: str | None = None) -> str:
+def build_layman_directive(
+    domain: str = "",
+    topic_hint: str | None = None,
+    known_concepts: list[str] | None = None,
+) -> str:
     """
     Build the full mechanism-preserving simplification directive.
 
@@ -205,12 +151,27 @@ def build_layman_directive(domain: str = "", topic_hint: str | None = None) -> s
 
     Parameters
     ----------
-    domain     : Classified domain from domain_classifier_service (e.g. "Pharmaceutical").
-    topic_hint : Current topic, used to anchor the analogy suggestion.
+    domain         : Classified domain from domain_classifier_service (e.g. "Pharmaceutical").
+    topic_hint     : Current topic, used to anchor the analogy suggestion.
+    known_concepts : User's known graph nodes — injected as explicit analogy anchors
+                     so the simplification references what they've already learned.
     """
     key  = _normalise_domain(domain)
     bank = _ANALOGY_BANKS.get(key, _DEFAULT_ANALOGY_BANK)
-    return _DIRECTIVE_TEMPLATE.replace("{{ANALOGY_BANK}}", _format_bank(bank, topic_hint)).strip()
+    directive = _DIRECTIVE_TEMPLATE.replace("{{ANALOGY_BANK}}", _format_bank(bank, topic_hint)).strip()
+
+    # Phase 4.6: prepend known-concept anchors when available
+    if known_concepts:
+        anchors = ", ".join(f"'{c}'" for c in known_concepts[:5])
+        anchor_block = (
+            f"KNOWN CONCEPT ANCHORS — use these as bridges to the new idea:\n"
+            f"  {anchors}\n"
+            f"When explaining a new concept, open with: "
+            f"\"Remember how [anchor] works? This is the same mechanism, one step [upstream/downstream].\"\n"
+        )
+        directive = anchor_block + "\n" + directive
+
+    return directive
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

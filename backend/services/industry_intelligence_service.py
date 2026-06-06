@@ -320,9 +320,9 @@ def _format_articles(articles: list[dict]) -> str:
 def _generate_brief(cfg: _IndustryConfig, articles: list[dict]) -> dict:
     """Call Groq with the industry intelligence prompt and parse JSON."""
     from .grok_service import ask_grok
-    from ..prompts.industry_intelligence_prompt import INDUSTRY_INTELLIGENCE_PROMPT
+    from ..prompts.industry_intelligence_prompt import build_industry_intelligence_prompt
 
-    prompt = INDUSTRY_INTELLIGENCE_PROMPT.format(
+    prompt = build_industry_intelligence_prompt(
         industry_display_name = cfg.display_name,
         business_lens         = cfg.business_lens,
         focus_areas           = ", ".join(cfg.focus_areas),

@@ -23,6 +23,28 @@ def _get_client() -> OpenAI:
 logger = logging.getLogger(__name__)
 
 
+def _log_pre_call_budget(
+    operation: str,
+    prompt:    str | None        = None,
+    messages:  list[dict] | None = None,
+) -> None:
+    """
+    Estimate and log token budget before a Groq API call.
+    Non-fatal: any error is swallowed so it never blocks a request.
+    """
+    try:
+        from .token_budget import build_budget_report, log_budget_report
+        report = build_budget_report(
+            operation  = operation,
+            model_name = MODEL_NAME,
+            prompt     = prompt,
+            messages   = messages,
+        )
+        log_budget_report(report, logger)
+    except Exception:
+        logger.debug("[groq] Budget pre-check failed (non-fatal)", exc_info=True)
+
+
 def ask_grok(prompt: str, json_mode: bool = False) -> str:
     # Deferred import avoids a circular dependency at module load time.
     from .api_usage_service import log_api_call, estimate_groq_cost
@@ -41,6 +63,8 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
     )
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
+
+    _log_pre_call_budget("ask_grok", prompt=prompt)
 
     try:
         response = _get_client().chat.completions.create(**kwargs)
@@ -81,6 +105,8 @@ def ask_grok_chat(messages: list[dict]) -> str:
     Unlike ask_grok, the caller is responsible for the system message and history.
     """
     from .api_usage_service import log_api_call, estimate_groq_cost
+
+    _log_pre_call_budget("ask_grok_chat", messages=messages)
 
     t0 = time.monotonic()
     try:
@@ -128,6 +154,8 @@ def ask_grok_chat_stream(messages: list[dict]):
     Logs usage after the stream is fully consumed.
     """
     from .api_usage_service import log_api_call, estimate_groq_cost
+
+    _log_pre_call_budget("ask_grok_chat_stream", messages=messages)
 
     t0 = time.monotonic()
     try:

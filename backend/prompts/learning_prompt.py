@@ -1,4 +1,7 @@
-LEARNING_PROMPT = """
+from .prompt_composer import PromptComposer
+from .instruction_packs.core_writing_pack import STRICT_URL_RULE as _STRICT_URL_RULE
+
+_PERSONA_AND_RULES = """\
 You are simultaneously three things: a research analyst who synthesizes across sources, a technical
 curator who selects what matters most, and a learning mentor who connects new ideas to where the
 user currently stands.
@@ -11,18 +14,9 @@ Core writing rules:
 - Be direct and specific — no filler phrases ("In today's fast-paced world…", "It is worth noting…")
 - Prioritize the WHY and HOW over the WHAT
 - Every sentence should move the reader forward; cut anything that doesn't
-- Name mechanisms, patterns, and trade-offs — not just topics
+- Name mechanisms, patterns, and trade-offs — not just topics"""
 
-STRICT URL RULE: Only use URLs from the articles list below. Do not invent, guess, or hallucinate links.
-
----
-User Learning State:
-{memory_context}
-
----
-Source Analysis (pre-processed signals from {source_count} sources):
-{source_analysis}
-
+_PERSONALIZATION_RULES = """\
 ---
 Personalization rules — apply all of these before generating anything:
 
@@ -54,44 +48,70 @@ Personalization rules — apply all of these before generating anything:
    as your starting scaffold:
    - Lead with the insight that has the most cross-source support
    - Surface genuine tensions where sources diverge (use contrastive signals if present)
-   - Only cite URLs from the provided articles
+   - Only cite URLs from the provided articles"""
 
----
-User Interests: {interests}
-
-Real Articles:
-{articles}
----
-
+_OUTPUT_PREAMBLE = """\
 Respond with ONLY a valid JSON object. No markdown, no code fences, no explanation.
-Match this structure exactly:
+Match this structure exactly:"""
 
-{{
-  "news_insight": {{
+_SCHEMA = """\
+{
+  "news_insight": {
     "title": "Sharp, specific title — names the mechanism or shift, not a generic topic",
     "summary": "The single most important technical shift revealed across these sources. Name the mechanism, pattern, or trade-off. This should synthesize what multiple sources collectively show, not just the best one.",
     "why_it_matters": "2-3 sentences on practical impact for engineers — what breaks, what gets easier, what becomes possible. Ground it in the articles. No buzzwords.",
     "sources": ["url1", "url2"]
-  }},
-  "perspectives": {{
+  },
+  "perspectives": {
     "common_themes": ["theme1", "theme2", "theme3"],
     "synthesis": "2-3 sentences: what do these sources collectively reveal that no single article makes fully explicit? What pattern or tension only becomes visible when you read them together?",
     "notable_tension": "One sentence on where sources diverge, present competing approaches, or leave an open question. Write null if sources are uniformly aligned."
-  }},
+  },
   "learning_topics": [
-    {{
+    {
       "title": "Topic name",
       "reason": "One sentence: what this unlocks for the learner, and how it connects to what they already know",
       "difficulty": "beginner | intermediate | advanced"
-    }}
+    }
   ],
   "next_step": "One concrete, specific action startable today — a project, an implementation, a paper. Not vague advice."
-}}
+}"""
 
+_OUTPUT_RULES = """\
 Rules:
 - learning_topics must contain exactly 4 items in the role order above
 - sources must only contain URLs from the articles above
 - difficulty must be one of: beginner, intermediate, advanced
 - perspectives.notable_tension must be a string or null — never omit the key
-- Do not include any text outside the JSON object
-"""
+- Do not include any text outside the JSON object"""
+
+
+def build_learning_prompt(
+    interests: str,
+    articles: str,
+    memory_context: str,
+    source_analysis: str,
+    source_count: int,
+) -> str:
+    composer = PromptComposer()
+    composer.add_section("persona_and_rules",     _PERSONA_AND_RULES,
+                         priority=1, required=True,  source_pack="")
+    composer.add_section("url_rule",              _STRICT_URL_RULE,
+                         priority=2, required=True,  source_pack="core_writing_pack")
+    composer.add_section("user_state",            f"---\nUser Learning State:\n{memory_context}",
+                         priority=1, required=True,  source_pack="dynamic")
+    composer.add_section("source_analysis",       (
+        f"---\nSource Analysis (pre-processed signals from {source_count} sources):\n{source_analysis}"
+    ),                   priority=2, required=True,  source_pack="dynamic")
+    composer.add_section("personalization_rules", _PERSONALIZATION_RULES,
+                         priority=3, required=True,  source_pack="")
+    composer.add_section("content_input",         (
+        f"---\nUser Interests: {interests}\n\nReal Articles:\n{articles}\n---"
+    ),                   priority=1, required=True,  source_pack="dynamic")
+    composer.add_section("output_preamble",       _OUTPUT_PREAMBLE,
+                         priority=2, required=True,  source_pack="")
+    composer.add_section("schema",                _SCHEMA,
+                         priority=1, required=True,  source_pack="")
+    composer.add_section("output_rules",          _OUTPUT_RULES,
+                         priority=3, required=True,  source_pack="")
+    return composer.build()

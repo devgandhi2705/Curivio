@@ -356,7 +356,7 @@ def generate_intelligence_feed(interests: str) -> dict:
     from .source_ranker        import rank_articles
     from .source_analyzer      import analyze_sources, format_analysis_for_prompt
     from .grok_service         import ask_grok
-    from ..prompts.intelligence_prompt import INTELLIGENCE_PROMPT
+    from ..prompts.intelligence_prompt import build_intelligence_prompt
 
     chat_ctx = _get_chat_context()
     intelligence_ctx, industry = _build_intelligence_context(chat_ctx)
@@ -382,13 +382,13 @@ def generate_intelligence_feed(interests: str) -> dict:
         for i, a in enumerate(articles, 1)
     )
 
-    prompt = INTELLIGENCE_PROMPT.format(
-        interests          = interests,
-        articles           = formatted_articles,
+    prompt = build_intelligence_prompt(
         intelligence_context = intelligence_ctx,
-        source_analysis    = source_analysis,
-        source_count       = analysis["source_count"],
-        industry           = industry,
+        industry             = industry,
+        source_count         = analysis["source_count"],
+        source_analysis      = source_analysis,
+        articles             = formatted_articles,
+        interests            = interests,
     )
 
     raw  = ask_grok(prompt)

@@ -488,6 +488,14 @@ def update_from_package(project_id: str, package: dict) -> None:
         memory["days_at_stage"]     = new_days
 
         _db_save(project_id, memory)
+
+        # Phase 4.1: update knowledge graph
+        try:
+            from .learning_graph import upsert_from_package as _graph_upsert
+            _graph_upsert(project_id, package)
+        except Exception:
+            logger.exception("[learning_memory] graph upsert failed for %s (non-fatal)", project_id)
+
     except Exception:
         logger.exception("[learning_memory] update_from_package failed for %s (non-fatal)", project_id)
 

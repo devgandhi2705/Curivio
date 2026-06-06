@@ -153,6 +153,14 @@ def build_learning_system_section(context: dict, mode: str) -> str:
         if level:
             lines.append(f"Learner context: {total} topics explored — {level} level.")
 
+    # Phase 4.6: inject project-level cross-session knowledge
+    # This section shows what the user has learned ACROSS ALL feed sessions for this
+    # project — giving every mode a shared foundation, not just session memory.
+    slc_block = context.get("shared_learning_context", "")
+    if slc_block:
+        lines.append("")
+        lines.append(slc_block)
+
     return "\n".join(lines)
 
 

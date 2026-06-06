@@ -539,6 +539,66 @@ MIGRATE_ADD_OPENING_HOOKS_USED = (
     "ALTER TABLE project_learning_memory ADD COLUMN opening_hooks_used TEXT NOT NULL DEFAULT '[]'"
 )
 
+CREATE_KNOWLEDGE_GRAPH_NODES = """
+CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT    NOT NULL,
+    node_key    TEXT    NOT NULL,
+    label       TEXT    NOT NULL,
+    node_type   TEXT    NOT NULL,
+    weight      INTEGER NOT NULL DEFAULT 1,
+    first_seen  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, node_key)
+);
+"""
+
+CREATE_KNOWLEDGE_GRAPH_NODES_IDX = """
+CREATE INDEX IF NOT EXISTS idx_kgn_project
+    ON knowledge_graph_nodes (project_id, node_type);
+"""
+
+CREATE_KNOWLEDGE_GRAPH_EDGES = """
+CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT    NOT NULL,
+    from_key    TEXT    NOT NULL,
+    to_key      TEXT    NOT NULL,
+    relation    TEXT    NOT NULL,
+    weight      INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, from_key, to_key, relation)
+);
+"""
+
+CREATE_KNOWLEDGE_GRAPH_EDGES_IDX = """
+CREATE INDEX IF NOT EXISTS idx_kge_project_from
+    ON knowledge_graph_edges (project_id, from_key);
+"""
+
+CREATE_KNOWLEDGE_GRAPH_EDGES_TO_IDX = """
+CREATE INDEX IF NOT EXISTS idx_kge_project_to
+    ON knowledge_graph_edges (project_id, to_key);
+"""
+
+CREATE_LEARNING_EVALUATIONS = """
+CREATE TABLE IF NOT EXISTS learning_evaluations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id    TEXT    NOT NULL,
+    package_day   INTEGER NOT NULL DEFAULT 0,
+    overall_score REAL    NOT NULL DEFAULT 0.0,
+    scores_json   TEXT    NOT NULL DEFAULT '{}',
+    issues_json   TEXT    NOT NULL DEFAULT '[]',
+    recs_json     TEXT    NOT NULL DEFAULT '[]',
+    evaluated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_LEARNING_EVALUATIONS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_learning_evaluations_project
+    ON learning_evaluations (project_id, evaluated_at DESC);
+"""
+
 MIGRATIONS = [
     MIGRATE_ADD_PREFERRED_SOURCES,
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
@@ -607,4 +667,11 @@ ALL_TABLES = [
     CREATE_CONVERSATION_KNOWLEDGE_STATE,
     CREATE_PROJECT_LEARNING_MEMORY,
     CREATE_PROJECT_LEARNING_MEMORY_IDX,
+    CREATE_KNOWLEDGE_GRAPH_NODES,
+    CREATE_KNOWLEDGE_GRAPH_NODES_IDX,
+    CREATE_KNOWLEDGE_GRAPH_EDGES,
+    CREATE_KNOWLEDGE_GRAPH_EDGES_IDX,
+    CREATE_KNOWLEDGE_GRAPH_EDGES_TO_IDX,
+    CREATE_LEARNING_EVALUATIONS,
+    CREATE_LEARNING_EVALUATIONS_IDX,
 ]

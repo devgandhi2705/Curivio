@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 
+from ..prompts.prompt_composer import PromptComposer
+
 MAX_HISTORY_TURNS = 6
 
 # Modes that receive the full structured context + JSON schema
@@ -289,69 +291,71 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
              optional layman directive + natural guidelines.
     Omits: research dumps, exploration history, JSON schema.
     """
-    parts = [_PERSONA_NATURAL]
+    composer = PromptComposer()
+    composer.add_section("persona",        _PERSONA_NATURAL,
+                         priority=1, required=True,  source_pack="")
 
     # Learning system framing — positions this interaction in the depth hierarchy.
     # Injected first so every subsequent directive is read within the learning journey context.
-    learning_section = _build_learning_system_section(context, mode)
-    if learning_section:
-        parts.append(learning_section)
+    composer.add_section("learning_system", _build_learning_system_section(context, mode),
+                         priority=2, required=False, source_pack="dynamic")
 
     # Depth instruction — calibrates verbosity and structure before anything else
     depth = context.get("response_depth", "standard")
-    parts.append(_DEPTH_INSTRUCTIONS.get(depth, _DEPTH_INSTRUCTIONS["standard"]))
+    composer.add_section("depth",          _DEPTH_INSTRUCTIONS.get(depth, _DEPTH_INSTRUCTIONS["standard"]),
+                         priority=2, required=True,  source_pack="")
 
     # Intent-aware format directive — structural guidance for detected response shape.
     # Skipped in layman mode: the Explain Simply directive is fully self-contained.
     # Passes intent_profile so blended multi-intent prompts get composed directives.
     if mode != "layman":
-        fmt = _build_format_directive_section(
+        composer.add_section("format_directive", _build_format_directive_section(
             context.get("format_intent", "default"),
             intent_profile=context.get("intent_profile"),
-        )
-        if fmt:
-            parts.append(fmt)
+        ),                   priority=3, required=False, source_pack="")
 
     # Conversation memory: most important for continuity (always inject if present)
-    conv_section = _build_conversation_memory_section(context.get("conversation_memory", {}))
-    if conv_section:
-        parts.append(conv_section)
+    composer.add_section("conversation_memory", _build_conversation_memory_section(
+        context.get("conversation_memory", {})
+    ),                   priority=2, required=False, source_pack="dynamic")
 
     # Active analytical thread — mechanisms, unresolved tensions, comparative frame.
     # Injected when the session has 2+ turns and at least one established mechanism.
     # Enables compound reasoning without re-explaining prior context.
-    knowledge_section = _build_knowledge_state_section(context.get("conversation_knowledge", {}))
-    if knowledge_section:
-        parts.append(knowledge_section)
+    composer.add_section("knowledge_state", _build_knowledge_state_section(
+        context.get("conversation_knowledge", {})
+    ),                   priority=2, required=False, source_pack="dynamic")
 
     # Cognitive tension directive — forces intellectual friction over flat informational phrasing.
     # Skipped in layman mode (directive conflicts with ELI5 framing) and for trivial messages.
     if mode != "layman":
-        tension_section = _build_tension_section(context, mode)
-        if tension_section:
-            parts.append(tension_section)
+        composer.add_section("tension",    _build_tension_section(context, mode),
+                             priority=3, required=False, source_pack="dynamic")
 
     # User profile: only inject a one-liner if interesting
-    profile = context.get("user_profile", {})
-    profile_line = _build_compact_profile(profile)
-    if profile_line:
-        parts.append(profile_line)
+    composer.add_section("user_profile",   _build_compact_profile(context.get("user_profile", {})),
+                         priority=3, required=False, source_pack="dynamic")
 
     # Dynamic narrative rhythm — rotates structural mode to prevent response homogeneity.
     # Skipped for layman (has its own structure) and quick depth (no structure needed).
     if mode != "layman":
-        narrative = _build_narrative_section(context, mode)
-        if narrative:
-            parts.append(narrative)
+        composer.add_section("narrative",  _build_narrative_section(context, mode),
+                             priority=5, required=False, source_pack="dynamic")
 
     # Layman directive when explain-simply mode is active
     if mode == "layman":
-        layman = _build_layman_mode_section(context)
-        if layman:
-            parts.append(layman)
+        composer.add_section("layman_directive", _build_layman_mode_section(context),
+                             priority=2, required=False, source_pack="core_learning_pack")
+        # Phase 4.6: inject known concept anchors into the layman directive
+        # so simplifications can reference what the user has already learned.
+        slc = context.get("shared_learning_context", "")
+        if slc and "ANALOGY ANCHORS" in slc:
+            composer.add_section("layman_anchors", slc,
+                                 priority=2, required=False, source_pack="dynamic")
 
-    parts.append(_NATURAL_GUIDELINES)
-    return "\n\n".join(parts)
+    composer.add_section("guidelines",     _NATURAL_GUIDELINES,
+                         priority=3, required=True,  source_pack="")
+    return composer.build()
 
 
 def _build_structured_prompt(context: dict) -> str:
@@ -360,53 +364,55 @@ def _build_structured_prompt(context: dict) -> str:
 
     Injects all available sections + structured JSON format directive.
     """
-    parts = [_PERSONA]
+    composer = PromptComposer()
+    composer.add_section("persona",        _PERSONA,
+                         priority=1, required=True,  source_pack="")
 
     # Learning system framing — anchors the structured response to the user's learning journey.
     # Structured modes (web_search, deep_research) carry the most state; this ensures the AI
     # builds on established mechanisms rather than re-starting from scratch each time.
-    learning_section = _build_learning_system_section(context, mode="deep_research")
-    if learning_section:
-        parts.append(learning_section)
+    composer.add_section("learning_system", _build_learning_system_section(context, mode="deep_research"),
+                         priority=2, required=False, source_pack="dynamic")
 
-    profile  = context.get("user_profile", {})
-    research = context.get("research", {})
-    session  = context.get("session", {})
-
-    for builder, data in (
-        (_build_profile_section,               profile),
-        (_build_research_section,              research),
-        (_build_session_section,               session),
-        (_build_conversation_memory_section,   context.get("conversation_memory", {})),
-        (_build_knowledge_state_section,       context.get("conversation_knowledge", {})),
-        (_build_exploration_breadth_section,   context.get("exploration_breadth", {})),
-        (_build_preference_snapshot_section,   context.get("preference_snapshot", {})),
-        (_build_explanation_directive_section, context.get("learner_profile", {})),
-        (_build_domain_directive_section,      context.get("domain_context", {})),
-        (_build_continuity_section,            context.get("continuity", {})),
-        (_build_action_result_section,         context.get("action_result", {})),
-    ):
-        section = builder(data)
-        if section:
-            parts.append(section)
+    composer.add_section("user_profile",        _build_profile_section(context.get("user_profile", {})),
+                         priority=2, required=False, source_pack="dynamic")
+    composer.add_section("research",            _build_research_section(context.get("research", {})),
+                         priority=1, required=False, source_pack="dynamic")
+    composer.add_section("session",             _build_session_section(context.get("session", {})),
+                         priority=3, required=False, source_pack="dynamic")
+    composer.add_section("conversation_memory", _build_conversation_memory_section(context.get("conversation_memory", {})),
+                         priority=2, required=False, source_pack="dynamic")
+    composer.add_section("knowledge_state",     _build_knowledge_state_section(context.get("conversation_knowledge", {})),
+                         priority=2, required=False, source_pack="dynamic")
+    composer.add_section("exploration_breadth", _build_exploration_breadth_section(context.get("exploration_breadth", {})),
+                         priority=3, required=False, source_pack="dynamic")
+    composer.add_section("preference_snapshot", _build_preference_snapshot_section(context.get("preference_snapshot", {})),
+                         priority=3, required=False, source_pack="dynamic")
+    composer.add_section("explanation_directive", _build_explanation_directive_section(context.get("learner_profile", {})),
+                         priority=3, required=False, source_pack="dynamic")
+    composer.add_section("domain_directive",    _build_domain_directive_section(context.get("domain_context", {})),
+                         priority=3, required=False, source_pack="dynamic")
+    composer.add_section("continuity",          _build_continuity_section(context.get("continuity", {})),
+                         priority=2, required=False, source_pack="dynamic")
+    composer.add_section("action_result",       _build_action_result_section(context.get("action_result", {})),
+                         priority=2, required=False, source_pack="dynamic")
 
     # Intent-aware format directive — guides response structure for the detected intent.
     # Passes intent_profile so blended multi-intent prompts get composed directives.
-    fmt = _build_format_directive_section(
+    composer.add_section("format_directive", _build_format_directive_section(
         context.get("format_intent", "default"),
         intent_profile=context.get("intent_profile"),
-    )
-    if fmt:
-        parts.append(fmt)
+    ),                   priority=3, required=False, source_pack="")
 
     # Cognitive tension — short version for structured modes; informs key_takeaway quality.
-    tension_section = _build_tension_section(context, mode="deep_research")
-    if tension_section:
-        parts.append(tension_section)
+    composer.add_section("tension",        _build_tension_section(context, mode="deep_research"),
+                         priority=3, required=False, source_pack="dynamic")
 
-    parts.append(_GUIDELINES)
-    parts.append(_STRUCTURED_FORMAT_DIRECTIVE)
-    return "\n\n".join(parts)
+    composer.add_section("guidelines",     _GUIDELINES,
+                         priority=3, required=True,  source_pack="")
+    composer.add_section("format_schema",  _STRUCTURED_FORMAT_DIRECTIVE,
+                         priority=1, required=True,  source_pack="")
+    return composer.build()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -434,8 +440,8 @@ CONVERSATIONAL RULES:
 - Surface the non-obvious: second-order effects and hidden implications are more valuable than
   restating what the user likely already knows.
 - Use markdown only when it genuinely aids clarity: code blocks for code, bullets for genuinely
-  parallel items, headers only for 4+ genuinely distinct sections.
-- Never add headers to a response that would naturally be 2–3 paragraphs of prose.
+  parallel items, headers only for 4+ genuinely distinct sections — never for prose that naturally
+  fits 2–3 paragraphs.
 - If a topic came up earlier in this conversation, build on it — do not re-explain from scratch.
 - If the user sends a greeting or very short message, reply briefly and warmly. Do not lecture.
 - Be honest when uncertain. End when you've said the essential thing — no padding, no "in summary" closers.
@@ -452,9 +458,7 @@ _GUIDELINES = """\
 Guidelines:
 - Give clear, structured answers. Use bullet points or code blocks where helpful.
 - Tailor complexity to the user's learning stage and stated interests.
-- When you reference a topic the user has already researched, build on that context rather than re-explaining from scratch.
-- If this session already covered a concept, acknowledge it briefly and go deeper.
-- Connect new questions to earlier parts of the conversation when relevant.
+- Build on what this session has already covered: go deeper, don't re-explain; connect new questions to prior context.
 - Keep responses focused and avoid unnecessary repetition.
 - If the user asks about something outside your knowledge, say so honestly."""
 
@@ -741,45 +745,9 @@ def _build_domain_directive_section(domain_context: dict) -> str:
     return directive.strip() if directive else ""
 
 
-_LAYMAN_MODE_DIRECTIVE = """\
-ACTIVE RESPONSE MODE — EXPLAIN SIMPLY:
-The user wants to understand this without prior expertise. Simple ≠ short. Simple means: easy to intuitively grasp.
-
-THE GOAL: The user finishes reading and thinks "Oh — I finally understand this clearly."
-
-This is INTELLIGENT SIMPLIFICATION — not childish simplification. The user is smart but new to this
-specific domain. Do not condescend. Do not oversimplify to the point of misleading.
-
-Structure your response in this sequence:
-1. THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?
-2. THE ANALOGY — "Think of it like…" Use something the reader already knows: roads, restaurants,
-   sports, cooking. The analogy must carry the MAIN MECHANISM, not just the surface shape.
-   Then bridge back explicitly: "In the same way, [the actual concept] works by [mechanism]…"
-   — so the analogy clarifies rather than distracts.
-3. WHY IT EXISTS — What problem does it solve? What was broken or missing before it?
-   This grounds the concept in human motivation.
-4. HOW IT WORKS — The actual mechanism, in plain language. Scaffold on the analogy from step 2.
-   If a technical term is unavoidable, define it immediately in parentheses:
-   "asymmetric encryption (a lock anyone can close, but only you can open)".
-5. A REAL EXAMPLE — Name the company, event, or person. Not "some companies do this" —
-   say which one, and what specifically happened.
-6. THE INSIGHT — The one non-obvious thing worth knowing. What would genuinely surprise someone
-   who just learned the basics? What makes this concept actually interesting or counterintuitive?
-   This is the most valuable part of the response — do not skip it or bury it.
-
-Tone and style:
-- Lead with intuition, not definition. Never start with a Wikipedia-style "X is a Y that Z" sentence.
-- Speak like a brilliant friend explaining over coffee — not a textbook, not a professor.
-- Never be condescending. The user is intelligent but new to this specific domain.
-- Connect to the user's project context and prior interests when relevant.
-
-Do NOT:
-- Open with a dictionary definition.
-- Use unexplained acronyms or abbreviations.
-- Write walls of text with no paragraph breaks.
-- Over-simplify to the point of being misleading.
-- Skip THE INSIGHT — it is what makes the response genuinely memorable.
-"""
+# Fallback for when layman_mode_service is unavailable.
+# Canonical source: core_learning_pack.LAYMAN_SIMPLIFICATION_SIMPLE
+from ..prompts.instruction_packs.core_learning_pack import LAYMAN_SIMPLIFICATION_SIMPLE as _LAYMAN_MODE_DIRECTIVE
 
 
 def _build_learning_system_section(context: dict, mode: str) -> str:

@@ -188,6 +188,19 @@ def chat(
             feed_context    = feed_context,
         )
 
+    # ── Phase 4.6: Shared learning context ───────────────────────────────────
+    # Inject project-level knowledge graph state so every mode knows what the
+    # user has already learned — not just this conversation, but across sessions.
+    _project_id_for_slc = (feed_context or {}).get("project_id", "") if feed_context else ""
+    if _project_id_for_slc:
+        try:
+            from .shared_learning_context import get_shared_prompt_block
+            _slc_block = get_shared_prompt_block(_project_id_for_slc, mode=chat_mode)
+            if _slc_block:
+                context["shared_learning_context"] = _slc_block
+        except Exception:
+            logger.debug("[chat_service] shared_learning_context unavailable (non-fatal)")
+
     # Build messages for Groq
     messages_payload = build_messages(history, message, context, mode=chat_mode)
 
@@ -206,6 +219,38 @@ def chat(
     if _is_new:
         from .chat_title_service import make_title_system_note
         messages_payload = _inject_mode_note(messages_payload, make_title_system_note())
+
+    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
+    try:
+        from .token_budget import estimate_tokens, estimate_messages, BudgetReport, log_budget_report
+        from .model_registry import get_model_config
+        from ..config import GROQ_MODEL as _MODEL_C
+        _cfg_c      = get_model_config(_MODEL_C)
+        _sys_tok    = sum(estimate_tokens(m.get("content","")) for m in messages_payload if m.get("role") == "system")
+        _hist_tok   = sum(estimate_tokens(m.get("content","")) for m in messages_payload[:-1] if m.get("role") in ("user","assistant"))
+        _cur_tok    = estimate_tokens(messages_payload[-1].get("content","")) if messages_payload else 0
+        _total_c    = estimate_messages(messages_payload)
+        _remain_c   = _cfg_c.prompt_budget - _total_c
+        log_budget_report(BudgetReport(
+            operation        = "chat/sync",
+            model_name       = _MODEL_C,
+            context_window   = _cfg_c.context_window,
+            safe_budget      = _cfg_c.prompt_budget,
+            output_reserve   = _cfg_c.output_budget,
+            prompt_tokens    = _total_c,
+            remaining_budget = _remain_c,
+            utilization_pct  = (_total_c / _cfg_c.prompt_budget * 100) if _cfg_c.prompt_budget > 0 else 0.0,
+            sections         = {
+                "system_prompt":   _sys_tok,
+                "history":         _hist_tok,
+                "current_message": _cur_tok,
+            },
+            warnings = [
+                f"OVER SAFE BUDGET: {_total_c:,} > {_cfg_c.prompt_budget:,}"
+            ] if _remain_c < 0 else [],
+        ), logger)
+    except Exception:
+        logger.debug("[chat_service] budget instrumentation failed (non-fatal)", exc_info=True)
 
     # Call AI
     from .grok_service import ask_grok_chat
@@ -419,6 +464,17 @@ def chat_stream(
         from .chat_prompt_service import detect_depth as _detect_depth
         context["response_depth"] = _detect_depth(message, chat_mode)
 
+        # Phase 4.6: shared learning context (stream path)
+        _pid_slc = (feed_context or {}).get("project_id", "") if feed_context else ""
+        if _pid_slc:
+            try:
+                from .shared_learning_context import get_shared_prompt_block as _gslc
+                _slc = _gslc(_pid_slc, mode=chat_mode)
+                if _slc:
+                    context["shared_learning_context"] = _slc
+            except Exception:
+                pass
+
         from .chat_prompt_service import build_messages as _build
         messages_payload = _build(history, message, context, mode=chat_mode)
 
@@ -484,6 +540,38 @@ def chat_stream(
     if is_new_session:
         from .chat_title_service import make_title_system_note
         messages_payload = _inject_mode_note(messages_payload, make_title_system_note())
+
+    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
+    try:
+        from .token_budget import estimate_tokens, estimate_messages, BudgetReport, log_budget_report
+        from .model_registry import get_model_config
+        from ..config import GROQ_MODEL as _MODEL_CS
+        _cfg_cs   = get_model_config(_MODEL_CS)
+        _sys_cs   = sum(estimate_tokens(m.get("content","")) for m in messages_payload if m.get("role") == "system")
+        _hist_cs  = sum(estimate_tokens(m.get("content","")) for m in messages_payload[:-1] if m.get("role") in ("user","assistant"))
+        _cur_cs   = estimate_tokens(messages_payload[-1].get("content","")) if messages_payload else 0
+        _total_cs = estimate_messages(messages_payload)
+        _remain_cs = _cfg_cs.prompt_budget - _total_cs
+        log_budget_report(BudgetReport(
+            operation        = "chat/stream",
+            model_name       = _MODEL_CS,
+            context_window   = _cfg_cs.context_window,
+            safe_budget      = _cfg_cs.prompt_budget,
+            output_reserve   = _cfg_cs.output_budget,
+            prompt_tokens    = _total_cs,
+            remaining_budget = _remain_cs,
+            utilization_pct  = (_total_cs / _cfg_cs.prompt_budget * 100) if _cfg_cs.prompt_budget > 0 else 0.0,
+            sections         = {
+                "system_prompt":   _sys_cs,
+                "history":         _hist_cs,
+                "current_message": _cur_cs,
+            },
+            warnings = [
+                f"OVER SAFE BUDGET: {_total_cs:,} > {_cfg_cs.prompt_budget:,}"
+            ] if _remain_cs < 0 else [],
+        ), logger)
+    except Exception:
+        logger.debug("[chat_service] stream budget instrumentation failed (non-fatal)", exc_info=True)
 
     # ── Stream AI response ────────────────────────────────────────────────────
     # Emit a status event before blocking on Groq so HF Spaces proxies don't
