@@ -88,12 +88,16 @@ from .services.digest_storage_service import (
     get_digests_by_date,
     list_digests,
 )
+from .services.unpack_service import explain_stream
+from .services.translate_service import translate_term
+from .services.tts_service import synthesize_speech
 
 # --- Rate limits (edit in backend/config.py) ---
 GENERATE_FEED_RATE_LIMIT = cfg.GENERATE_FEED_RATE_LIMIT
 SEARCH_RATE_LIMIT        = cfg.SEARCH_RATE_LIMIT
 FEEDBACK_RATE_LIMIT      = cfg.FEEDBACK_RATE_LIMIT
 MEMORY_RATE_LIMIT        = cfg.MEMORY_RATE_LIMIT
+UNPACK_RATE_LIMIT        = cfg.UNPACK_RATE_LIMIT
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -169,6 +173,22 @@ async def generic_exception_handler(request, exc):
 
 class UserInput(BaseModel):
     interests: str
+
+
+class UnpackExplainRequest(BaseModel):
+    term: str
+    sentence: str = ""
+    prev_sentence: str = ""
+    next_sentence: str = ""
+
+
+class UnpackTranslateRequest(BaseModel):
+    term: str
+    target_language: Literal["hi", "gu", "fr", "de"]
+
+
+class UnpackReadAloudRequest(BaseModel):
+    term: str
 
 
 # --- Feed models ---
@@ -1138,6 +1158,75 @@ async def chat_stream_endpoint(
             "Cache-Control":     "no-cache",
         },
     )
+
+
+@app.post("/unpack/explain")
+@limiter.limit(UNPACK_RATE_LIMIT)
+async def unpack_explain_endpoint(
+    request: Request,
+    data: UnpackExplainRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Stream an Unpack "Explain" result as NDJSON.
+
+    Each line is a JSON object:
+      {"t":"chunk","v":"<text>"}                       — incremental meaning_in_context text
+      {"t":"done", term, definition_general,
+       meaning_in_context, confidence,
+       source, provider}                                — final result
+      {"t":"error","message":"<reason>"}                 — unrecoverable error
+    """
+    def generator():
+        yield from explain_stream(
+            term          = data.term,
+            sentence      = data.sentence,
+            prev_sentence = data.prev_sentence,
+            next_sentence = data.next_sentence,
+        )
+
+    return StreamingResponse(
+        generator(),
+        media_type="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control":     "no-cache",
+        },
+    )
+
+
+@app.post("/unpack/translate")
+@limiter.limit(UNPACK_RATE_LIMIT)
+async def unpack_translate_endpoint(
+    request: Request,
+    data: UnpackTranslateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Translate a selected term via Google Cloud Translation API. Plain JSON — no streaming."""
+    try:
+        return translate_term(data.term, data.target_language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("[unpack] translate failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Translation is temporarily unavailable.")
+
+
+@app.post("/unpack/read-aloud")
+@limiter.limit(UNPACK_RATE_LIMIT)
+async def unpack_read_aloud_endpoint(
+    request: Request,
+    data: UnpackReadAloudRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Synthesize speech for a selected term/phrase via Google Cloud TTS. Plain JSON — no streaming."""
+    try:
+        return synthesize_speech(data.term)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning("[unpack] read-aloud failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Read aloud is temporarily unavailable.")
 
 
 @app.get("/chat/sessions", response_model=list[ChatSessionSummary])

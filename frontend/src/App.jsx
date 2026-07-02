@@ -10,6 +10,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
 import { SidebarSubsectionProvider, useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
 import { ContextMenuProvider, useContextMenu } from './contexts/ContextMenu.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
+import { useNetworkStatus } from './hooks/useNetworkStatus.js'
+import UnpackListener from './components/unpack/UnpackListener.jsx'
 
 function AuthLoadingScreen() {
   return (
@@ -1089,6 +1091,7 @@ export default function App() {
 function AppContent() {
   const { isAuthenticated, authChecked, user } = useAuth()
   const { actionsByView } = useContextMenu()
+  const { isOnline } = useNetworkStatus()
   const [view, setView] = useState('feed')
   const [showAuth, setShowAuth] = useState(false)
 
@@ -1412,6 +1415,13 @@ function AppContent() {
       {/* Content area */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
+        {/* Offline banner — auto-hides once back online */}
+        {!isOnline && (
+          <div className="flex-shrink-0 px-3 py-1.5 text-center text-[12px] font-medium text-amber-300 bg-amber-500/10 border-b border-amber-500/20">
+            You're offline — showing saved articles
+          </div>
+        )}
+
         {/* Chat workspace — fills all space on mobile */}
         <div className={[
           'overflow-hidden',
@@ -1452,6 +1462,7 @@ function AppContent() {
               userName={user?.name}
               onSidebarClose={handleSidebarClose}
               onBeforeModal={handleBeforeModal}
+              isOnline={isOnline}
             />
           </div>
 
@@ -1481,6 +1492,8 @@ function AppContent() {
           onNavigate={handleSearchNavigate}
         />
       )}
+
+      <UnpackListener />
     </div>
   )
 }

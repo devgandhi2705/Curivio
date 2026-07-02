@@ -25,6 +25,7 @@ import { getInsightNotes, saveCardNote, deleteCardNote } from "../../api/notes.j
 import { exportAsPdf, downloadMarkdown } from "../../utils/exportPackage.js"
 import { getQueue, addToQueue, removeFromQueue, isInQueue } from "../../api/queue.js"
 import { getJourneyPreview } from "../../api/projects.js"
+import { savePackage, deletePackage } from "../../lib/offlineStorage.js"
 
 function formatDate(ts) {
   if (!ts) return ""
@@ -267,12 +268,12 @@ function DayProgressBar({ readCount, totalCount }) {
 
 // ─── Generate button ──────────────────────────────────────────────────────────
 
-function GenerateButton({ generating, onGenerate, locked, nextLabel = "Next Day", generatedTodayCount }) {
+function GenerateButton({ generating, onGenerate, locked, offline = false, nextLabel = "Next Day", generatedTodayCount }) {
   const [confirming, setConfirming] = useState(false)
   const isExtraToday = generatedTodayCount > 0
 
   function handleClick() {
-    if (locked || generating) return
+    if (locked || generating || offline) return
     setConfirming(true)
   }
 
@@ -312,8 +313,8 @@ function GenerateButton({ generating, onGenerate, locked, nextLabel = "Next Day"
       ) : (
         <button
           onClick={handleClick}
-          disabled={generating || locked}
-          title={locked ? "Mark all articles as read to unlock the next package" : undefined}
+          disabled={generating || locked || offline}
+          title={offline ? "Generating requires an internet connection" : locked ? "Mark all articles as read to unlock the next package" : undefined}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] hover:border-white/[0.12] text-sm text-slate-400 hover:text-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
         >
           {generating ? (
@@ -384,6 +385,8 @@ function PackageContent({
   onDeleteNote,
   queuedKeys,
   onToggleQueue,
+  isOnline = true,
+  offlineIds,
 }) {
   const failed = isFailedPackage(pkg)
 
@@ -417,6 +420,8 @@ function PackageContent({
       onDeleteNote: onDeleteNote ? ()        => onDeleteNote(ak)         : undefined,
       isQueued:      queuedKeys?.has(ak) ?? false,
       onToggleQueue: onToggleQueue ? (c) => onToggleQueue(ak, c) : undefined,
+      isOfflineAvailable: offlineIds?.has(pkg.id) || offlineIds?.has(`${project?.project_id || ''}_${pkg.id}_${ak}`) || false,
+      offlineDisabled: !isOnline,
     }
   }
 
@@ -425,7 +430,7 @@ function PackageContent({
       <div>
         <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
         <div className="mt-4 pt-4 border-t border-slate-800">
-          <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
+          <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} offline={!isOnline} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
         </div>
       </div>
     )
@@ -520,6 +525,7 @@ function PackageContent({
           generating={generating}
           onGenerate={onGenerate}
           locked={generationLocked}
+          offline={!isOnline}
           nextLabel={nextLabel}
           generatedTodayCount={generatedTodayCount}
         />
@@ -600,6 +606,8 @@ export default function DailyPackageView({
   targetArticleKey,
   onClearQueueTarget,
   onExportReady,
+  isOnline = true,
+  offlineIds,
 }) {
   const [selectedId, setSelectedId] = useState(packages[0]?.id ?? null)
   // Map<cardId, noteContent> for the currently-selected package
@@ -674,8 +682,10 @@ export default function DailyPackageView({
   }, [selectedId, targetArticleKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleToggleQueue(articleKey, card) {
+    const offlineId = `${project?.project_id || ""}_${selected?.id ?? ""}_${articleKey}`
     if (isInQueue(articleKey)) {
       removeFromQueue(articleKey)
+      deletePackage(offlineId).catch(() => {})
     } else {
       addToQueue(articleKey, {
         title:        card.title        || "",
@@ -686,6 +696,12 @@ export default function DailyPackageView({
         projectName:  project?.name       || "",
         insightId:    selected?.id        ?? null,
       })
+      savePackage(offlineId, card, {
+        projectId:   project?.project_id || "",
+        kind:        "card",
+        title:       card.title || "",
+        projectName: project?.name || "",
+      }).catch(() => {})
     }
   }
 
@@ -751,7 +767,7 @@ export default function DailyPackageView({
     if (generating) {
       return <GeneratingPackageState project={project} nextLabel={nextLabel} />
     }
-    return <EmptyPackageState project={project} onGenerate={onGenerate} />
+    return <EmptyPackageState project={project} onGenerate={onGenerate} isOnline={isOnline} />
   }
 
   return selected ? (
@@ -786,6 +802,8 @@ export default function DailyPackageView({
         onDeleteNote={handleDeleteNote}
         queuedKeys={queuedKeys}
         onToggleQueue={handleToggleQueue}
+        isOnline={isOnline}
+        offlineIds={offlineIds}
       />
       <JourneyPreviewPanel projectId={project.project_id} />
     </>
@@ -950,7 +968,7 @@ function JourneyPreviewPanel({ projectId }) {
   )
 }
 
-function EmptyPackageState({ project, onGenerate }) {
+function EmptyPackageState({ project, onGenerate, isOnline = true }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4">
@@ -967,7 +985,9 @@ function EmptyPackageState({ project, onGenerate }) {
       </p>
       <button
         onClick={onGenerate}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+        disabled={!isOnline}
+        title={!isOnline ? "Generating requires an internet connection" : undefined}
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Generate Day 1
       </button>

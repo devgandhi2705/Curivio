@@ -9,6 +9,12 @@ import os
 GROQ_MODEL    = "llama-3.3-70b-versatile"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
+# Unpack (select-to-explain). Groq primary, Gemini fallback — see
+# unpack-feature-spec.md. Groq's free-tier lineup churns; re-check
+# https://console.groq.com/docs/deprecations before changing GROQ_UNPACK_MODEL.
+GROQ_UNPACK_MODEL   = "openai/gpt-oss-120b"
+GEMINI_UNPACK_MODEL = "models/gemini-2.5-flash-lite"
+
 # ── Rate limits ───────────────────────────────────────────────────────────────
 # Format: "count/period"  — period: second, minute, hour, day
 GENERATE_FEED_RATE_LIMIT  = "5/minute"
@@ -20,6 +26,7 @@ PROJECTS_RATE_LIMIT       = "30/minute"
 INSIGHT_GEN_RATE          = "5/minute"
 BOOKMARKS_RATE_LIMIT      = "60/minute"
 TRIGGER_ALL_PROJECTS_RATE = "2/minute"
+UNPACK_RATE_LIMIT         = "30/minute"
 
 # ── Cache TTLs (hours) ────────────────────────────────────────────────────────
 FEED_CACHE_TTL_HOURS       = 24
@@ -29,6 +36,7 @@ TOPIC_EXPANSION_TTL_HOURS  = 72
 INDUSTRY_BRIEF_TTL_HOURS   = 12
 LEARNING_PATH_TTL_HOURS    = 48
 GITHUB_REPOS_TTL_HOURS     = 24
+UNPACK_CACHE_TTL_HOURS     = 720  # 30 days — definitions/translations don't go stale like news
 
 # ── Deep research ─────────────────────────────────────────────────────────────
 DEEP_RESEARCH_SEARCH_COUNT        = 4

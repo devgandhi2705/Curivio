@@ -98,6 +98,14 @@ function CircleIcon({ className }) {
   )
 }
 
+function CloudCheckIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
+      <path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.75 16 11.545 14.545 13 12.75 13H4a4 4 0 0 1-.821-7.911 5.53 5.53 0 0 1 1.227-1.747Zm5.03 3.596a.75.75 0 0 0-1.06-1.06L6.25 8l-.876-.876a.75.75 0 0 0-1.06 1.06l1.406 1.406a.75.75 0 0 0 1.06 0l2.656-2.652Z" />
+    </svg>
+  )
+}
+
 function PencilIcon({ className }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="currentColor">
@@ -540,6 +548,8 @@ export default function InsightCard({
   note        = null,
   onSaveNote,
   onDeleteNote,
+  isOfflineAvailable = false,
+  offlineDisabled    = false,
 }) {
 
   const type   = TYPE_CONFIG[card.content_type] || TYPE_CONFIG.news
@@ -587,6 +597,9 @@ export default function InsightCard({
               <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide border ${type.labelColor}`}>
                 {type.label}
               </span>
+              {isOfflineAvailable && (
+                <CloudCheckIcon className="w-3.5 h-3.5 text-slate-600" />
+              )}
               {card.category && (
                 <span className="inline-flex items-center text-[10px] text-slate-500/60 leading-none">
                   {card.category}
@@ -647,7 +660,9 @@ export default function InsightCard({
             {onAskAbout && (
               <button
                 onClick={() => onAskAbout(card)}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
+                disabled={offlineDisabled}
+                title={offlineDisabled ? "Requires an internet connection" : undefined}
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
               >
                 <ChatIcon className="w-3 h-3" />
                 Ask About
@@ -657,7 +672,9 @@ export default function InsightCard({
             {onExplainSimply && (
               <button
                 onClick={() => onExplainSimply(card)}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/20 hover:bg-amber-500/10 border border-slate-700/20 hover:border-amber-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
+                disabled={offlineDisabled}
+                title={offlineDisabled ? "Requires an internet connection" : undefined}
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/20 hover:bg-amber-500/10 border border-slate-700/20 hover:border-amber-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
               >
                 <LightbulbIcon className="w-3 h-3" />
                 Explain Simply
@@ -667,7 +684,9 @@ export default function InsightCard({
             {onDeepResearch && (
               <button
                 onClick={() => onDeepResearch(card)}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/20 hover:bg-violet-500/10 border border-slate-700/20 hover:border-violet-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
+                disabled={offlineDisabled}
+                title={offlineDisabled ? "Requires an internet connection" : undefined}
+                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/20 hover:bg-violet-500/10 border border-slate-700/20 hover:border-violet-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
               >
                 <MicroscopeIcon className="w-3 h-3" />
                 <span className="hidden md:inline">Deep Research</span>

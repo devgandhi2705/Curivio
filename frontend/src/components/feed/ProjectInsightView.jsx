@@ -21,6 +21,8 @@ export default function ProjectInsightView({
   targetArticleKey,
   onClearQueueTarget,
   onExportReady,
+  isOnline = true,
+  offlineIds,
 }) {
   return (
     <DailyPackageView
@@ -40,6 +42,8 @@ export default function ProjectInsightView({
       targetArticleKey={targetArticleKey}
       onClearQueueTarget={onClearQueueTarget}
       onExportReady={onExportReady}
+      isOnline={isOnline}
+      offlineIds={offlineIds}
     />
   )
 }

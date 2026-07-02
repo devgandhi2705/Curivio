@@ -708,6 +708,17 @@ CREATE INDEX IF NOT EXISTS idx_journey_plans_project_days
     ON journey_plans (project_id, day_start, day_end);
 """
 
+CREATE_UNPACK_CACHE = """
+CREATE TABLE IF NOT EXISTS unpack_cache (
+    cache_key       TEXT      PRIMARY KEY,
+    term            TEXT      NOT NULL,
+    target_language TEXT      NOT NULL DEFAULT '',
+    response_json   TEXT      NOT NULL,
+    hit_count       INTEGER   NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 MIGRATE_ADD_JOURNEY_SHAPE = (
     "ALTER TABLE learning_projects ADD COLUMN journey_shape TEXT DEFAULT NULL"
 )
@@ -808,4 +819,5 @@ ALL_TABLES = [
     CREATE_RETRIEVAL_METRICS_IDX,
     CREATE_JOURNEY_PLANS,
     CREATE_JOURNEY_PLANS_IDX,
+    CREATE_UNPACK_CACHE,
 ]

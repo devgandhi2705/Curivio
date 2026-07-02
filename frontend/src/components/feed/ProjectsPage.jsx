@@ -40,6 +40,12 @@ import ProjectInsightView from "./ProjectInsightView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import { useContextMenu } from "../../contexts/ContextMenu.jsx"
+import { savePackage } from "../../lib/offlineStorage.js"
+import { useOfflineArticles } from "../../hooks/useOfflineArticles.js"
+
+function cacheInsightsOffline(insights) {
+  insights.forEach((pkg) => { savePackage(pkg.id, pkg).catch(() => {}) })
+}
 
 // ── Shared style maps ─────────────────────────────────────────────────────────
 
@@ -203,7 +209,9 @@ export default function ProjectsPage({
   userId, userName,
   onSidebarClose,
   onBeforeModal,
+  isOnline = true,
 }) {
+  const { offlineIds } = useOfflineArticles()
   // Project list
   const [projects,       setProjects]       = useState([])
   const [loadingList,    setLoadingList]    = useState(true)
@@ -339,6 +347,7 @@ export default function ProjectsPage({
     listProjects()
       .then(async (data) => {
         setProjects(data)
+        savePackage("__projects_list__", data, { kind: "projects-list" }).catch(() => {})
         if (data.length > 0) {
           setActiveId(data[0].project_id)
           const ids = data.map(p => p.project_id)
@@ -367,6 +376,7 @@ export default function ProjectsPage({
     listProjectInsights(activeId, 20)
       .then(async (data) => {
         setInsights(data)
+        cacheInsightsOffline(data)
         if (data.length > 0) {
           const latestId = data[0].id
           const keys = await getInsightReadKeys(activeId, latestId).catch(() => new Set())
@@ -391,7 +401,7 @@ export default function ProjectsPage({
       if (e.detail.projectId !== activeId) return
       setGenerating(false)
       listProjectInsights(activeId)
-        .then(data => setInsights(data))
+        .then(data => { setInsights(data); cacheInsightsOffline(data) })
         .catch(() => {})
     }
     window.addEventListener('feed-generation-done', onDone)
@@ -709,6 +719,8 @@ export default function ProjectsPage({
               onLoadRelatedChats={handleLoadRelatedChats}
               onOpenChat={handleOpenChat}
               onExportReady={handleExportReady}
+              isOnline={isOnline}
+              offlineIds={offlineIds}
             />
           )}
         </>
