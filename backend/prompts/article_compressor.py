@@ -58,9 +58,12 @@ Usage
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -539,3 +542,326 @@ def _batch_tokens(articles: list[CompressedArticle], level: int) -> int:
     """Total estimated tokens for a batch at the given level."""
     text = "\n\n".join(a.at_level(level) for a in articles)
     return max(1, len(text) // 4)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 9.3.3 — Intelligence-First Context Construction
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Extends the existing compressor with source_intelligence-aware levels and
+# rank-weighted budget allocation.  All existing methods remain unchanged.
+#
+# New level aliases (same numeric values — vocabulary alignment with spec):
+LEVEL_SMART   = LEVEL_DETAILED   # 1 — intelligence primary, no raw content
+LEVEL_COMPACT = LEVEL_INSIGHT    # 2 — tight: claim + evidence + numbers
+LEVEL_MINIMAL = LEVEL_CLAIM      # 3 — emergency one-liner
+#
+# Budget thresholds (tokens per article) for level selection:
+_INTEL_THRESHOLDS: dict[int, int] = {
+    LEVEL_FULL:    180,   # >= 180 tok → FULL (all fields + content backup)
+    LEVEL_SMART:   100,   # >= 100 tok → SMART (no raw content)
+    LEVEL_COMPACT:  55,   # >= 55 tok  → COMPACT (tight)
+    LEVEL_MINIMAL:   0,   # anything   → MINIMAL (one-liner)
+}
+
+
+# ── Intel format builders ─────────────────────────────────────────────────────
+# Each builder must include Source-ID and URL at every level (Task 8 invariant).
+
+def _fmt_intel_full(
+    index: int, tag: str, src_id: str,
+    title: str, url: str, src_type: str,
+    claim: str, key_ev: list[str], numbers: list[str],
+    entities: list[str], impls: list[str], risks: list[str],
+    content_backup: str,
+    dates: list[str] = (),
+    contradictions: list[str] = (),
+) -> str:
+    """LEVEL_FULL — all intelligence fields + raw content backup when claim absent."""
+    parts = [
+        f"[{tag} {index}]",
+        f"Source-ID: {src_id}",
+        f"Title: {title}",
+        f"URL:   {url}",
+    ]
+    if src_type:
+        parts.append(f"Source type: {src_type}")
+    if claim:
+        parts.append(f"Claim: {claim}")
+    for i, ev in enumerate(key_ev[:2]):
+        label = "Evidence:" if i == 0 else "         "
+        parts.append(f"{label} {ev}")
+    if numbers:
+        parts.append(f"Numbers: {', '.join(str(n) for n in numbers[:4])}")
+    if entities:
+        parts.append(f"Entities: {', '.join(entities[:5])}")
+    if impls:
+        parts.append(f"Implication: {impls[0]}")
+    if risks:
+        parts.append(f"Risk: {risks[0]}")
+    if dates:
+        parts.append(f"Dates: {', '.join(dates[:2])}")
+    if contradictions:
+        parts.append(f"Contradiction: {contradictions[0]}")
+    # Raw content only when claim is absent (intelligence fallback)
+    if not claim and content_backup:
+        parts.append(f"Content: {content_backup[:300].strip()}")
+    return "\n".join(parts)
+
+
+def _fmt_intel_smart(
+    index: int, tag: str, src_id: str,
+    title: str, url: str,
+    claim: str, key_ev: list[str], numbers: list[str], impls: list[str],
+    dates: list[str] = (),
+    contradictions: list[str] = (),
+) -> str:
+    """LEVEL_SMART — intelligence primary, no raw content (default target)."""
+    parts = [
+        f"[{tag} {index}]",
+        f"Source-ID: {src_id}",
+        f"Title: {title}",
+        f"URL:   {url}",
+    ]
+    if claim:
+        parts.append(f"Claim: {claim}")
+    ev_parts = [e for e in key_ev[:2] if e]
+    if ev_parts:
+        parts.append(f"Evidence: {'; '.join(ev_parts)}")
+    if numbers:
+        parts.append(f"Numbers: {', '.join(str(n) for n in numbers[:3])}")
+    if impls:
+        parts.append(f"Implication: {impls[0]}")
+    if dates:
+        parts.append(f"Dates: {', '.join(dates[:2])}")
+    if contradictions:
+        parts.append(f"Contradiction: {contradictions[0]}")
+    return "\n".join(parts)
+
+
+def _fmt_intel_compact(
+    index: int, tag: str, src_id: str,
+    title: str, url: str,
+    claim: str, key_ev: list[str], numbers: list[str],
+) -> str:
+    """LEVEL_COMPACT — approaching budget limits: claim + evidence + numbers."""
+    parts = [
+        f"[{tag} {index}] {title} | {src_id}",
+        f"URL: {url}",
+    ]
+    if claim:
+        parts.append(f"Claim: {claim[:120]}")
+    if key_ev:
+        parts.append(f"Evidence: {key_ev[0][:100]}")
+    if numbers:
+        parts.append(f"Numbers: {', '.join(str(n) for n in numbers[:2])}")
+    return "\n".join(parts)
+
+
+def _fmt_intel_minimal(
+    index: int, tag: str, src_id: str,
+    title: str, url: str,
+    claim: str, numbers: list[str],
+) -> str:
+    """LEVEL_MINIMAL — emergency fallback: one line with strongest evidence."""
+    core = claim or title
+    num_str = f" [{numbers[0]}]" if numbers else ""
+    return f"{src_id}: {core[:90]}{num_str} ({url})"
+
+
+# ── Weight and budget helpers ─────────────────────────────────────────────────
+
+def _intel_weight(article: dict, rank: int, total: int) -> float:
+    """
+    Article importance weight for budget allocation.
+    Combines rank_score, signal_density, source_strength, and position.
+    All inputs are optional with sensible defaults.
+    """
+    rank_score      = float(article.get("_rank_score")     or 0.5)
+    signal_density  = float(article.get("signal_density")  or 0.5)
+    source_strength = float(article.get("source_strength") or 0.5)
+    # Position bonus: rank 0 (best) = 1.0, rank N-1 (worst) = 0.5
+    position = 1.0 - (rank / max(total - 1, 1)) * 0.5
+    return 0.35 * rank_score + 0.30 * signal_density + 0.15 * source_strength + 0.20 * position
+
+
+def _level_for_budget(tokens: int) -> int:
+    """Select the richest compression level that fits within the token budget."""
+    if tokens >= _INTEL_THRESHOLDS[LEVEL_FULL]:    return LEVEL_FULL
+    if tokens >= _INTEL_THRESHOLDS[LEVEL_SMART]:   return LEVEL_SMART
+    if tokens >= _INTEL_THRESHOLDS[LEVEL_COMPACT]: return LEVEL_COMPACT
+    return LEVEL_MINIMAL
+
+
+def _title_claim_overlap(title: str, claim: str) -> float:
+    """Jaccard similarity of word sets — used to suppress redundant claims."""
+    t = set(title.lower().split())
+    c = set(claim.lower().split())
+    union = t | c
+    return len(t & c) / len(union) if union else 0.0
+
+
+# ── ArticleCompressor extension ───────────────────────────────────────────────
+# Added as new methods on the existing class to keep backward compatibility.
+
+def _compress_intel_impl(
+    self_unused,
+    article: dict,
+    index: int = 1,
+    tag: str = "CORE",
+) -> "CompressedArticle":
+    """
+    Compress using source_intelligence fields as primary data source.
+
+    Reads: main_claim, key_evidence, important_numbers, important_entities,
+           implications, risks, signal_density, source_strength.
+    Falls back to content-extraction when intelligence fields are absent.
+    Never raises — empty fields degrade gracefully.
+    """
+    title    = (article.get("title")       or "").strip()
+    url      = (article.get("url")         or "").strip()
+    content  = (article.get("content")     or "").strip()
+    src_type = (article.get("source_type") or "").strip()
+    src_id   = f"{tag}-{index}"
+
+    # ── Intelligence fields (set by source_intelligence_service) ──────────────
+    claim    = (article.get("main_claim") or "").strip()
+    key_ev   = [e for e in (article.get("key_evidence")       or []) if e and isinstance(e, str)]
+    numbers  = [n for n in (article.get("important_numbers")  or []) if n]
+    entities = [e for e in (article.get("important_entities") or []) if e and isinstance(e, str)]
+    impls    = [i for i in (article.get("implications")       or []) if i and isinstance(i, str)]
+    risks    = [r for r in (article.get("risks")              or []) if r and isinstance(r, str)]
+    dates    = [d for d in (article.get("important_dates")    or []) if d and isinstance(d, str)]
+    contras  = [c for c in (article.get("contradictions")     or []) if c and isinstance(c, str)]
+
+    # ── Fallback: extract from raw content when intelligence is absent ─────────
+    if not claim:
+        claim = _extract_key_claim(title, content)
+    if not key_ev:
+        ev = _extract_evidence(content)
+        key_ev = [ev] if ev else []
+
+    # ── Dedup: suppress evidence[0] when identical to claim ───────────────────
+    if key_ev and key_ev[0] == claim:
+        key_ev = key_ev[1:]
+
+    # ── Dedup: suppress claim display when title already conveys the same idea ─
+    # High word overlap means claim adds no information over title.
+    show_claim = bool(claim) and _title_claim_overlap(title, claim) < 0.70
+
+    display_claim = claim if show_claim else ""
+
+    # ── Build all four level representations ──────────────────────────────────
+    level0 = _fmt_intel_full(
+        index, tag, src_id, title, url, src_type,
+        display_claim, key_ev, numbers, entities, impls, risks, content,
+        dates, contras,
+    )
+    level1 = _fmt_intel_smart(
+        index, tag, src_id, title, url, display_claim, key_ev, numbers, impls,
+        dates, contras,
+    )
+    level2 = _fmt_intel_compact(
+        index, tag, src_id, title, url, display_claim, key_ev, numbers,
+    )
+    level3 = _fmt_intel_minimal(
+        index, tag, src_id, title, url, display_claim, numbers,
+    )
+
+    # Monotonic invariant: each level must be <= previous in length
+    if len(level1) > len(level0): level1 = level0
+    if len(level2) > len(level1): level2 = level1
+
+    return CompressedArticle(
+        title          = title,
+        url            = url,
+        key_claim      = claim,
+        evidence       = key_ev[0] if key_ev else "",
+        implication    = impls[0] if impls else "",
+        novelty        = "",
+        level0         = level0,
+        level1         = level1,
+        level2         = level2,
+        level3         = level3,
+        original_chars = len(content),
+    )
+
+
+def _format_intel_batch_impl(
+    self,
+    articles: list[dict],
+    tag: str,
+    article_budget_tokens: int = 3000,
+) -> tuple[str, list[dict]]:
+    """
+    Format a batch of enriched articles with rank-weighted budget allocation.
+
+    Each article receives a token budget proportional to its importance
+    (rank_score, signal_density, source_strength, position).  The richest
+    compression level that fits within the per-article budget is selected.
+
+    Returns
+    -------
+    (formatted_text, per_article_metadata)
+
+    per_article_metadata entries:
+      title, level_selected, tokens_before, tokens_after, tokens_saved,
+      rank_score, signal_density, source_strength, budget_allocated
+    """
+    if not articles:
+        return (
+            f"({tag}: NO ARTICLES RETRIEVED — do NOT generate cards for this section. "
+            "Do NOT synthesise, invent, or infer content.)",
+            [],
+        )
+
+    n = len(articles)
+    weights     = [_intel_weight(a, i, n) for i, a in enumerate(articles)]
+    total_w     = sum(weights) or 1.0
+    # Minimum 40 tok per article so even low-weight articles get one-liner
+    per_budgets = [max(40, int(article_budget_tokens * w / total_w)) for w in weights]
+
+    parts: list[str]  = []
+    meta:  list[dict] = []
+
+    for i, (article, budget) in enumerate(zip(articles, per_budgets), 1):
+        level    = _level_for_budget(budget)
+        ca       = self.compress_intel(article, i, tag)
+        text     = ca.at_level(level)
+        tok_after = ca.tokens_at_level(level)
+        # Estimate "before" as the footprint of the old fixed-format approach
+        # (title+url+src_id+type+claim+numbers+entities+evid0 + content[:450])
+        tok_before = max(1, (
+            len(article.get("title", "")) +
+            len(article.get("url", "")) +
+            len((article.get("content") or "")[:450]) +
+            80   # overhead for labels and other fields
+        ) // 4)
+
+        parts.append(text)
+        entry = {
+            "title":           (article.get("title") or "")[:50],
+            "level_selected":  LEVEL_NAMES[level],
+            "tokens_before":   tok_before,
+            "tokens_after":    tok_after,
+            "tokens_saved":    max(0, tok_before - tok_after),
+            "rank_score":      round(float(article.get("_rank_score")     or 0.5), 3),
+            "signal_density":  round(float(article.get("signal_density")  or 0.5), 3),
+            "source_strength": round(float(article.get("source_strength") or 0.5), 3),
+            "budget_allocated": budget,
+        }
+        meta.append(entry)
+        logger.info(
+            "[context_packing] title=%r  level=%s  tok_before=%d  tok_after=%d"
+            "  saved=%d  rank=%.3f  sig_density=%.3f  src_strength=%.3f",
+            entry["title"], entry["level_selected"],
+            entry["tokens_before"], entry["tokens_after"], entry["tokens_saved"],
+            entry["rank_score"], entry["signal_density"], entry["source_strength"],
+        )
+
+    return "\n\n".join(parts), meta
+
+
+# Attach new methods to ArticleCompressor without modifying the class definition.
+ArticleCompressor.compress_intel        = _compress_intel_impl        # type: ignore[attr-defined]
+ArticleCompressor.format_intel_batch    = _format_intel_batch_impl    # type: ignore[attr-defined]

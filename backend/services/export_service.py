@@ -9,6 +9,7 @@ insight_to_markdown(project_id, insight_id) -> str
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timezone
 
 
@@ -22,6 +23,40 @@ def _fmt_date(ts: str) -> str:
 
 
 _TYPE_EMOJI = {"news": "📰", "educational": "📚", "curiosity": "💡"}
+_STEP_MARKER = re.compile(r"^\d+\.\s*")
+
+
+def _block_to_md(btype: str, content: str) -> list[str]:
+    text = (content or "").strip()
+    if not text:
+        return []
+    if btype == "step_list":
+        steps = [_STEP_MARKER.sub("", s).strip() for s in text.split("\n") if s.strip()]
+        return [f"{i}. {s}" for i, s in enumerate(steps, 1)] + [""]
+    if btype == "warning":
+        return [f"> ⚠️ {text}", ""]
+    if btype == "evidence":
+        return [f"> {text}", ""]
+    if btype == "key_takeaway":
+        return [f"**{text}**", ""]
+    label = btype.replace("_", " ").title() if btype else "Note"
+    return [f"**{label}**", "", text, ""]
+
+
+def _get_next_day_title(project_id: str, next_day: int, conn) -> str | None:
+    batch_row = conn.execute(
+        """SELECT plan_content, shape FROM journey_plans
+           WHERE project_id = ? AND day_start <= ? AND day_end >= ?
+           ORDER BY created_at DESC LIMIT 1""",
+        (project_id, next_day, next_day),
+    ).fetchone()
+    if not batch_row or batch_row["shape"] != "fixed_sequence":
+        return None
+    batch = json.loads(batch_row["plan_content"])
+    for entry in (batch.get("days") or []):
+        if entry.get("day_number") == next_day:
+            return entry.get("display_title") or None
+    return None
 
 
 def _card_to_md(card: dict) -> list[str]:
@@ -35,14 +70,18 @@ def _card_to_md(card: dict) -> list[str]:
     if card.get("summary"):
         lines += [card["summary"], ""]
 
-    edu = card.get("educational_explanation", "")
-    if edu:
-        label = "Deep Dive" if card.get("content_type") == "educational" else "Why This Works"
-        lines += [f"### {label}", "", edu, ""]
-
-    why = card.get("why_it_matters", "")
-    if why:
-        lines += ["### Why It Matters", "", why, ""]
+    blocks = card.get("blocks") or []
+    if blocks:
+        for b in blocks:
+            lines += _block_to_md(b.get("type", ""), b.get("content", ""))
+    else:
+        edu = card.get("educational_explanation", "")
+        if edu:
+            label = "Deep Dive" if card.get("content_type") == "educational" else "Why This Works"
+            lines += [f"### {label}", "", edu, ""]
+        why = card.get("why_it_matters", "")
+        if why:
+            lines += ["### Why It Matters", "", why, ""]
 
     sources = card.get("source_links") or []
     if sources:
@@ -72,8 +111,10 @@ def insight_to_markdown(project_id: str, insight_id: int) -> str:
             (insight_id, project_id),
         ).fetchone()
 
-    if not row:
-        return ""
+        if not row:
+            return ""
+
+        next_title = _get_next_day_title(project_id, row["day_number"] + 1, conn)
 
     pkg          = json.loads(row["insight_json"]) if isinstance(row["insight_json"], str) else {}
     project_name = row["project_name"] or ""
@@ -104,5 +145,8 @@ def insight_to_markdown(project_id: str, insight_id: int) -> str:
 
     today = date.today().isoformat()
     lines += ["---", "", f"*Exported from Research Agent · {today}*"]
+
+    if next_title:
+        lines += ["", f"*Next up: {next_title}*"]
 
     return "\n".join(lines)

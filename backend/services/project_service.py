@@ -2,10 +2,8 @@
 Learning Projects service — CRUD and per-project daily intelligence generation.
 
 Each call to generate_project_insight() produces a *daily package*:
-  - 3 news cards  (current-events grounded)
-  - 2 educational cards (evergreen concepts)
-
-A daily guard prevents double-generation for the same project on the same UTC day.
+  - N news + educational cards (count driven by daily_core_article_count)
+  - 2 curiosity cards
 
 Public API
 ----------
@@ -14,12 +12,12 @@ list_projects()                 -> list[dict]
 get_project(project_id)         -> dict | None
 update_project(project_id, ...) -> dict | None
 delete_project(project_id)      -> bool
+confirm_intent(project_id)      -> dict | None
 
-generate_project_insight(project_id)       -> dict   (daily package)
-generate_all_projects()                    -> dict   (summary of batch run)
+generate_project_insight(project_id)       -> dict
+generate_all_projects()                    -> dict
 list_project_insights(project_id, limit)   -> list[dict]
 get_project_insight(insight_id)            -> dict | None
-already_generated_today(project_id)        -> bool
 """
 
 from __future__ import annotations
@@ -53,10 +51,7 @@ def create_project(
     description: str = "",
     keywords: list[str] | None = None,
     difficulty: str = "intermediate",
-    focus_areas: list[str] | None = None,
     color: str = "blue",
-    preferred_sources: list[str] | None = None,
-    ignored_sources: list[str] | None = None,
     daily_core_article_count: int = 4,
     user_id: str | None = None,
 ) -> dict:
@@ -67,16 +62,25 @@ def create_project(
     with get_connection() as conn:
         conn.execute(
             """INSERT INTO learning_projects
-               (project_id, name, description, keywords, difficulty, focus_areas, color, preferred_sources, ignored_sources, daily_core_article_count, created_at, updated_at, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (project_id, name, description, keywords, difficulty, color, daily_core_article_count, created_at, updated_at, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (project_id, name, description,
-             json.dumps(keywords or []), difficulty,
-             json.dumps(focus_areas or []), color,
-             json.dumps(_normalize_sources(preferred_sources or [])),
-             json.dumps(_normalize_sources(ignored_sources or [])),
+             json.dumps(keywords or []), difficulty, color,
              count, now, now, user_id),
         )
-    return get_project(project_id)
+    project = get_project(project_id)
+
+    # Generate intent profile at creation time (non-fatal — never blocks project creation)
+    intent_profile = None
+    try:
+        from .intent_profile_service import generate_intent_profile, save_intent_profile
+        intent_profile = generate_intent_profile(name, description, keywords or [], difficulty)
+        save_intent_profile(project_id, intent_profile)
+        project["intent_profile"] = intent_profile
+    except Exception:
+        logger.warning("[project_service] intent profile generation failed for %s (non-fatal)", project_id)
+
+    return project
 
 
 def list_projects(user_id: str | None = None) -> list[dict]:
@@ -124,18 +128,15 @@ def get_project(project_id: str) -> dict | None:
 
 
 def update_project(project_id: str, **fields) -> dict | None:
-    allowed = {"name", "description", "keywords", "difficulty", "focus_areas", "color", "preferred_sources", "ignored_sources", "daily_core_article_count"}
+    allowed = {"name", "description", "keywords", "difficulty", "color", "daily_core_article_count"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_project(project_id)
+    new_description = updates.get("description")
+    new_difficulty  = updates.get("difficulty")
     updates["updated_at"] = _now()
-    for lf in ("keywords", "focus_areas"):
-        if lf in updates and isinstance(updates[lf], list):
-            updates[lf] = json.dumps(updates[lf])
-    if "preferred_sources" in updates and isinstance(updates["preferred_sources"], list):
-        updates["preferred_sources"] = json.dumps(_normalize_sources(updates["preferred_sources"]))
-    if "ignored_sources" in updates and isinstance(updates["ignored_sources"], list):
-        updates["ignored_sources"] = json.dumps(_normalize_sources(updates["ignored_sources"]))
+    if "keywords" in updates and isinstance(updates["keywords"], list):
+        updates["keywords"] = json.dumps(updates["keywords"])
     if "daily_core_article_count" in updates:
         updates["daily_core_article_count"] = max(2, min(10, int(updates["daily_core_article_count"])))
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -145,7 +146,29 @@ def update_project(project_id: str, **fields) -> dict | None:
             f"UPDATE learning_projects SET {set_clause} WHERE project_id = ?",
             [*updates.values(), project_id],
         )
-    return get_project(project_id)
+    project = get_project(project_id)
+
+    # Regenerate intent profile if description or difficulty changed (non-fatal, daemon thread)
+    if (new_description or new_difficulty) and project:
+        try:
+            from .intent_profile_service import needs_regeneration as _ip_needs, generate_intent_profile as _ip_gen, save_intent_profile as _ip_save
+            _desc = new_description or project.get("description", "")
+            _diff = new_difficulty  or project.get("difficulty", "intermediate")
+            if _ip_needs(project_id, _desc, _diff):
+                import threading as _t
+                def _regen_ip():
+                    try:
+                        _kw  = project.get("keywords") or []
+                        _prof = _ip_gen(project["name"], _desc, _kw, _diff)
+                        _ip_save(project_id, _prof)
+                        logger.info("[project_service] intent profile regenerated for %s", project_id)
+                    except Exception as _e:
+                        logger.warning("[project_service] intent profile regen failed for %s (non-fatal): %s", project_id, _e)
+                _t.Thread(target=_regen_ip, daemon=True, name=f"intent-regen-{project_id[:8]}").start()
+        except Exception:
+            pass
+
+    return project
 
 
 def delete_project(project_id: str) -> bool:
@@ -155,97 +178,35 @@ def delete_project(project_id: str) -> bool:
     return r.rowcount > 0
 
 
+def confirm_intent(project_id: str) -> dict | None:
+    from ..utils.db import get_connection
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE learning_projects SET intent_confirmed = 1, updated_at = ? WHERE project_id = ?",
+            (_now(), project_id),
+        )
+    return get_project(project_id)
+
+
 def _project_row(row) -> dict:
     d = dict(row)
-    for lf in ("keywords", "focus_areas", "preferred_sources", "ignored_sources"):
-        raw = d.get(lf)
-        if isinstance(raw, str):
-            try:
-                d[lf] = json.loads(raw)
-            except Exception:
-                d[lf] = []
-        elif raw is None:
-            d[lf] = []
+    raw = d.get("keywords")
+    if isinstance(raw, str):
+        try:
+            d["keywords"] = json.loads(raw)
+        except Exception:
+            d["keywords"] = []
+    elif raw is None:
+        d["keywords"] = []
     if d.get("daily_core_article_count") is None:
         d["daily_core_article_count"] = 4
-    return d
-
-
-def _normalize_sources(sources: list[str]) -> list[str]:
-    """
-    Normalize a list of source URLs/domains to bare domain strings suitable
-    for Tavily include_domains (e.g. "https://arxiv.org" → "arxiv.org").
-
-    Deduplicates and filters out empty/invalid entries.
-    """
-    from urllib.parse import urlparse
-    seen: set[str] = set()
-    result: list[str] = []
-    for s in sources:
-        s = s.strip().lower()
-        if not s:
-            continue
-        if "://" not in s:
-            s = "https://" + s
+    raw_ip = d.get("intent_profile")
+    if isinstance(raw_ip, str):
         try:
-            netloc = urlparse(s).netloc
+            d["intent_profile"] = json.loads(raw_ip)
         except Exception:
-            continue
-        domain = netloc.removeprefix("www.").rstrip(".").split(":")[0]
-        if domain and "." in domain and domain not in seen:
-            seen.add(domain)
-            result.append(domain)
-    return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Source relevance check
-# ─────────────────────────────────────────────────────────────────────────────
-
-_CONSUMER_BLOCKLIST: frozenset[str] = frozenset({
-    "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com",
-    "snapchat.com", "ok.com", "vk.com", "tumblr.com", "pinterest.com",
-    "youtube.com", "netflix.com", "twitch.tv", "spotify.com",
-    "amazon.com", "ebay.com", "etsy.com", "aliexpress.com",
-    "whatsapp.com", "telegram.org", "discord.com", "slack.com",
-    "google.com", "bing.com", "yahoo.com", "duckduckgo.com",
-})
-
-
-def check_source_relevance(domain: str, project_name: str, keywords: list[str]) -> dict:
-    """
-    Check whether a domain is relevant to a learning project.
-
-    Fast path: blocklist of consumer/social sites → always irrelevant.
-    Slow path: minimal Grok call to judge relevance.
-    Returns {"relevant": bool, "reason": str}.
-    """
-    domain_lower = domain.lower().strip()
-    if domain_lower in _CONSUMER_BLOCKLIST:
-        return {
-            "relevant": False,
-            "reason": f"{domain} is a consumer/social platform — not useful as a research source",
-        }
-
-    kw_str = ", ".join(keywords[:5]) if keywords else project_name
-    prompt = (
-        f'Is "{domain}" a useful research or reference source for learning about '
-        f'"{project_name}" ({kw_str})? Reply with YES or NO only.'
-    )
-    try:
-        from .grok_service import ask_grok
-        answer = ask_grok(prompt).strip().upper()
-        relevant = answer.startswith("Y")
-        return {
-            "relevant": relevant,
-            "reason": (
-                f"Relevant to {project_name}" if relevant
-                else f"{domain} does not appear to cover {project_name} topics"
-            ),
-        }
-    except Exception as exc:
-        logger.warning("[project_service] relevance check failed for %r: %s", domain, exc)
-        return {"relevant": True, "reason": "Validation unavailable — defaulting to relevant"}
+            d["intent_profile"] = None
+    return d
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +271,7 @@ def _compute_next_display_label(project_id: str) -> tuple[str, str | None]:
         rows = conn.execute(
             """SELECT day_number, DATE(generated_at) AS date_str
                FROM project_insights
-               WHERE project_id = ?
+               WHERE project_id = ? AND status != 'generating'
                ORDER BY day_number ASC""",
             (project_id,),
         ).fetchall()
@@ -351,27 +312,13 @@ def _compute_next_display_label(project_id: str) -> tuple[str, str | None]:
 # Article retrieval — separate pipelines for core learning vs curiosity
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _search_articles(query: str, preferred_sources: list[str] | None = None) -> list[dict]:
+def _search_articles(query: str) -> list[dict]:
     """Single retrieval call — broad search, no domain restriction. Never raises."""
     try:
         from .retrieval_router import route
         return route(query, mode="feed")
     except Exception as e:
         logger.warning("[project_service] retrieval failed for %r: %s", query, e)
-        return []
-
-
-def _search_articles_targeted(query: str, domains: list[str]) -> list[dict]:
-    """
-    Targeted retrieval restricted to specific domains (user preferred sources).
-    Used for the preferred-source slots in the article blend.
-    Never raises.
-    """
-    try:
-        from .retrieval_router import route
-        return route(query, mode="feed", preferred_domains=domains)
-    except Exception as e:
-        logger.warning("[project_service] targeted retrieval failed for %r: %s", query, e)
         return []
 
 
@@ -393,60 +340,27 @@ def _fetch_core_articles(
     project_name: str,
     keywords: list[str],
     suggested_next_topics: list[str],
-    preferred_sources: list[str] | None = None,
+    retrieval_plan: dict | None = None,
 ) -> list[dict]:
-    """
-    Progression-aware retrieval for core learning cards.
-
-    Retrieval strategy:
-      Query 1: Targets the next suggested topic (curriculum advancement).
-      Query 2: Broader project developments (keeps content current).
-      Query 3 (if preferred_sources): Targeted search restricted to user's
-               preferred domains — fills the dedicated preferred-source slots.
-
-    Results are blended so preferred-source articles get priority slots,
-    then filled from global search. Deduplication is applied at the end.
-    """
-    kw = " ".join(keywords[:3]) if keywords else project_name
-
-    if suggested_next_topics:
-        next_topic = suggested_next_topics[0]
-        q1 = f"{project_name} {next_topic} 2025 2026"
-        q2 = f"{next_topic} {kw} concepts framework analysis depth"
+    """Intent-driven retrieval for core learning cards (80% core + 10% adjacent)."""
+    if retrieval_plan:
+        queries = (retrieval_plan.get("core_queries") or []) + \
+                  (retrieval_plan.get("adjacent_queries") or [])
     else:
-        q1 = f"{project_name} {kw} latest developments 2025 2026"
-        q2 = f"{project_name} {kw} concepts framework deep dive"
+        kw = " ".join(keywords[:3]) if keywords else project_name
+        if suggested_next_topics:
+            nt = suggested_next_topics[0]
+            queries = [f"{project_name} {nt} 2025 2026", f"{nt} {kw} concepts framework analysis depth"]
+        else:
+            queries = [f"{project_name} {kw} latest developments 2025 2026",
+                       f"{project_name} {kw} concepts framework deep dive"]
 
-    # Global search (always run)
-    global_articles = _dedup_articles(_search_articles(q1) + _search_articles(q2))
-
-    # Preferred-source search (only when user has anchors configured)
-    preferred_articles: list[dict] = []
-    if preferred_sources:
-        pref_query = q1  # use the progression-focused query for preferred sources too
-        preferred_articles = _search_articles_targeted(pref_query, preferred_sources)
-        logger.info(
-            "[project_service] preferred source retrieval: %d articles from %s",
-            len(preferred_articles), preferred_sources[:3],
-        )
-
-    # Blend: up to 2 preferred-source slots first, then fill from global
-    seen_urls: set[str] = set()
-    blended: list[dict] = []
-
-    for a in preferred_articles[:2]:
-        url = a.get("url", "")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            blended.append(a)
-
-    for a in global_articles:
-        url = a.get("url", "")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            blended.append(a)
-
-    return blended
+    results: list[dict] = []
+    for q in queries:
+        for art in _search_articles(q):
+            art.setdefault("retrieval_query", q)
+            results.append(art)
+    return _dedup_articles(results)
 
 
 _CURIOSITY_QUERIES = [
@@ -461,21 +375,22 @@ _CURIOSITY_QUERIES = [
 def _fetch_curiosity_articles(
     project_name: str,
     keywords: list[str],
+    retrieval_plan: dict | None = None,
 ) -> list[dict]:
-    """
-    Retrieval for curiosity/expansion cards targeting "WAIT… WHAT?" content.
+    """Serendipity retrieval for curiosity cards (10% surprising territory)."""
+    if retrieval_plan and retrieval_plan.get("serendipity_queries"):
+        queries = retrieval_plan["serendipity_queries"]
+    else:
+        kw = " ".join(keywords[:2]) if keywords else project_name
+        import random
+        angles  = random.sample(_CURIOSITY_QUERIES, k=min(2, len(_CURIOSITY_QUERIES)))
+        queries = [a.format(project_name=project_name, kw=kw) for a in angles]
 
-    Runs two queries with different curiosity angles — history/controversy
-    and counterintuitive/secret — to give the LLM surprising material to work with.
-    """
-    kw = " ".join(keywords[:2]) if keywords else project_name
-    import random
-    # Pick two non-overlapping curiosity angles for variety
-    angles = random.sample(_CURIOSITY_QUERIES, k=min(2, len(_CURIOSITY_QUERIES)))
     results: list[dict] = []
-    for angle_template in angles:
-        q = angle_template.format(project_name=project_name, kw=kw)
-        results.extend(_search_articles(q, None))
+    for q in queries:
+        for art in _search_articles(q):
+            art.setdefault("retrieval_query", q)
+            results.append(art)
     return _dedup_articles(results)
 
 
@@ -509,17 +424,22 @@ def _score_beginner_calibration(package: dict) -> int:
     all_cards = (package.get("insights", []) or []) + (package.get("curiosity_insights", []) or [])
     total_hits = 0
     for card in all_cards:
+        blocks_text = " ".join(b.get("content", "") for b in (card.get("blocks") or []))
         text = " ".join(filter(None, [
             card.get("summary", ""),
-            card.get("educational_explanation", ""),
-            card.get("why_it_matters", ""),
+            blocks_text or card.get("educational_explanation", ""),
+            blocks_text or card.get("why_it_matters", ""),
         ])).lower()
         for term in _BEGINNER_JARGON:
             total_hits += text.count(term)
     return total_hits
 
 
-def generate_project_insight(project_id: str) -> dict:
+def generate_project_insight(
+    project_id: str,
+    _stub_id: int | None = None,
+    _precomputed_day_number: int | None = None,
+) -> dict:
     """
     Generate a progressive daily learning package for a project.
 
@@ -537,29 +457,29 @@ def generate_project_insight(project_id: str) -> dict:
     if not project:
         raise ValueError(f"Project {project_id!r} not found")
 
-    # Use MAX(day_number) so duplicate rows never inflate the counter
-    from ..utils.db import get_connection as _gc
-    with _gc() as _conn:
-        _row = _conn.execute(
-            "SELECT COALESCE(MAX(day_number), 0) AS max_day FROM project_insights WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
-    day_number               = (_row["max_day"] if _row else 0) + 1
-    display_label, prev_display_label = _compute_next_display_label(project_id)
+    if _precomputed_day_number is not None:
+        day_number = _precomputed_day_number
+    else:
+        # Exclude generating stubs — they already occupy their day_number slot.
+        from ..utils.db import get_connection as _gc
+        with _gc() as _conn:
+            _row = _conn.execute(
+                "SELECT COALESCE(MAX(day_number), 0) AS max_day FROM project_insights "
+                "WHERE project_id = ? AND status != 'generating'",
+                (project_id,),
+            ).fetchone()
+        day_number = (_row["max_day"] if _row else 0) + 1
+    display_label, _ = _compute_next_display_label(project_id)
     keywords                 = project.get("keywords") or []
-    focus_areas              = project.get("focus_areas") or []
     difficulty               = project.get("difficulty", "intermediate")
-    preferred_sources        = project.get("preferred_sources") or []
     daily_core_article_count = project.get("daily_core_article_count") or 4
 
     # ── Load learning progression ─────────────────────────────────────────────
     try:
         from .progression_service import get_progression
         progression           = get_progression(project_id)
-        explored_concepts     = progression.get("explored_concepts", [])
         suggested_next_topics = progression.get("suggested_next_topics", [])
     except Exception:
-        explored_concepts     = []
         suggested_next_topics = []
 
     # ── Load learning memory + filter suggestions for semantic novelty ─────────
@@ -574,59 +494,27 @@ def generate_project_insight(project_id: str) -> dict:
     except Exception:
         logger.warning("[project_service] learning memory load failed for %s (non-fatal)", project_id)
 
-    # ── Build rich previous-package summaries (last 3, oldest-first) ──────────
-    previous_pkgs = list_project_insights(project_id, limit=3)
-    existing_labels = _compute_display_labels(project_id)
-    previous_packages: list[dict] = []
-    for p in reversed(previous_pkgs):
-        cards       = p.get("insights", [])
-        all_cards   = cards + (p.get("curiosity_insights", []) or [])
-        categories  = list({c.get("category", "") for c in cards if c.get("category")})
-        titles      = [c.get("title", "") for c in all_cards if c.get("title")]
-        day_num     = p.get("day_number")
-        day_label   = existing_labels.get(day_num, f"Day {day_num}")
-        previous_packages.append({
-            "day":        day_label,
-            "headline":   p.get("package_headline", ""),
-            "categories": categories[:5],
-            "titles":     titles[:8],
-        })
-
-    # ── Build inter-article memory references ────────────────────────────────
-    memory_references: dict = {"priorInsights": [], "unresolvedQuestions": [], "nextProgressionGoals": []}
+    # ── Knowledge state — compressed learning history (replaces package history) ─
+    knowledge_state: dict = {}
     try:
-        prior_insights: list[dict] = []
-        unresolved_questions: list[dict] = []
-        for p in reversed(previous_pkgs):  # oldest-first → chronological
-            day_num   = p.get("day_number")
-            day_label = existing_labels.get(day_num, f"Day {day_num}")
-            for card in (p.get("insights") or []):
-                title = (card.get("title") or "").strip()
-                why   = (card.get("why_it_matters") or "").strip()
-                summ  = (card.get("summary") or "").strip()
-                if not title:
-                    continue
-                # First sentence of mechanism reveal; fall back to summary
-                insight_text = (why or summ).split(".")[0].strip()
-                prior_insights.append({"day": day_label, "title": title, "insight": insight_text})
-            for card in (p.get("curiosity_insights") or []):
-                title = (card.get("title") or "").strip()
-                if title:
-                    unresolved_questions.append({"day": day_label, "question": title})
-
-        next_goals: list[str] = []
-        if learning_memory:
-            _stage = learning_memory.get("progression_stage", "foundation")
-            from .learning_memory_service import _STAGE_TODAY_MANDATE as _STM  # noqa: PLC0415
-            next_goals = _STM.get(_stage, [])
-
-        memory_references = {
-            "priorInsights":        prior_insights[-6:],
-            "unresolvedQuestions":  unresolved_questions[-4:],
-            "nextProgressionGoals": next_goals,
-        }
+        from .knowledge_state_service import get_state
+        knowledge_state = get_state(project_id)
     except Exception:
-        logger.warning("[project_service] memory references build failed for %s (non-fatal)", project_id)
+        logger.warning("[project_service] knowledge state load failed for %s (non-fatal)", project_id)
+
+    # ── Intent profile — foundation for editorial decisions ───────────────────
+    intent_profile: dict | None = None
+    try:
+        from .intent_profile_service import get_intent_profile, generate_intent_profile, save_intent_profile
+        intent_profile = get_intent_profile(project_id)
+        if intent_profile is None:
+            # Legacy project or profile generation failed at creation — generate now
+            intent_profile = generate_intent_profile(
+                project["name"], project.get("description", ""), keywords, difficulty
+            )
+            save_intent_profile(project_id, intent_profile)
+    except Exception:
+        logger.warning("[project_service] intent profile load failed for %s (non-fatal)", project_id)
 
     # ── Phase 4.7: Load quality feedback from previous evaluation ────────────
     quality_feedback: str | None = None
@@ -654,28 +542,316 @@ def generate_project_insight(project_id: str) -> dict:
     except Exception:
         logger.debug("[project_service] feed_intelligence unavailable (non-fatal)")
 
-    # ── Retrieve articles — intelligence-driven or keyword fallback ──────────
-    if intelligence_plan and intelligence_plan.core_articles:
-        core_articles      = intelligence_plan.core_articles
-        curiosity_articles = intelligence_plan.curiosity_articles or []
-        logger.info(
-            "[project_service] %s day=%d [intelligence] stage=%s targets=%s core=%d curiosity=%d",
-            project_id, day_number, _stage,
-            [ct.concept for ct in intelligence_plan.concept_targets],
-            len(core_articles), len(curiosity_articles),
+    # ── Retrieve articles — always via retrieval_planner ─────────────────────
+    # The intelligence plan's concept targets feed INTO the planner as enriched
+    # knowledge state — they never bypass retrieval_planner.plan().
+    retrieval_plan: dict | None = None
+    _planner_called    = False
+    _queries_generated = 0
+
+    # Enrich knowledge state: prepend concept targets as highest-priority active topics
+    _planning_ks = knowledge_state
+    if intelligence_plan and intelligence_plan.concept_targets:
+        _concept_topics  = [ct.concept for ct in intelligence_plan.concept_targets]
+        _planning_ks     = dict(knowledge_state or {})
+        _existing_active = list(_planning_ks.get("active_topics") or [])
+        _planning_ks["active_topics"] = _concept_topics + [
+            t for t in _existing_active if t not in _concept_topics
+        ]
+
+    # ── Journey plan — today's focus for retrieval planning (Phase 2b-i) ────────
+    today_plan: dict | None = None
+    try:
+        from .journey_planner_service import get_today_plan as _get_today_plan
+        today_plan = _get_today_plan(
+            project_id=project_id,
+            day_number=day_number,
+            intent_profile=intent_profile,
+            keywords=keywords,
         )
-    else:
-        core_articles = _fetch_core_articles(
-            project["name"], keywords, suggested_next_topics,
-            preferred_sources=preferred_sources,
-        )
-        curiosity_articles = _fetch_curiosity_articles(project["name"], keywords)
         logger.info(
-            "[project_service] %s day=%d [keyword fallback] core=%d curiosity=%d next_topics=%s",
+            "[project_service] %s day=%d [journey_plan] shape_hint=%s",
             project_id, day_number,
-            len(core_articles), len(curiosity_articles),
-            suggested_next_topics[:2],
+            "fixed_seq" if today_plan and "focus" in today_plan else
+            "rotating"  if today_plan and "theme" in today_plan else
+            "fallback",
         )
+    except Exception:
+        logger.warning("[project_service] journey plan load failed for %s (non-fatal)", project_id)
+
+    try:
+        from .retrieval_planner import plan as _plan_retrieval
+        retrieval_plan = _plan_retrieval(
+            intent_profile, _planning_ks, keywords, project["name"],
+            today_plan=today_plan,
+        )
+        _planner_called    = True
+        _queries_generated = (
+            len(retrieval_plan.get("core_queries",        [])) +
+            len(retrieval_plan.get("adjacent_queries",    [])) +
+            len(retrieval_plan.get("serendipity_queries", []))
+        )
+        logger.info(
+            "[project_service] %s day=%d [retrieval_planner] core=%d adj=%d serendipity=%d",
+            project_id, day_number,
+            len(retrieval_plan.get("core_queries",        [])),
+            len(retrieval_plan.get("adjacent_queries",    [])),
+            len(retrieval_plan.get("serendipity_queries", [])),
+        )
+        logger.info(
+            "[project_service] %s day=%d [retrieval_queries] core=%s",
+            project_id, day_number,
+            retrieval_plan.get("core_queries", []),
+        )
+    except Exception:
+        logger.warning("[project_service] retrieval_planner failed for %s (non-fatal)", project_id)
+
+    logger.info(
+        "[RETRIEVAL PATH] project_id=%s intent_profile_loaded=%s knowledge_state_loaded=%s"
+        " planner_called=%s queries_generated=%d",
+        project_id,
+        intent_profile   is not None,
+        knowledge_state  is not None,
+        _planner_called,
+        _queries_generated,
+    )
+
+    core_articles = _fetch_core_articles(
+        project["name"], keywords, suggested_next_topics, retrieval_plan,
+    )
+    curiosity_articles = _fetch_curiosity_articles(project["name"], keywords, retrieval_plan)
+
+    # ── Supplementary trusted-domain search (rotating_theme only) ─────────────
+    # Fires 1-2 additional targeted searches restricted to today_plan.trusted_sources
+    # and merges results into core_articles BEFORE ranking — actual retrieval step,
+    # not a ranking-time bonus.  Skipped for fixed_sequence (no trusted_sources field).
+    _tp_trusted = (today_plan.get("trusted_sources") or []) if today_plan else []
+    _tp_is_rotating = bool(today_plan and "theme" in today_plan and "focus" not in today_plan)
+    if _tp_is_rotating and _tp_trusted:
+        try:
+            from .tavily_service import _search_raw as _tavily_search_raw, normalize_query as _nq
+            _sup_queries = (retrieval_plan.get("core_queries") or [])[:2] if retrieval_plan else [project["name"]]
+            _core_seen: set[str] = {a.get("url", "") for a in core_articles}
+            _sup_added: list[dict] = []
+            for _sq in _sup_queries:
+                for _a in _tavily_search_raw(
+                    _nq(_sq),
+                    max_results=5,
+                    search_depth="basic",
+                    include_domains=_tp_trusted,
+                ):
+                    _url = _a.get("url", "")
+                    if _url and _url not in _core_seen:
+                        _a.setdefault("retrieval_query", _sq)
+                        _sup_added.append(_a)
+                        _core_seen.add(_url)
+            core_articles = core_articles + _sup_added
+            logger.info(
+                "[project_service] %s day=%d [trusted-domain-search] trusted=%s queries=%d added=%d total_core=%d",
+                project_id, day_number, _tp_trusted, len(_sup_queries), len(_sup_added), len(core_articles),
+            )
+        except Exception as _sup_exc:
+            logger.warning(
+                "[project_service] supplementary trusted-domain search failed for %s: %s",
+                project_id, _sup_exc,
+            )
+
+    logger.info(
+        "[project_service] %s day=%d [planned retrieval] core=%d curiosity=%d",
+        project_id, day_number, len(core_articles), len(curiosity_articles),
+    )
+    logger.info(
+        "[project_service] %s day=%d [core_article_titles] %s",
+        project_id, day_number,
+        [a.get("title", "")[:70] for a in core_articles[:6]],
+    )
+
+    # ── Validate articles — drop off-topic retrievals before prompt ──────────
+    _retrieved_core      = len(core_articles)       # captured before validation for metrics
+    _retrieved_curiosity = len(curiosity_articles)
+    try:
+        from .retrieval_validator import filter_articles as _validate_articles
+        _proj_name = project.get("name", "")
+        _proj_desc = project.get("description", "")
+        core_articles      = _validate_articles(
+            core_articles, intent_profile, knowledge_state, keywords,
+            mode="core", project_id=project_id,
+            project_name=_proj_name, project_description=_proj_desc,
+            min_required=8,
+        )
+        curiosity_articles = _validate_articles(
+            curiosity_articles, intent_profile, knowledge_state, keywords,
+            mode="serendipity", project_id=project_id,
+            project_name=_proj_name, project_description=_proj_desc,
+            min_required=4,
+        )
+        logger.info(
+            "[project_service] %s day=%d [validator] core %d→%d curiosity %d→%d",
+            project_id, day_number,
+            _retrieved_core, len(core_articles),
+            _retrieved_curiosity, len(curiosity_articles),
+        )
+    except Exception:
+        logger.warning("[project_service] retrieval_validator failed for %s (non-fatal)", project_id)
+
+    # ── Near-duplicate suppression (keeps highest-validated source per story) ──
+    try:
+        from .similarity_service import deduplicate_ranked as _dedup_ranked
+        _pre_core = len(core_articles)
+        core_articles      = _dedup_ranked(core_articles)
+        curiosity_articles = _dedup_ranked(curiosity_articles)
+        if len(core_articles) < _pre_core:
+            logger.info(
+                "[project_service] %s day=%d [near-dedup] core %d->%d",
+                project_id, day_number, _pre_core, len(core_articles),
+            )
+    except Exception:
+        logger.warning("[project_service] deduplicate_ranked failed for %s (non-fatal)", project_id)
+
+    # ── Phase 9.3.1 + 9.3.2: Source Intelligence Layer ───────────────────────
+    # Moved BEFORE ranking so signal_density / source_strength are available
+    # to the ranker for T4 (quality amplifier) and T5 (tie-breaker) scoring.
+    # Deterministic enrichment — no LLM calls. Mutates in-place. Non-fatal.
+    import time as _t5_time
+    _t5_pre_enrich = _t5_time.monotonic()
+    _t5_pre_sample = [
+        (a.get("url", "")[:50], a.get("signal_density"), a.get("source_strength"))
+        for a in core_articles[:2]
+    ]
+    logger.info("[PHASE2B-ITEM5] pre_enrich ts=%.3f sample=%s", _t5_pre_enrich, _t5_pre_sample)
+    try:
+        from .source_intelligence_service import enrich_articles as _enrich_intel
+        _enrich_intel(core_articles)
+        _enrich_intel(curiosity_articles)
+    except Exception:
+        logger.warning("[project_service] source_intelligence failed for %s (non-fatal)", project_id)
+    _t5_post_enrich = _t5_time.monotonic()
+    _t5_post_sample = [
+        (a.get("url", "")[:50], a.get("signal_density"), a.get("source_strength"))
+        for a in core_articles[:2]
+    ]
+    logger.info(
+        "[PHASE2B-ITEM5] post_enrich ts=%.3f elapsed_ms=%.1f sample=%s",
+        _t5_post_enrich, (_t5_post_enrich - _t5_pre_enrich) * 1000, _t5_post_sample,
+    )
+
+    # ── Rank articles using learning context (best learning article wins) ────
+    _t5_pre_rank = _t5_time.monotonic()
+    _t5_rank_input_sample = [
+        (a.get("url", "")[:50], a.get("signal_density"), a.get("source_strength"))
+        for a in core_articles[:2]
+    ]
+    logger.info(
+        "[PHASE2B-ITEM5] pre_rank ts=%.3f sample=%s",
+        _t5_pre_rank, _t5_rank_input_sample,
+    )
+    try:
+        from .source_ranker import rank_articles as _rank_articles
+        _recent_sources: dict[str, int] = {}
+        try:
+            from .article_provenance_service import get_recent_source_usage as _get_recent
+            _recent_sources = _get_recent(project_id, window_days=7)
+        except Exception:
+            pass   # non-fatal — penalty skipped silently
+
+        _lc = {
+            "intent_profile":       intent_profile,
+            "knowledge_state":      knowledge_state,
+            "keywords":             keywords,
+            "recent_sources":       _recent_sources,
+            "project_description":  (project.get("description") or "").strip(),
+            "trusted_sources":      (today_plan.get("trusted_sources") or []) if today_plan else [],
+        }
+        core_articles      = _rank_articles(core_articles,      query=project["name"],
+                                            top_n=8, mode="feed", learning_context=_lc,
+                                            min_domains=4)
+        curiosity_articles = _rank_articles(curiosity_articles, query=project["name"],
+                                            top_n=4, mode="feed", learning_context=_lc,
+                                            min_domains=3)
+        logger.info(
+            "[project_service] %s day=%d [learning_rank] core=%d curiosity=%d",
+            project_id, day_number, len(core_articles), len(curiosity_articles),
+        )
+    except Exception:
+        logger.warning("[project_service] learning ranking failed for %s (non-fatal)", project_id)
+    logger.info(
+        "[PHASE2B-ITEM5] post_rank elapsed_ms=%.1f",
+        (_t5_time.monotonic() - _t5_pre_rank) * 1000,
+    )
+
+    # ── Persist retrieval provenance before generation ────────────────────────
+    _feed_date = datetime.now(timezone.utc).strftime(_DATE_FMT)
+    try:
+        from .article_provenance_service import persist as _persist_provenance
+        _core_qs     = (retrieval_plan.get("core_queries", []) + retrieval_plan.get("adjacent_queries", [])) if retrieval_plan else [project["name"]]
+        _serendy_qs  = retrieval_plan.get("serendipity_queries", []) if retrieval_plan else [project["name"]]
+        _persist_provenance(project_id, _feed_date, core_articles,      "core",        _core_qs)
+        _persist_provenance(project_id, _feed_date, curiosity_articles,  "serendipity", _serendy_qs)
+    except Exception:
+        logger.warning("[project_service] provenance persist failed for %s (non-fatal)", project_id)
+
+    # ── Enforce minimum source requirement ───────────────────────────────────
+    # Core articles are mandatory — feed generation cannot proceed without evidence.
+    if not core_articles:
+        logger.warning(
+            "[project_service] %s day=%d: zero core articles after validation — retrying with keyword fallback",
+            project_id, day_number,
+        )
+        try:
+            _rb_kw  = " ".join(keywords[:4]) if keywords else project["name"]
+            _rb_qs  = [
+                f"{project['name']} {_rb_kw} 2025 2026",
+                f"{project['name']} analysis depth overview",
+            ]
+            _rb: list[dict] = []
+            for _q in _rb_qs:
+                _rb.extend(_search_articles(_q))
+            _rb = _dedup_articles(_rb)
+            if _rb:
+                from .source_ranker import rank_articles as _rerank
+                core_articles = _rerank(
+                    _rb, query=project["name"], top_n=8, mode="feed",
+                    learning_context={
+                        "intent_profile":  intent_profile,
+                        "knowledge_state": knowledge_state,
+                        "keywords":        keywords,
+                    },
+                    min_domains=4,
+                )
+                logger.info(
+                    "[project_service] %s day=%d: retry produced %d core articles",
+                    project_id, day_number, len(core_articles),
+                )
+        except Exception as _rbe:
+            logger.warning("[project_service] %s core retrieval retry failed: %s", project_id, _rbe)
+
+    if not core_articles:
+        raise RuntimeError(
+            "No source articles could be retrieved for this project after retry. "
+            "Feed generation requires evidence — please try again in a few minutes."
+        )
+
+    # Curiosity retry — non-fatal; zero curiosity articles = no curiosity cards.
+    if not curiosity_articles:
+        logger.info(
+            "[project_service] %s day=%d: zero curiosity articles — retrying serendipity queries",
+            project_id, day_number,
+        )
+        try:
+            import random as _rand
+            _ca = _rand.sample(_CURIOSITY_QUERIES, k=min(2, len(_CURIOSITY_QUERIES)))
+            _ckw  = " ".join(keywords[:2]) if keywords else project["name"]
+            _cqs  = [q.format(project_name=project["name"], kw=_ckw) for q in _ca]
+            _cr: list[dict] = []
+            for _q in _cqs:
+                _cr.extend(_search_articles(_q))
+            curiosity_articles = _dedup_articles(_cr)
+            logger.info(
+                "[project_service] %s day=%d: curiosity retry produced %d articles",
+                project_id, day_number, len(curiosity_articles),
+            )
+        except Exception:
+            pass   # curiosity is best-effort; proceed without
 
     # ── Curiosity strategy (Phase 4.4) ────────────────────────────────────────
     curiosity_directives: str | None = None
@@ -685,86 +861,281 @@ def generate_project_insight(project_id: str) -> dict:
     except Exception:
         logger.debug("[project_service] curiosity_orchestrator unavailable (non-fatal)")
 
-    # ── Build and send prompt ─────────────────────────────────────────────────
-    from ..prompts.project_insight_prompt import make_daily_package_prompt
-    prompt = make_daily_package_prompt(
-        project_name=project["name"],
-        keywords=keywords,
-        difficulty=difficulty,
-        focus_areas=focus_areas,
-        day_number=day_number,
-        display_label=display_label,
-        prev_display_label=prev_display_label,
-        previous_packages=previous_packages,
-        core_articles=core_articles,
-        curiosity_articles=curiosity_articles,
-        explored_concepts=explored_concepts,
-        suggested_next_topics=suggested_next_topics,
-        daily_core_article_count=daily_core_article_count,
-        learning_memory=learning_memory or None,
-        memory_references=memory_references or None,
-        curiosity_directives=curiosity_directives,
-        intelligence_context=intelligence_context,
-        quality_feedback=quality_feedback,
+    # ── Story-level duplicate enforcement — before article assignment ────────
+    # Groups core articles by retrieval_query (same search = same story) and by
+    # title token overlap >= 0.35.  Keeps highest-ranked per cluster so each
+    # article slot teaches a distinct concept.
+    try:
+        from .similarity_service import deduplicate_by_story as _dedup_by_story
+        _story_pre = len(core_articles)
+        core_articles = _dedup_by_story(core_articles)
+        _story_removed = _story_pre - len(core_articles)
+        logger.info(
+            "[DUPLICATE ENFORCEMENT] project_id=%s candidate_count=%d removed=%d remaining=%d",
+            project_id, _story_pre, _story_removed, len(core_articles),
+        )
+    except Exception:
+        logger.warning("[project_service] story dedup failed for %s (non-fatal)", project_id)
+
+    # URLs the LLM is allowed to cite — anything else is an invented/fabricated link.
+    _allowed_urls: frozenset[str] = frozenset(
+        a.get("url", "").rstrip("/").lower()
+        for a in (core_articles + curiosity_articles)
+        if a.get("url")
     )
 
-    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
+    # ── Article source plans — pre-assign sources before LLM generation ─────────
+    _article_plan_block: str | None = None
+    _frame_hint:         str | None = None
     try:
-        from .token_budget import estimate_tokens, estimate_total_request, BudgetReport, log_budget_report
-        from .model_registry import get_model_config
-        from ..config import GROQ_MODEL as _MODEL
-
-        _cfg        = get_model_config(_MODEL)
-        _total_tok  = estimate_total_request(prompt=prompt)
-        _core_tok   = sum(
-            estimate_tokens((a.get("content") or "")[:700]) + estimate_tokens(a.get("title", ""))
-            for a in core_articles
+        from .article_plan_service import build_article_plans, validate_plans, plans_to_prompt_block
+        _plans = build_article_plans(core_articles, daily_core_article_count)
+        _ok, _plan_errs = validate_plans(_plans)
+        if not _ok:
+            logger.warning("[project_service] %s article plan issues: %s", project_id, _plan_errs)
+        _assigned_src = sum(len(p.assigned_sources) for p in _plans)
+        _backup_src   = sum(len(p.backup_sources)   for p in _plans)
+        logger.info(
+            "[SOURCE ASSIGNMENT] project_id=%s day=%d slots=%d assigned=%d backup=%d",
+            project_id, day_number, len(_plans), _assigned_src, _backup_src,
         )
-        _curiosity_tok = sum(
-            estimate_tokens((a.get("content") or "")[:700]) + estimate_tokens(a.get("title", ""))
-            for a in curiosity_articles
-        )
-        _instructions_tok = max(0, _total_tok - _core_tok - _curiosity_tok)
-        _od_tpm     = _cfg.tier_limits.get("on_demand", {}).get("tpm")
-        _remaining  = _cfg.prompt_budget - _total_tok
-        _util       = (_total_tok / _cfg.prompt_budget * 100) if _cfg.prompt_budget > 0 else 0.0
-        _warnings: list[str] = []
-        if _remaining < 0:
-            _warnings.append(
-                f"OVER SAFE BUDGET: {_total_tok:,} > {_cfg.prompt_budget:,} "
-                f"by {-_remaining:,} tokens"
-            )
-        if _od_tpm and _total_tok > _od_tpm:
-            _warnings.append(
-                f"EXCEEDS GROQ ON_DEMAND TIER LIMIT: {_total_tok:,} > {_od_tpm:,} "
-                f"(delta: +{_total_tok - _od_tpm:,}) — will fail HTTP 413 on free tier"
-            )
-        log_budget_report(BudgetReport(
-            operation        = f"package_generation/day_{day_number}/{project_id[:8]}",
-            model_name       = _MODEL,
-            context_window   = _cfg.context_window,
-            safe_budget      = _cfg.prompt_budget,
-            output_reserve   = _cfg.output_budget,
-            prompt_tokens    = _total_tok,
-            remaining_budget = _remaining,
-            utilization_pct  = _util,
-            sections         = {
-                "prompt_instructions": _instructions_tok,
-                "core_articles":       _core_tok,
-                "curiosity_articles":  _curiosity_tok,
-            },
-            warnings = _warnings,
-        ), logger)
+        _frame_hint = (today_plan.get("frame_hint") or None) if today_plan else None
+        _article_plan_block = plans_to_prompt_block(_plans, core_articles, frame_hint=_frame_hint)
     except Exception:
-        logger.debug("[project_service] budget instrumentation failed (non-fatal)", exc_info=True)
+        logger.warning("[project_service] article_plan_service failed for %s (non-fatal)", project_id)
+
+    # ── Build prompt — active budget control via ModelAwareAssembler ─────────
+    from ..prompts.project_insight_prompt import make_daily_package_composer
+    from ..prompts.model_aware_assembler import ModelAwareAssembler
+    from ..config import GROQ_MODEL as _ACTIVE_MODEL
+
+    # Phase 9.3.3B — Calibrated article budget via probe-measured overhead.
+    # Overhead is measured from a real (empty-article) composer call — not guessed.
+    #
+    # _BUDGET_SAFETY_BUFFER: reserved for tokenizer variance, provider jitter,
+    #   and future prompt additions. Small fixed margin, not a proxy for overhead.
+    # _MIN_ARTICLE_BUDGET: floor — even at maximum overhead, LLM needs some context.
+    _BUDGET_SAFETY_BUFFER  = 300
+    _MIN_ARTICLE_BUDGET    = 800
+
+    _pre_budget            = 0   # effective model+provider budget (0 = unknown)
+    _actual_overhead       = 0   # measured non-article prompt tokens (0 = unknown)
+    _article_budget_tokens = _MIN_ARTICLE_BUDGET
 
     try:
-        from .grok_service import ask_grok
-        text = ask_grok(prompt, json_mode=True)
-        raw  = _extract_json(text)
-    except Exception as e:
-        logger.error("[project_service] generation failed for %s: %s", project_id, e)
-        raise RuntimeError(str(e)) from e
+        from ..prompts.budget_allocator import BudgetAllocator as _BA
+        from .model_registry import get_model_config as _gmc
+        _pre_cfg    = _gmc(_ACTIVE_MODEL)
+        _pre_budget = _BA(_pre_cfg).compute_budget(expected_output_tokens=2000)
+        _pre_tier   = _pre_cfg.default_provider_tier
+        if _pre_tier:
+            _pre_tpm = _pre_cfg.tier_limits.get(_pre_tier, {}).get("tpm", 0)
+            if _pre_tpm:
+                from .model_registry import PROVIDER_SAFETY_FACTOR as _PSF
+                _pre_budget = min(_pre_budget, int(_pre_tpm * _PSF))
+
+        # Probe: build composer with empty articles to measure actual non-article overhead.
+        # All dynamic sections (knowledge_state, blueprint, intent_profile, article_plan)
+        # are passed so their real sizes are captured — overhead varies per request.
+        _probe = make_daily_package_composer(
+            project_name=project["name"],
+            keywords=keywords,
+            difficulty=difficulty,
+            day_number=day_number,
+            display_label=display_label,
+            core_articles=[],
+            curiosity_articles=[],
+            daily_core_article_count=daily_core_article_count,
+            curiosity_directives=curiosity_directives,
+            intelligence_context=intelligence_context,
+            quality_feedback=quality_feedback,
+            intent_profile=intent_profile,
+            knowledge_state=knowledge_state or None,
+            article_plan_block=_article_plan_block,
+            article_budget_tokens=0,
+        )
+        _ARTICLE_SECTION_NAMES = frozenset({"core_articles", "curiosity_articles"})
+        _actual_overhead = sum(
+            s.tokens for s in _probe._sections
+            if s.name not in _ARTICLE_SECTION_NAMES
+        )
+        _article_budget_tokens = max(
+            _MIN_ARTICLE_BUDGET,
+            _pre_budget - _actual_overhead - _BUDGET_SAFETY_BUFFER,
+        )
+    except Exception:
+        logger.warning(
+            "[project_service] %s budget calibration failed (non-fatal) — using minimum %d",
+            project_id, _MIN_ARTICLE_BUDGET,
+        )
+
+    # Format articles now — budget is calibrated.
+    # Formatting here (not inside the composer) gives us compression meta for logging.
+    from ..prompts.article_compressor import ArticleCompressor as _AC_svc
+    _svc_compressor   = _AC_svc()
+    _core_budget_tok  = int(_article_budget_tokens * 0.70)
+    _curio_budget_tok = _article_budget_tokens - _core_budget_tok
+    _core_str,  _core_meta  = _svc_compressor.format_intel_batch(
+        core_articles, "CORE", _core_budget_tok,
+    )
+    _curio_str, _curio_meta = _svc_compressor.format_intel_batch(
+        curiosity_articles, "CURIOSITY", _curio_budget_tok,
+    )
+
+    # Task 6 — Budget calibration observability log (one per package generation).
+    _all_compress_meta = _core_meta + _curio_meta
+    _level_counts: dict[str, int] = {}
+    for _m in _all_compress_meta:
+        _lv = _m["level_selected"]
+        _level_counts[_lv] = _level_counts.get(_lv, 0) + 1
+    _dist_str = " ".join(f"{k}={v}" for k, v in sorted(_level_counts.items()))
+    logger.info(
+        "[budget_calibration] project=%s day=%d  "
+        "effective=%d  overhead=%d  safety=%d  article=%d  "
+        "compression=[%s]",
+        project_id, day_number,
+        _pre_budget, _actual_overhead, _BUDGET_SAFETY_BUFFER, _article_budget_tokens,
+        _dist_str or "no_articles",
+    )
+
+    # ── Phase 9.3.4C: feature-flag routing — single-call vs multi-call ──────────
+    try:
+        from ..config import MULTI_CALL_GENERATION as _MULTI_CALL
+    except ImportError:
+        _MULTI_CALL = False
+
+    if _MULTI_CALL:
+        from .generation_orchestrator import run_generation_orchestrator as _run_orch
+        try:
+            raw = _run_orch(
+                project_name             = project["name"],
+                keywords                 = keywords,
+                difficulty               = difficulty,
+                day_number               = day_number,
+                display_label            = display_label,
+                daily_core_article_count = daily_core_article_count,
+                core_articles            = core_articles,
+                curiosity_articles       = curiosity_articles,
+                article_budget_tokens    = _article_budget_tokens,
+                project_id               = project_id,
+                intent_profile           = intent_profile,
+                knowledge_state          = knowledge_state or None,
+                curiosity_directives     = curiosity_directives,
+                intelligence_context     = intelligence_context,
+                quality_feedback         = quality_feedback,
+                article_plan_block       = _article_plan_block,
+                frame_hint               = _frame_hint,
+            )
+        except Exception as _e:
+            logger.error("[project_service] multi-call generation failed for %s: %s", project_id, _e)
+            raise RuntimeError(str(_e)) from _e
+    else:
+        _composer = make_daily_package_composer(
+            project_name=project["name"],
+            keywords=keywords,
+            difficulty=difficulty,
+            day_number=day_number,
+            display_label=display_label,
+            core_articles=core_articles,
+            curiosity_articles=curiosity_articles,
+            daily_core_article_count=daily_core_article_count,
+            curiosity_directives=curiosity_directives,
+            intelligence_context=intelligence_context,
+            quality_feedback=quality_feedback,
+            intent_profile=intent_profile,
+            knowledge_state=knowledge_state or None,
+            article_plan_block=_article_plan_block,
+            core_article_text=_core_str,
+            curiosity_article_text=_curio_str,
+        )
+
+        prompt, _assembly = ModelAwareAssembler.build(
+            _composer, _ACTIVE_MODEL, expected_output_tokens=2000
+        )
+
+        # ── Task 9: Structured feed-generation budget observability log ───────────
+        # One concise structured log per feed generation.  All budget dimensions
+        # visible in a single line for easy filtering/alerting.
+        from .model_registry import get_model_config as _get_cfg_obs
+        _obs_cfg        = _get_cfg_obs(_ACTIVE_MODEL)
+        _obs_tier       = _obs_cfg.default_provider_tier or ""
+        _obs_tpm        = (_obs_cfg.tier_limits.get(_obs_tier, {}).get("tpm") or 0) if _obs_tier else 0
+        _obs_prov_limit = int(_obs_tpm * 0.875) if _obs_tpm else 0
+        _repair_steps   = (
+            ", ".join(s.step_name for s in _assembly.degradation.steps_applied)
+            if _assembly.degraded and _assembly.degradation
+            else "none"
+        )
+        _util_pct = (
+            _assembly.final_tokens / _assembly.effective_budget * 100
+            if _assembly.effective_budget else 0.0
+        )
+        logger.info(
+            "[feed_budget] op=package_generation/day_%d/%s  "
+            "model_limit=%d  provider_limit=%d  effective_limit=%d  "
+            "system_reserve=23  output_reserve=2000  "
+            "prompt_tokens=%d  repair=%s  final_tokens=%d  util=%.1f%%  fits=%s",
+            day_number, project_id[:8],
+            _assembly.prompt_budget,    # model context budget (e.g. 92,400)
+            _obs_prov_limit,            # provider TPM safe budget (e.g. 10,500)
+            _assembly.effective_budget, # enforced ceiling = min(above two)
+            _assembly.original_tokens,
+            _repair_steps,
+            _assembly.final_tokens,
+            _util_pct,
+            _assembly.fits,
+        )
+        for _w in _assembly.warnings:
+            logger.warning("[feed_budget] %s", _w)
+
+        # Raise if assembler could not fit the prompt after full degradation
+        if not _assembly.fits:
+            raise RuntimeError(
+                f"Prompt exceeds effective budget after full degradation: "
+                f"{_assembly.final_tokens:,} tokens > {_assembly.effective_budget:,} available "
+                f"(model={_assembly.prompt_budget:,}). "
+                "Reduce article count or simplify project keywords."
+            )
+
+        try:
+            from .writer_provider_router import route_writer_call, format_articles_full
+            from ..prompts.project_insight_prompt import PromptContext as _PC, build_batch_prompt as _bbp_sc
+            # Build full Gemini prompt: same prompt structure, uncompressed articles
+            _full_core_text  = format_articles_full(core_articles,      "CORE")
+            _full_curio_text = format_articles_full(curiosity_articles,  "CURIOSITY")
+            _full_ctx_sc = _PC(
+                project_name             = project["name"],
+                keywords                 = keywords,
+                difficulty               = difficulty,
+                day_number               = day_number,
+                display_label            = display_label,
+                daily_core_article_count = daily_core_article_count,
+                intent_profile           = intent_profile,
+                knowledge_state          = knowledge_state,
+                curiosity_directives     = curiosity_directives,
+                intelligence_context     = intelligence_context,
+                quality_feedback         = quality_feedback,
+                article_plan_block       = _article_plan_block,
+                frame_hint               = _frame_hint,
+            )
+            _full_comp_sc   = _bbp_sc(_full_ctx_sc, batch_plan=None,
+                                      core_article_text=_full_core_text,
+                                      curiosity_article_text=_full_curio_text)
+            _gemini_prompt_sc = _full_comp_sc.build()
+            logger.info(
+                "[writer_router] single-call  gemini_prompt_tokens~=%d  groq_prompt_tokens=%d",
+                len(_gemini_prompt_sc) // 4, _assembly.final_tokens,
+            )
+            from .grok_service import ask_grok as _ask_grok_sc
+            text, _sc_provider = route_writer_call(
+                _gemini_prompt_sc,
+                lambda: _ask_grok_sc(prompt, json_mode=True),
+                json_mode=True,
+            )
+            raw  = _extract_json(text)
+        except Exception as e:
+            logger.error("[project_service] generation failed for %s: %s", project_id, e)
+            raise RuntimeError(str(e)) from e
 
     # Validate that the model returned actual content before saving anything
     if not raw.get("insights"):
@@ -772,7 +1143,7 @@ def generate_project_insight(project_id: str) -> dict:
         raise RuntimeError("Generation produced no insight cards — please try again.")
 
     # ── Beginner calibration check + single retry ─────────────────────────────
-    if difficulty == "beginner":
+    if difficulty == "beginner" and not _MULTI_CALL:
         jargon_hits = _score_beginner_calibration(raw)
         if jargon_hits > _BEGINNER_JARGON_THRESHOLD:
             logger.warning(
@@ -838,6 +1209,84 @@ def generate_project_insight(project_id: str) -> dict:
     if "curiosity_insights" not in raw:
         raw["curiosity_insights"] = []
 
+    # Synthesise flat fields from blocks so downstream consumers (chat, export,
+    # graph, search) keep working without schema changes.
+    for _card in (raw.get("insights") or []) + (raw.get("curiosity_insights") or []):
+        _blocks = _card.get("blocks") or []
+        if _blocks:
+            _card.setdefault("educational_explanation", next(
+                (b["content"] for b in _blocks if b.get("type") in ("explanation", "insight")), ""
+            ))
+            _card.setdefault("why_it_matters", next(
+                (b["content"] for b in _blocks if b.get("type") == "mechanism"), ""
+            ))
+
+    # ── Source grounding: validate + repair + enforce (parser layer) ─────────
+    from .source_grounding_service import ground_package as _ground_package
+    _allowed_titles: dict[str, str] = {
+        a.get("url", "").rstrip("/").lower(): a.get("title", "")
+        for a in (core_articles + curiosity_articles)
+        if a.get("url")
+    }
+    raw, _grounding_violations = _ground_package(
+        raw_package    = raw,
+        allowed_urls   = _allowed_urls,
+        allowed_titles = _allowed_titles,
+        project_id     = project_id,
+        day_number     = day_number,
+    )
+    if _grounding_violations:
+        logger.warning(
+            "[project_service] %s day=%d: %d source grounding violation(s)",
+            project_id, day_number, len(_grounding_violations),
+        )
+
+    # ── Curiosity hallucination check (pattern-only, no LLM) ─────────────────────
+    _curio_cards = raw.get("curiosity_insights") or []
+    if _curio_cards and curiosity_articles:
+        _cited_curio_urls: set[str] = {
+            link.get("url", "")
+            for _ccard in _curio_cards
+            for link in (_ccard.get("source_links") or [])
+            if link.get("url")
+        }
+        _backup_pool = [
+            a for a in curiosity_articles
+            if a.get("url") and a["url"] not in _cited_curio_urls
+        ]
+        _kw_tokens = {w.lower() for kw in (keywords or [])[:5] for w in kw.split() if len(w) > 4}
+        for _ccard in _curio_cards:
+            _links = _ccard.get("source_links") or []
+            if not _links:
+                continue
+            _cu = (_links[0].get("url") or "").strip()
+            _ct = (_links[0].get("title") or "").strip()
+            _bare_url   = bool(re.match(r'^https?://[^/]+/?$', _cu))
+            _dots_title = "..." in _ct
+            _kw_miss    = bool(_kw_tokens) and not any(w in _ct.lower() for w in _kw_tokens)
+            if _bare_url or _dots_title or _kw_miss:
+                _rescue = next(
+                    (a for a in _backup_pool if a.get("url") and a["url"] not in _cited_curio_urls),
+                    None,
+                )
+                if _rescue:
+                    _ccard["source_links"] = [{"title": _rescue.get("title", ""), "url": _rescue["url"]}]
+                    _cited_curio_urls.add(_rescue["url"])
+                    _backup_pool = [a for a in _backup_pool if a.get("url") != _rescue["url"]]
+                    logger.warning(
+                        "[project_service] %s day=%d curiosity card=%s: hallucination pattern"
+                        " (bare=%s dots=%s kw_miss=%s) — rescued url=%s",
+                        project_id, day_number, _ccard.get("id", "?"),
+                        _bare_url, _dots_title, _kw_miss, _rescue["url"],
+                    )
+                else:
+                    logger.warning(
+                        "[project_service] %s day=%d curiosity card=%s: hallucination pattern"
+                        " (bare=%s dots=%s kw_miss=%s) — no backup; url=%r title=%r",
+                        project_id, day_number, _ccard.get("id", "?"),
+                        _bare_url, _dots_title, _kw_miss, _cu, _ct,
+                    )
+
     package = {
         "id":           None,
         "project_id":   project_id,
@@ -846,8 +1295,50 @@ def generate_project_insight(project_id: str) -> dict:
         **raw,
     }
 
-    pkg_id       = _save_package(project_id, day_number, package)
+    pkg_id       = _save_package(project_id, day_number, package, stub_id=_stub_id)
     package["id"] = pkg_id
+
+    # Mark provenance records for URLs that appear in the generated package (non-fatal)
+    try:
+        from .article_provenance_service import mark_selected as _mark_selected
+        _selected_urls = {
+            link.get("url", "")
+            for card in (package.get("insights", []) + package.get("curiosity_insights", []))
+            for link in (card.get("source_links") or [])
+            if link.get("url")
+        }
+        _mark_selected(project_id, pkg_id, list(_selected_urls))
+    except Exception:
+        logger.warning("[project_service] provenance mark_selected failed for %s (non-fatal)", project_id)
+
+    # Retrieval quality metrics — per-package diagnostics (non-fatal)
+    try:
+        from .retrieval_metrics_service import (
+            compute as _compute_metrics,
+            store   as _store_metrics,
+            log_metrics as _log_metrics,
+            audit   as _audit_metrics,
+            log_audit   as _log_audit,
+        )
+        _metrics = _compute_metrics(
+            package,
+            retrieved_count=_retrieved_core + _retrieved_curiosity,
+            core_articles=core_articles,
+            curiosity_articles=curiosity_articles,
+        )
+        _store_metrics(project_id, pkg_id, _metrics)
+        _log_metrics(project_id, pkg_id, _metrics, logger)
+        _audit_report = _audit_metrics(package, _allowed_urls, core_articles, curiosity_articles)
+        _log_audit(project_id, pkg_id, _audit_report, logger)
+    except Exception:
+        logger.warning("[project_service] retrieval metrics failed for %s (non-fatal)", project_id)
+
+    # Update knowledge state — compressed continuity (non-fatal)
+    try:
+        from .knowledge_state_service import update_state as _update_ks
+        _update_ks(project_id, package)
+    except Exception:
+        logger.warning("[project_service] knowledge state update failed for %s (non-fatal)", project_id)
 
     # Auto-update learning progression (non-fatal)
     try:
@@ -921,7 +1412,7 @@ def list_project_insights(project_id: str, limit: int = 20) -> list[dict]:
         rows = conn.execute(
             """SELECT id, project_id, day_number, insight_json, generated_at
                FROM project_insights
-               WHERE project_id = ?
+               WHERE project_id = ? AND status != 'generating'
                ORDER BY day_number DESC
                LIMIT ?""",
             (project_id, limit),
@@ -939,13 +1430,66 @@ def get_project_insight(insight_id: int) -> dict | None:
     return _pkg_row(row) if row else None
 
 
-def _save_package(project_id: str, day_number: int, package: dict) -> int:
+def _save_generating_stub(project_id: str, day_number: int) -> tuple[int, str]:
     from ..utils.db import get_connection
-    now = package["generated_at"]
+    now = _now()
     with get_connection() as conn:
         cursor = conn.execute(
-            """INSERT INTO project_insights (project_id, day_number, insight_json, generated_at)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO project_insights (project_id, day_number, insight_json, generated_at, status)
+               VALUES (?, ?, '{}', ?, 'generating')""",
+            (project_id, day_number, now),
+        )
+        conn.execute(
+            "UPDATE learning_projects SET updated_at = ? WHERE project_id = ?",
+            (now, project_id),
+        )
+    return cursor.lastrowid, now
+
+
+def _set_insight_status(insight_id: int, status: str) -> None:
+    from ..utils.db import get_connection
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE project_insights SET status = ? WHERE id = ?",
+            (status, insight_id),
+        )
+
+
+def _generate_insight_background(project_id: str, stub_id: int, day_number: int) -> None:
+    try:
+        generate_project_insight(
+            project_id,
+            _stub_id=stub_id,
+            _precomputed_day_number=day_number,
+        )
+    except Exception as exc:
+        _set_insight_status(stub_id, "failed")
+        logger.error(
+            "[project_service] background generation failed project=%s day=%d stub=%d exc=%s: %s",
+            project_id, day_number, stub_id, type(exc).__name__, exc,
+        )
+
+
+def _save_package(project_id: str, day_number: int, package: dict, stub_id: int | None = None) -> int:
+    from ..utils.db import get_connection
+    now = package["generated_at"]
+    if stub_id is not None:
+        with get_connection() as conn:
+            conn.execute(
+                """UPDATE project_insights
+                   SET insight_json = ?, generated_at = ?, status = 'done'
+                   WHERE id = ?""",
+                (json.dumps(package), now, stub_id),
+            )
+            conn.execute(
+                "UPDATE learning_projects SET updated_at = ? WHERE project_id = ?",
+                (now, project_id),
+            )
+        return stub_id
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """INSERT INTO project_insights (project_id, day_number, insight_json, generated_at, status)
+               VALUES (?, ?, ?, ?, 'done')""",
             (project_id, day_number, json.dumps(package), now),
         )
         conn.execute(
@@ -995,12 +1539,3 @@ def delete_project_insight(project_id: str, insight_id: int) -> bool:
     return cur.rowcount > 0
 
 
-def _fallback_package(project_name: str, day_number: int) -> dict:
-    return {
-        "package_headline": f"Day {day_number} — {project_name} (generation error — retry)",
-        "content_mix": "0 news · 0 educational + 0 curiosity picks",
-        "learning_thread": "Generation failed. Retry to get structured content.",
-        "action_item": f"Manually search for recent '{project_name}' developments.",
-        "insights": [],
-        "curiosity_insights": [],
-    }

@@ -24,6 +24,7 @@ import { articleKeyFromTitle } from "../../api/feed.js"
 import { getInsightNotes, saveCardNote, deleteCardNote } from "../../api/notes.js"
 import { exportAsPdf, downloadMarkdown } from "../../utils/exportPackage.js"
 import { getQueue, addToQueue, removeFromQueue, isInQueue } from "../../api/queue.js"
+import { getJourneyPreview } from "../../api/projects.js"
 
 function formatDate(ts) {
   if (!ts) return ""
@@ -720,18 +721,36 @@ export default function DailyPackageView({
   useEffect(() => {
     if (!onExportReady || !selected) return
     const dayLabelForExport = displayLabels.get(selected.id) ?? ""
-    const opts = { projectName: project?.name || "", dayLabel: dayLabelForExport }
-    onExportReady(
-      () => exportAsPdf(selected, opts),
-      () => downloadMarkdown(selected, opts)
-    )
+    const pid = project?.project_id
+    let cancelled = false
+
+    async function setup() {
+      let nextDayTitle = ""
+      if (pid) {
+        try {
+          const preview = await getJourneyPreview(pid)
+          nextDayTitle = preview?.today?.display_title || ""
+        } catch (_) {}
+      }
+      if (cancelled) return
+      const opts = {
+        projectName: project?.name || "",
+        dayLabel: dayLabelForExport,
+        ...(nextDayTitle ? { nextDayTitle } : {}),
+      }
+      onExportReady(
+        () => exportAsPdf(selected, opts),
+        () => downloadMarkdown(selected, opts)
+      )
+    }
+    setup()
+    return () => { cancelled = true }
   }, [selected?.id, project?.project_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (generating) {
-    return <GeneratingPackageState project={project} nextLabel={nextLabel} />
-  }
-
   if (packages.length === 0) {
+    if (generating) {
+      return <GeneratingPackageState project={project} nextLabel={nextLabel} />
+    }
     return <EmptyPackageState project={project} onGenerate={onGenerate} />
   }
 
@@ -768,6 +787,7 @@ export default function DailyPackageView({
         queuedKeys={queuedKeys}
         onToggleQueue={handleToggleQueue}
       />
+      <JourneyPreviewPanel projectId={project.project_id} />
     </>
   ) : null
 }
@@ -781,14 +801,24 @@ const GENERATION_STEPS = [
 
 function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
   const [elapsed, setElapsed] = useState(0)
+  const [focusTitle, setFocusTitle] = useState(null)
 
   useEffect(() => {
     const id = setInterval(() => setElapsed(s => s + 1), 1000)
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    if (!project?.project_id) return
+    getJourneyPreview(project.project_id)
+      .then(data => { if (data?.today?.display_title) setFocusTitle(data.today.display_title) })
+      .catch(() => {})
+  }, [project?.project_id])
+
   // Progress 0→100 over ~32s, then stays at 95 until done
   const progress = Math.min(95, Math.round((elapsed / 32) * 100))
+  // Loop step animation so the screen never appears frozen on long generations
+  const loopElapsed = elapsed % GENERATION_STEPS[GENERATION_STEPS.length - 1].doneAfter
 
   return (
     <div className="flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto">
@@ -817,7 +847,7 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
       </div>
 
       <h3 className="text-base font-semibold text-slate-100 mb-1">
-        Building your {nextLabel} package
+        {focusTitle ? `Building ${nextLabel}: ${focusTitle}` : `Building your ${nextLabel} package`}
       </h3>
       <p className="text-[13px] text-slate-500 mb-6">
         Curating <span className="text-slate-400">{project.name}</span> insights from today's web
@@ -826,8 +856,8 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
       {/* Step list */}
       <div className="w-full space-y-2.5 mb-6 text-left">
         {GENERATION_STEPS.map((step, i) => {
-          const done    = elapsed >= step.doneAfter
-          const active  = !done && elapsed >= (GENERATION_STEPS[i - 1]?.doneAfter ?? 0)
+          const done    = loopElapsed >= step.doneAfter
+          const active  = !done && loopElapsed >= (GENERATION_STEPS[i - 1]?.doneAfter ?? 0)
           return (
             <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-500 ${
               done   ? "bg-emerald-950/30 border border-emerald-900/30" :
@@ -862,7 +892,60 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
           style={{ width: `${progress}%` }}
         />
       </div>
-      <p className="text-[11px] text-slate-600">Usually takes 15–30 seconds</p>
+      <p className="text-[11px] text-slate-600">This usually takes a minute or two.</p>
+    </div>
+  )
+}
+
+// ─── Journey preview ──────────────────────────────────────────────────────────
+
+function JourneyPreviewPanel({ projectId }) {
+  const [preview, setPreview] = useState(null)
+
+  useEffect(() => {
+    if (!projectId) return
+    getJourneyPreview(projectId).then(setPreview).catch(() => {})
+  }, [projectId])
+
+  if (!preview) return null
+
+  if (!preview.planned) {
+    return (
+      <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1">Your path</p>
+        <p className="text-[12px] text-slate-600">Not yet planned — your path will appear here once your first package is generated.</p>
+      </div>
+    )
+  }
+
+  if (preview.shape === "rotating_theme") {
+    return (
+      <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5">Your path</p>
+        <p className="text-[12px] text-slate-400 leading-relaxed">{preview.display_summary}</p>
+      </div>
+    )
+  }
+
+  // fixed_sequence
+  return (
+    <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-2">Your path</p>
+      <div className="space-y-1.5">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-400/70 w-10 flex-shrink-0">Today</span>
+          <span className="text-[12px] text-slate-300 leading-snug">{preview.today.display_title}</span>
+        </div>
+        {preview.upcoming.map(day => (
+          <div key={day.day_number} className="flex items-baseline gap-2">
+            <span className="text-[10px] font-medium text-slate-600 w-10 flex-shrink-0">Day {day.day_number}</span>
+            <span className="text-[12px] text-slate-500 leading-snug">{day.display_title}</span>
+          </div>
+        ))}
+      </div>
+      {preview.remaining_count > 0 && (
+        <p className="mt-2 text-[11px] text-slate-600">+{preview.remaining_count} more planned</p>
+      )}
     </div>
   )
 }
@@ -888,6 +971,7 @@ function EmptyPackageState({ project, onGenerate }) {
       >
         Generate Day 1
       </button>
+      <JourneyPreviewPanel projectId={project.project_id} />
     </div>
   )
 }

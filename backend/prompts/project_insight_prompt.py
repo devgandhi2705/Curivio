@@ -13,16 +13,32 @@ Two-section architecture:
 
 Static instruction sections are owned by instruction_packs/package_*.py.
 Dynamic project/article content is assembled here at generation time.
+
+Phase 9.3.4B additions:
+  PromptMode         — PACKAGE | BATCH | SYNTHESIS
+  PromptContext      — structured input to build_batch_prompt()
+  build_batch_prompt — core prompt builder; package mode = batch_plan=None
+  make_daily_package_composer — backward-compat wrapper (unchanged call signature)
 """
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..services.article_plan_service import BatchPlan
 
 from .prompt_composer import PromptComposer
 from .instruction_packs.core_writing_pack   import WRITING_STYLE_STANDARDS, BANNED_PHRASES
 from .instruction_packs.core_reasoning_pack import SOURCE_SIGNAL_EXTRACTION, REAL_WORLD_TENSION
 from .instruction_packs.package_editorial_pack import (
-    EDITORIAL_PHILOSOPHY, ACCELERATION_PHILOSOPHY, HOOK_FIRST_RULES, WHY_IT_WORKS_RULES,
+    EDITORIAL_PHILOSOPHY, HOOK_FIRST_RULES,
 )
 from .instruction_packs.package_narrative_pack import (
-    NARRATIVE_FRAMES, EMOTIONAL_TONE_PALETTE, TITLE_STYLE_LIBRARY,
+    EMOTIONAL_TONE_PALETTE, TITLE_STYLE_LIBRARY,
     EDITORIAL_ROLES, PACKAGE_COMPOSITION, ARTICLE_MIX, SECTION_1_INSTRUCTIONS,
 )
 from .instruction_packs.package_curiosity_pack import (
@@ -31,31 +47,171 @@ from .instruction_packs.package_curiosity_pack import (
 )
 from .instruction_packs.package_action_pack import ACTION_DESIGN
 
+logger = logging.getLogger(__name__)
 
-def make_daily_package_prompt(
-    project_name: str,
-    keywords: list[str],
-    difficulty: str,
-    focus_areas: list[str],
-    day_number: int,
-    display_label: str,
-    prev_display_label: str | None,
-    previous_packages: list[dict],
-    core_articles: list[dict],
-    curiosity_articles: list[dict],
-    explored_concepts: list[str],
-    suggested_next_topics: list[str],
-    daily_core_article_count: int = 4,
-    learning_memory: dict | None = None,
-    memory_references: dict | None = None,
-    curiosity_directives: str | None = None,
-    intelligence_context: str | None = None,
-    quality_feedback: str | None = None,
-) -> str:
-    kw_str    = ", ".join(keywords) if keywords else project_name
-    focus_str = ", ".join(focus_areas) if focus_areas else "general developments"
 
-    count = max(2, min(10, int(daily_core_article_count)))
+# ── Prompt mode ───────────────────────────────────────────────────────────────
+
+class PromptMode(str, Enum):
+    PACKAGE   = "package"    # all articles in one prompt (current single-call behavior)
+    BATCH     = "batch"      # one batch of articles per prompt (multi-call, Phase 9.3.4C+)
+    SYNTHESIS = "synthesis"  # cross-batch synthesis call (future)
+
+
+# ── Prompt context ────────────────────────────────────────────────────────────
+
+@dataclass
+class PromptContext:
+    """
+    Structured input to build_batch_prompt().
+
+    Holds all project/learner context. Pre-formatted article text is passed
+    separately to build_batch_prompt() because budget computation
+    (ArticleCompressor) happens outside the prompt builder.
+    """
+    project_name:             str
+    keywords:                 list[str]
+    difficulty:               str
+    day_number:               int
+    display_label:            str
+    daily_core_article_count: int         = 4
+    intent_profile:           dict | None = None
+    knowledge_state:          dict | None = None
+    curiosity_directives:     str | None  = None
+    intelligence_context:     str | None  = None
+    quality_feedback:         str | None  = None
+    # PACKAGE mode: pre-built article plan string from article_plan_service
+    article_plan_block:       str | None  = None
+    # Used by the make_daily_package_composer wrapper for its internal formatting fallback
+    article_budget_tokens:    int         = 0
+    mode:                     PromptMode  = PromptMode.PACKAGE
+    frame_hint:               str | None  = None
+
+
+# ── Token breakdown section categories ───────────────────────────────────────
+
+_INSTRUCTION_SECTIONS: frozenset[str] = frozenset({
+    "editorial_philosophy", "emotional_tone",
+    "hook_rules", "writing_style", "banned_phrases", "title_library",
+    "source_signals", "real_world_tension", "action_design", "task_intro",
+    "section1_instructions", "curiosity_instructions", "curiosity_strategy",
+    "beginner_calibration",
+})
+_SOURCE_SECTIONS: frozenset[str] = frozenset({
+    "core_articles", "curiosity_articles", "article_source_assignments",
+})
+_SCHEMA_SECTIONS: frozenset[str] = frozenset({
+    "output_schema", "source_grounding",
+})
+
+
+def _log_prompt_breakdown(
+    composer:  PromptComposer,
+    mode:      PromptMode,
+    batch_id:  int | None,
+) -> None:
+    """Emit [PROMPT BREAKDOWN] log — token totals by section category."""
+    instr_tok = sum(
+        s.tokens for s in composer._sections if s.name in _INSTRUCTION_SECTIONS
+    )
+    source_tok = sum(
+        s.tokens for s in composer._sections if s.name in _SOURCE_SECTIONS
+    )
+    schema_tok = sum(
+        s.tokens for s in composer._sections if s.name in _SCHEMA_SECTIONS
+    )
+    knowledge_tok = sum(
+        s.tokens for s in composer._sections
+        if s.name not in _INSTRUCTION_SECTIONS | _SOURCE_SECTIONS | _SCHEMA_SECTIONS
+    )
+    total_tok = sum(s.tokens for s in composer._sections)
+    logger.info(
+        "[PROMPT BREAKDOWN] mode=%s batch=%s  "
+        "instruction=%d  source=%d  schema=%d  knowledge=%d  total=%d",
+        mode.value,
+        str(batch_id) if batch_id is not None else "pkg",
+        instr_tok, source_tok, schema_tok, knowledge_tok, total_tok,
+    )
+
+
+def _build_editorial_roles_mix(knowledge_state: dict | None) -> str:
+    """
+    Build a short editorial-roles + article-mix instruction based on knowledge_state.
+    Falls back to the static EDITORIAL_ROLES + ARTICLE_MIX strings when knowledge_state
+    is empty or unavailable (e.g. day 1, failed load).
+    """
+    ks     = knowledge_state or {}
+    gaps   = [g for g in ks.get("knowledge_gaps",  []) if g][:4]
+    active = [a for a in ks.get("active_topics",   []) if a][:3]
+
+    if not gaps and not active:
+        return f"{EDITORIAL_ROLES}\n\n{ARTICLE_MIX}"
+
+    roles_line = (
+        "Before writing any card, assign each an editorial role "
+        "(CENTERPIECE, PRACTICAL INTEL, FAST SIGNAL, FUTURE PREDICTION, STRATEGIC SHIFT, WILD CARD) "
+        "and an emotional tone from the palette above."
+    )
+
+    if gaps:
+        gap_str    = ", ".join(gaps[:3])
+        active_str = ", ".join(active) if active else "any recently covered topic"
+        return (
+            f"{roles_line}\n"
+            f"Today's knowledge gaps to address: {gap_str}. "
+            f"Assign at least one CENTERPIECE or STRATEGIC SHIFT card to the largest gap.\n\n"
+            f"ARTICLE MIX (today — gaps present):\n"
+            f"  • 1–2 cards closing gaps: {gap_str}\n"
+            f"  • 1–2 cards advancing active topics at deeper depth: {active_str}\n"
+            f"  • 1 real-world/news card, 1 practical/case-study card"
+        )
+
+    active_str = ", ".join(active)
+    return (
+        f"{roles_line}\n"
+        f"Active topics to advance at deeper depth: {active_str}.\n\n"
+        f"ARTICLE MIX (today — active topics present):\n"
+        f"  • 2–3 progression cards building further on: {active_str}\n"
+        f"  • 1–2 cards introducing adjacent ideas or new concepts\n"
+        f"  • 1 real-world/news card, 1 practical/case-study card"
+    )
+
+
+# ── Core prompt builder ───────────────────────────────────────────────────────
+
+def build_batch_prompt(
+    context:               PromptContext,
+    batch_plan:            BatchPlan | None = None,
+    core_article_text:     str = "",
+    curiosity_article_text: str = "",
+) -> PromptComposer:
+    """
+    Build a PromptComposer from a PromptContext and optional BatchPlan.
+
+    PACKAGE mode (batch_plan=None):
+      Identical behavior to the old make_daily_package_composer().
+      Source IDs: CORE-N / CURIOSITY-N (unchanged).
+      context.article_plan_block used for source assignments.
+      Curiosity section included.
+
+    BATCH mode (batch_plan is not None):
+      Prompt scoped to the batch's articles only.
+      Source IDs prefixed: B{batch_id}-CORE-N (e.g. B1-CORE-1, B2-CORE-3).
+      Article plan block generated from batch_plan.plans.
+      No separate curiosity section (curiosity lives in its own batch).
+
+    Pre-formatted article text must always be passed by the caller.
+    No internal ArticleCompressor call. See make_daily_package_composer() for
+    the wrapper that handles the optional-text backward-compat path.
+
+    Emits [PROMPT BREAKDOWN] log (instruction / source / schema / knowledge / total tokens).
+    """
+    kw_str = ", ".join(context.keywords) if context.keywords else context.project_name
+
+    # Per-batch slot count — 0 in PACKAGE mode (batch_plan is None)
+    _n_batch = len(batch_plan.plans) if batch_plan is not None else 0
+
+    count = max(2, min(10, int(context.daily_core_article_count)))
     if count <= 3:
         intensity_label    = "Light"
         intensity_guidance = (
@@ -78,39 +234,30 @@ def make_daily_package_prompt(
             "Introduce cross-domain connections and adjacent ideas."
         )
 
-    # Learning history + recently used titles for pattern avoidance
-    if previous_packages:
-        history_lines = []
-        all_recent_titles: list[str] = []
-        for p in previous_packages:
-            cats = ", ".join(p.get("categories", [])) or "general"
-            history_lines.append(f"  {p['day']}: {p['headline']}  [covered: {cats}]")
-            all_recent_titles.extend(p.get("titles", []))
-        history_str = "\n".join(history_lines)
-    else:
-        history_str = f"  (none — this is {display_label}, introduce accessible but intellectually sharp foundations)"
-        all_recent_titles = []
+    # BATCH mode: override intensity_guidance to reflect THIS batch's slot count,
+    # not the full daily count.  The model must not see a count that contradicts
+    # the hard-count instruction in task_intro.
+    if _n_batch > 0:
+        if _n_batch <= 3:
+            intensity_guidance = (
+                f"Generate {_n_batch} high-quality cards. Go deep on 1–2 concepts — "
+                "depth over breadth. Every card must earn its place."
+            )
+        elif _n_batch <= 5:
+            intensity_guidance = (
+                f"Generate {_n_batch} cards: a balanced mix of depth and breadth. "
+                "1–2 reinforcement cards, 2–3 new progression concepts, "
+                "1 real-world/news card, 1 practical/case-study card."
+            )
+        else:
+            intensity_guidance = (
+                f"Generate {_n_batch} cards with wide coverage. "
+                "2 reinforcement/evolution cards, 2–3 new progression concepts, "
+                "1 current/news card, 1 practical/case-study card. "
+                "Introduce cross-domain connections and adjacent ideas."
+            )
 
-    if all_recent_titles:
-        recent_titles_str = "\n".join(f"  — {t}" for t in all_recent_titles[-12:])
-    else:
-        recent_titles_str = "  (none — first package)"
-
-    # Explored concepts
-    if explored_concepts:
-        ec_lines = "\n".join(f"  • {c}" for c in explored_concepts[-20:])
-        ec_block = (
-            "Concepts already explored — REINFORCE WITH INCREASING DEPTH, never repeat at same level:\n"
-            + ec_lines
-        )
-    else:
-        ec_block = "Concepts explored: none yet — begin with accessible, intellectually engaging foundations."
-
-    # Suggested next topics
-    nt_str = ", ".join(suggested_next_topics[:4]) if suggested_next_topics else "follow natural curriculum progression"
-
-    # Beginner calibration section (only injected when difficulty == "beginner")
-    if difficulty == "beginner":
+    if context.difficulty == "beginner":
         beginner_section_str = f"""══════════════════════════════════════
 BEGINNER CALIBRATION — MANDATORY OVERRIDES
 ══════════════════════════════════════
@@ -159,101 +306,74 @@ CARD LENGTH FOR BEGINNER:
   No multi-clause sentences that require domain knowledge to parse.
 
 SELF-CHECK before writing each card — ask yourself:
-  "Could a smart 18-year-old who has never studied {project_name} understand the first sentence?"
+  "Could a smart 18-year-old who has never studied {context.project_name} understand the first sentence?"
   If NO → rewrite it. Concrete first. Abstract second. Always."""
     else:
         beginner_section_str = ""
 
-    # Learning memory section (progression stage + coverage avoidance)
-    # Budget-capped via MemoryCompressor: mature projects auto-compress to L1/L2
-    # rather than growing the prompt linearly with project age.
-    memory_section_str = ""
-    if learning_memory:
-        try:
-            from .memory_compressor import MemoryCompressor
-            memory_section_str, _ = MemoryCompressor().format_within_budget(
-                learning_memory, budget_tokens=400
-            )
-        except Exception:
-            pass
+    # ── Batch vs package configuration ────────────────────────────────────────
+    is_batch    = batch_plan is not None
+    _sid_prefix = f"B{batch_plan.batch_id}-" if is_batch else ""
+    _batch_type = (
+        (batch_plan.plans[0].article_type.upper() if batch_plan.plans else "CORE")
+        if is_batch else "CORE"
+    )
 
-    # Inter-article continuity section (prior insights + unresolved threads)
-    continuity_str = ""
-    if memory_references:
-        prior_insights_list = memory_references.get("priorInsights") or []
-        unresolved_list     = memory_references.get("unresolvedQuestions") or []
-        if prior_insights_list or unresolved_list:
-            lines: list[str] = []
-            lines.append("══════════════════════════════════════")
-            lines.append("INTER-ARTICLE CONTINUITY — MANDATORY")
-            lines.append("══════════════════════════════════════")
-            lines.append("The reader has been learning across multiple sessions. They carry prior insights.")
-            lines.append("The feed must feel CUMULATIVE — not a fresh slate each day.")
-            lines.append("")
-            lines.append("AT LEAST 1 core card per package MUST open with or include a callback to a prior insight.")
-            lines.append("Use one of these callback phrase forms (verbatim or close variant):")
-            lines.append('  "As we established in {Day}, [prior mechanism]..."')
-            lines.append('  "Building on {Day}\'s insight about [topic]: here is the next layer."')
-            lines.append('  "{Day} showed that [X]. Today\'s pattern confirms / contradicts that:"')
-            lines.append('  "Recall [title] from {Day}? This is what happens next:"')
-            lines.append('  "The [mechanism from {Day}] now explains why [today\'s development]:"')
-            lines.append("")
-            lines.append("WHAT MAKES A GOOD CALLBACK:")
-            lines.append("  GOOD: \"Day 2 established FDA approval as a global trust certificate.")
-            lines.append("         Today's pattern shows what happens when that certificate is revoked mid-export.\"")
-            lines.append("  BAD:  \"Building on our previous discussion...\"  (too vague — name the mechanism)")
-            lines.append("  BAD:  \"As mentioned before...\"  (never say this — be specific)")
-            lines.append("")
-            if prior_insights_list:
-                lines.append("PRIOR INSIGHTS AVAILABLE FOR CALLBACKS:")
-                for pi in prior_insights_list:
-                    lines.append(f'  [{pi["day"]}] "{pi["title"]}"')
-                    if pi.get("insight"):
-                        lines.append(f'        Mechanism: {pi["insight"]}')
-            if unresolved_list:
-                lines.append("")
-                lines.append("OPEN THREADS (curiosity cards that surfaced questions — deepen or resolve if relevant today):")
-                for uq in unresolved_list:
-                    lines.append(f'  [{uq["day"]}] {uq["question"]}')
-            lines.append("")
-            lines.append("CONTINUITY MANDATE:")
-            lines.append("  • At least 1 card summary or educational_explanation must contain a named callback")
-            lines.append("    to a prior session insight — using the card's title or mechanism, not generic phrasing.")
-            lines.append("  • learning_thread MUST reference specific prior content by concept name or card title —")
-            lines.append("    not vague 'continues the journey' language.")
-            lines.append("  • If an open thread directly connects to today's content, reference it by title.")
-            continuity_str = "\n".join(lines)
+    # Article plan block
+    if is_batch:
+        from ..services.article_plan_service import plans_to_prompt_block as _p2pb
+        _batch_articles = [
+            {"url": p.primary_source.get("url", ""), "title": p.primary_source.get("title", "")}
+            for p in batch_plan.plans
+            if p.primary_source
+        ]
+        _plan_block = _p2pb(
+            batch_plan.plans, _batch_articles,
+            source_id_prefix=_sid_prefix,
+            frame_hint=context.frame_hint,
+            article_type_label=_batch_type,
+        )
+    else:
+        _plan_block = context.article_plan_block
 
-    def fmt_articles(articles: list[dict], tag: str) -> str:
-        if not articles:
-            return f"({tag}: none retrieved — synthesise from domain knowledge)"
-        parts = []
-        for i, a in enumerate(articles[:8], 1):
-            parts.append(
-                f"[{tag} {i}]\n"
-                f"Title: {a.get('title', '').strip()}\n"
-                f"URL:   {a.get('url', '')}\n"
-                f"Content: {(a.get('content') or '')[:700].strip()}"
-            )
-        return "\n\n".join(parts)
+    # Article section content strings
+    if is_batch:
+        _core_section_content = (
+            f"══════════════════════════════════════\n"
+            f"AVAILABLE ARTICLES — BATCH {batch_plan.batch_id} ({_batch_type})\n"
+            f"══════════════════════════════════════\n"
+            f"{core_article_text}"
+        )
+    else:
+        _core_section_content = (
+            f"══════════════════════════════════════\n"
+            f"AVAILABLE ARTICLES — CORE LEARNING\n"
+            f"══════════════════════════════════════\n"
+            f"{core_article_text}"
+        )
 
-    core_str      = fmt_articles(core_articles,      "CORE")
-    curiosity_str = fmt_articles(curiosity_articles, "CURIOSITY")
+    _curio_section_content = (
+        f"══════════════════════════════════════\n"
+        f"AVAILABLE ARTICLES — CURIOSITY ENGINE\n"
+        f"══════════════════════════════════════\n"
+        f"{curiosity_article_text}"
+    )
 
     # Format templated pack sections with runtime values
-    hook_section      = HOOK_FIRST_RULES.format(domain=project_name)
-    pkg_composition   = PACKAGE_COMPOSITION.format(count=count)
-    section1          = SECTION_1_INSTRUCTIONS.format(
-                            count=count, project_name=project_name, difficulty=difficulty
-                        )
-    curiosity_rules   = CURIOSITY_CARD_RULES.format(project_name=project_name)
+    hook_section    = HOOK_FIRST_RULES.format(domain=context.project_name)
+    pkg_composition = PACKAGE_COMPOSITION.format(count=count)
+    section1        = SECTION_1_INSTRUCTIONS.format(
+                          count=(_n_batch or count), project_name=context.project_name,
+                          difficulty=context.difficulty,
+                      )
+    curiosity_rules = CURIOSITY_CARD_RULES.format(project_name=context.project_name)
 
-    # ── Assemble prompt via PromptComposer ────────────────────────────────────
+    # ── Global sections ───────────────────────────────────────────────────────
     composer = PromptComposer()
 
     composer.add_section("intro", (
         f"You are the editorial intelligence behind Curivio — a premium daily learning briefing system.\n"
-        f"Your role: surface the most important signals, hidden implications, and insight-rich ideas from the {project_name} domain.\n\n"
+        f"Your role: surface the most important signals, hidden implications, and insight-rich ideas from the {context.project_name} domain.\n\n"
         f"You are NOT summarizing topics for a textbook.\n"
         f"You ARE curating intelligence the way a brilliant analyst friend would — with judgment, narrative, and editorial intentionality."
     ),                   priority=1, required=True,  source_pack="")
@@ -262,62 +382,87 @@ SELF-CHECK before writing each card — ask yourself:
         f"══════════════════════════════════════\n"
         f"PROJECT STATE\n"
         f"══════════════════════════════════════\n"
-        f"Project:       {project_name}\n"
+        f"Project:       {context.project_name}\n"
         f"Keywords:      {kw_str}\n"
-        f"Focus areas:   {focus_str}\n"
-        f"Learner level: {difficulty}\n"
-        f"Today:         {display_label}\n"
-        f"Intensity:     {intensity_label} ({count} core articles) — {intensity_guidance}"
+        f"Learner level: {context.difficulty}\n"
+        f"Today:         {context.display_label}\n"
+        f"Intensity:     {intensity_label} ({_n_batch or count} cards) — {intensity_guidance}"
     ),                   priority=1, required=True,  source_pack="dynamic")
 
+    if context.intent_profile:
+        composer.add_section("intent_profile", (
+            f"LEARNER INTENT PROFILE\n"
+            f"Persona:          {context.intent_profile.get('persona', 'Learner')}\n"
+            f"Goal:             {context.intent_profile.get('goal', '')}\n"
+            f"Industry context: {context.intent_profile.get('industry_context', '')}\n"
+            f"Primary focus:    {context.intent_profile.get('primary_focus', context.project_name)}\n"
+            f"Search lens:      {context.intent_profile.get('search_lens', 'Educational')}\n"
+            f"\n"
+            f"{context.intent_profile.get('intent_summary', '')}\n"
+            f"\n"
+            f"Every card must speak directly to this persona's goal. "
+            f"Frame content through the '{context.intent_profile.get('search_lens', 'Educational')}' lens "
+            f"for a '{context.intent_profile.get('persona', 'learner')}' focused on "
+            f"'{context.intent_profile.get('primary_focus', context.project_name)}'."
+        ),               priority=1, required=False, source_pack="dynamic")
+
+    _gaps = (context.knowledge_state or {}).get("knowledge_gaps", [])
+    _next_guidance = (
+        "Priority gaps to address: " + ", ".join(_gaps[:5])
+        if _gaps else
+        "Follow the knowledge state above — go deeper on active topics and bridge identified gaps."
+    )
     composer.add_section("learning_trajectory", (
         f"══════════════════════════════════════\n"
         f"LEARNING TRAJECTORY\n"
         f"══════════════════════════════════════\n"
-        f"{ec_block}\n\n"
-        f"Suggested next topics (introduce 1–2 that fit naturally):\n"
-        f"  {nt_str}\n\n"
-        f"Recent learning history:\n"
-        f"{history_str}\n\n"
-        f"Recent card titles — DO NOT produce structurally similar titles or reuse these phrasings:\n"
-        f"{recent_titles_str}"
+        f"Build strictly on the Knowledge State below — go deeper or wider, never re-introduce\n"
+        f"covered concepts at the same level.\n\n"
+        f"{_next_guidance}"
     ),                   priority=1, required=True,  source_pack="dynamic")
 
-    # Feed intelligence (Phase 4.5): what this feed is meant to teach.
-    # Priority=1 so the LLM sees this before articles, editorial philosophy, etc.
-    if intelligence_context:
+    if context.knowledge_state:
+        covered_str  = ", ".join(context.knowledge_state.get("covered_topics",   [])[-20:]) or "—"
+        active_str   = ", ".join(context.knowledge_state.get("active_topics",    [])[:8])   or "—"
+        recent_str   = ", ".join(context.knowledge_state.get("recent_topics",    [])[:8])   or "—"
+        gaps_str     = ", ".join(context.knowledge_state.get("knowledge_gaps",   [])[:10])  or "none identified"
+        entities_str = ", ".join(context.knowledge_state.get("covered_entities", [])[-15:]) or "—"
+        keywords_str = ", ".join(context.knowledge_state.get("covered_keywords", [])[-20:]) or "—"
+        composer.add_section("knowledge_state", (
+            f"══════════════════════════════════════\n"
+            f"KNOWLEDGE STATE\n"
+            f"══════════════════════════════════════\n"
+            f"Topics covered:    {covered_str}\n"
+            f"Currently active:  {active_str}\n"
+            f"Recent coverage:   {recent_str}\n"
+            f"Known gaps:        {gaps_str}\n"
+            f"Entities seen:     {entities_str}\n"
+            f"Keywords used:     {keywords_str}\n"
+            f"\n"
+            f"Prioritise at least one known gap per package. Anchor new ideas to known entities and keywords."
+        ),               priority=1, required=False, source_pack="dynamic")
+
+    if context.intelligence_context:
         composer.add_section(
             "feed_intelligence",
-            intelligence_context,
+            context.intelligence_context,
             priority=1, required=False, source_pack="dynamic",
         )
 
-    # Quality feedback (Phase 4.7): issues from previous package evaluation.
-    # Priority=1 — the LLM reads this before generating, treating it as mandatory corrections.
-    if quality_feedback:
+    if context.quality_feedback:
         composer.add_section(
             "quality_feedback",
-            quality_feedback,
+            context.quality_feedback,
             priority=1, required=False, source_pack="dynamic",
         )
 
-    composer.add_section("memory_section",          memory_section_str,
-                         priority=4, required=False, source_pack="dynamic")
-    composer.add_section("continuity",              continuity_str,
-                         priority=4, required=False, source_pack="dynamic")
     composer.add_section("editorial_philosophy",    EDITORIAL_PHILOSOPHY,
                          priority=2, required=True,  source_pack="package_editorial_pack")
     composer.add_section("beginner_calibration",    beginner_section_str,
                          priority=2, required=False, source_pack="dynamic")
-    composer.add_section("acceleration_philosophy", ACCELERATION_PHILOSOPHY,
-                         priority=3, required=True,  source_pack="package_editorial_pack")
-    composer.add_section("narrative_frames",        NARRATIVE_FRAMES,
-                         priority=4, required=True,  source_pack="package_narrative_pack")
     composer.add_section("emotional_tone",          EMOTIONAL_TONE_PALETTE,
                          priority=5, required=True,  source_pack="package_narrative_pack")
     composer.add_section("hook_rules",              hook_section,
-                         priority=3, required=True,  source_pack="package_editorial_pack")
-    composer.add_section("why_it_works",            WHY_IT_WORKS_RULES,
                          priority=3, required=True,  source_pack="package_editorial_pack")
     composer.add_section("writing_style",           WRITING_STYLE_STANDARDS,
                          priority=3, required=True,  source_pack="core_writing_pack")
@@ -330,105 +475,328 @@ SELF-CHECK before writing each card — ask yourself:
     composer.add_section("real_world_tension",      REAL_WORLD_TENSION,
                          priority=3, required=True,  source_pack="core_reasoning_pack")
 
-    composer.add_section("core_articles", (
-        f"══════════════════════════════════════\n"
-        f"AVAILABLE ARTICLES — CORE LEARNING\n"
-        f"══════════════════════════════════════\n"
-        f"{core_str}"
-    ),                   priority=1, required=True,  source_pack="dynamic")
+    # ── Source/batch sections ─────────────────────────────────────────────────
+    composer.add_section("core_articles",     _core_section_content,
+                         priority=1, required=True,  source_pack="dynamic")
 
-    composer.add_section("curiosity_articles", (
-        f"══════════════════════════════════════\n"
-        f"AVAILABLE ARTICLES — CURIOSITY ENGINE\n"
-        f"══════════════════════════════════════\n"
-        f"{curiosity_str}"
-    ),                   priority=2, required=True,  source_pack="dynamic")
+    # Curiosity section: present in PACKAGE mode; omitted in BATCH mode
+    # (curiosity articles are planned in their own batch and arrive via their own call)
+    if not is_batch:
+        composer.add_section("curiosity_articles", _curio_section_content,
+                             priority=2, required=True, source_pack="dynamic")
 
-    composer.add_section("task_intro", (
-        f"══════════════════════════════════════\n"
-        f"YOUR TASK\n"
-        f"══════════════════════════════════════\n\n"
-        f"{EDITORIAL_ROLES}\n\n"
-        f"{pkg_composition}\n\n"
-        f"{ARTICLE_MIX}\n\n"
-        f"Generate a JSON package with TWO sections:"
-    ),                   priority=2, required=True,  source_pack="package_narrative_pack")
-
-    composer.add_section("section1_instructions",   section1,
-                         priority=2, required=True,  source_pack="package_narrative_pack")
-
-    # Strategic curiosity directives (Phase 4.4): injected at priority=1 so they
-    # prepend the generic tension scoring — the LLM sees them first and uses them
-    # as the specific target for each card slot.
-    if curiosity_directives:
+    if _plan_block:
+        _angle_nudge = (
+            "Vary the editorial angle across cards "
+            "(e.g. investigative, future-focused, story-driven, comparative).\n"
+            "\"Narrative shape\" per slot below describes how the SOURCE MATERIAL is structured "
+            "(timeline / comparison / single-discovery-story). "
+            "\"narrative_frame\" in your output is the editorial VOICE telling the story — "
+            "these are independent: any narrative_frame can be applied to any narrative shape.\n\n"
+        )
         composer.add_section(
-            "curiosity_strategy",
-            curiosity_directives,
+            "article_source_assignments",
+            _angle_nudge + _plan_block,
             priority=1, required=False, source_pack="dynamic",
         )
 
-    composer.add_section("curiosity_instructions", (
-        f"{CURIOSITY_TARGET}\n"
-        f"{TENSION_SCORING}\n"
-        f"{TENSION_CATEGORIES}\n"
-        f"{CURIOSITY_TITLE_RULES}\n"
-        f"{CURIOSITY_SUMMARY_RULES}\n"
-        f"{curiosity_rules}"
-    ),                   priority=2, required=True,  source_pack="package_curiosity_pack")
+    # ── Task / output sections ────────────────────────────────────────────────
+    if is_batch:
+        _n_cards = len(batch_plan.plans)
+        _task_intro_content = (
+            f"══════════════════════════════════════\n"
+            f"YOUR TASK — BATCH {batch_plan.batch_id} ({_batch_type})\n"
+            f"══════════════════════════════════════\n\n"
+            f"Generate EXACTLY {_n_cards} insight card(s) — one card per article slot in this batch.\n"
+            f"EXACTLY {_n_cards} is a hard count: not a minimum, not a suggestion.\n"
+            f"Any count mentioned elsewhere in these instructions describes the full multi-batch package — ignore those counts for this batch.\n"
+            f"Apply all editorial, narrative, and writing guidelines above.\n"
+            f"Every card MUST cite its assigned source (ARTICLE SOURCE ASSIGNMENTS).\n"
+            f"Respond with JSON batch result exactly as specified below."
+        )
+    else:
+        _roles_mix = _build_editorial_roles_mix(context.knowledge_state)
+        _task_intro_content = (
+            f"══════════════════════════════════════\n"
+            f"YOUR TASK\n"
+            f"══════════════════════════════════════\n\n"
+            f"{_roles_mix}\n\n"
+            f"{pkg_composition}\n\n"
+            f"Generate a JSON package with TWO sections:"
+        )
+    composer.add_section("task_intro", _task_intro_content,
+                         priority=2, required=True,  source_pack="package_narrative_pack")
+
+    # section1 describes core "insights" array — skip for curiosity-only batches
+    if not is_batch or _batch_type != "CURIOSITY":
+        composer.add_section("section1_instructions", section1,
+                             priority=2, required=True, source_pack="package_narrative_pack")
+
+    if context.curiosity_directives:
+        composer.add_section(
+            "curiosity_strategy",
+            context.curiosity_directives,
+            priority=1, required=False, source_pack="dynamic",
+        )
+
+    # curiosity_instructions: PACKAGE mode always; BATCH mode only for curiosity batch
+    if not is_batch or _batch_type == "CURIOSITY":
+        composer.add_section("curiosity_instructions", (
+            f"{CURIOSITY_TARGET}\n"
+            f"{TENSION_SCORING}\n"
+            f"{TENSION_CATEGORIES}\n"
+            f"{CURIOSITY_TITLE_RULES}\n"
+            f"{CURIOSITY_SUMMARY_RULES}\n"
+            f"{curiosity_rules}"
+        ),                   priority=2, required=True, source_pack="package_curiosity_pack")
 
     composer.add_section("action_design",           ACTION_DESIGN,
                          priority=5, required=True,  source_pack="package_action_pack")
 
-    composer.add_section("output_schema", (
-        f"Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:\n\n"
-        f"{{\n"
-        f"  \"package_headline\": \"Compelling, specific 10-word headline capturing today's editorial theme\",\n"
-        f"  \"content_mix\": \"e.g. '2 news · 3 educational + 2 curiosity picks'\",\n"
-        f"  \"learning_thread\": \"1–2 sentences: NAME the specific prior insight or mechanism being built on (not generic 'continues from Day X') — then state where today's content advances it and what question it leaves open next.\",\n"
-        f"  \"action_item\": \"INVESTIGATIVE MISSION: one specific, startable-in-10-minutes action using one of the 8 types above — references a named mechanism, company, or claim from today's cards — ends with a concrete thing to find, verify, compare, or build.\",\n"
-        f"  \"insights\": [\n"
-        f"    {{\n"
-        f"      \"id\": \"card-1\",\n"
-        f"      \"content_type\": \"news\",\n"
-        f"      \"narrative_frame\": \"INVESTIGATIVE\",\n"
-        f"      \"category\": \"specific topic area within {project_name}\",\n"
-        f"      \"title\": \"Specific, compelling title ≤ 12 words — never generic\",\n"
-        f"      \"summary\": \"HOOK: 2–3 sentences — curiosity tension first, then the core insight. No definition openings.\",\n"
-        f"      \"educational_explanation\": \"INSIGHT → EVIDENCE → IMPLICATION: 4–6 sentences assuming user knows the basics. Surface what's non-obvious, name a specific example, and state what it means for the domain.\",\n"
-        f"      \"why_it_matters\": \"HIDDEN MECHANISM: 90–120 words. Expose the underlying causal chain, invisible incentive, or system behavior that produces this outcome. Must answer 'What hidden mechanism causes this?' NOT a topic summary. NOT a restatement of the article. See WHY THIS WORKS rules above.\",\n"
-        f"      \"memory_callback\": \"ONLY if this card explicitly references a prior session insight — include the callback phrase used (1 sentence). Omit entirely if this card does not reference prior learning.\",\n"
-        f"      \"source_links\": [{{\"title\": \"source title\", \"url\": \"https://...\"}}],\n"
-        f"      \"difficulty\": \"{difficulty}\",\n"
-        f"      \"estimated_read_time\": \"X min\"\n"
-        f"    }}\n"
-        f"  ],\n"
-        f"  \"curiosity_insights\": [\n"
-        f"    {{\n"
-        f"      \"id\": \"curiosity-1\",\n"
-        f"      \"content_type\": \"curiosity\",\n"
-        f"      \"category\": \"e.g. 'Hidden Mechanism' or 'Origin Myth Shattered' or 'The Failure That Explained Everything'\",\n"
-        f"      \"title\": \"Story-driven, intriguing title ≤ 12 words — something you'd click at 11pm\",\n"
-        f"      \"summary\": \"The hook: 2–3 sentences starting with what's strange, counterintuitive, or dramatic — not background. Make the reader say 'wait, really?'\",\n"
-        f"      \"educational_explanation\": \"The payoff: 3–5 sentences revealing what this discovery exposes about {project_name}. Should feel like 'oh — that explains everything.'\",\n"
-        f"      \"why_it_matters\": \"HIDDEN MECHANISM: 90–120 words. Expose what this discovery reveals about how {project_name} actually works — the structural behavior, hidden incentive, or causal chain the surface story conceals. NOT a restatement of the discovery.\",\n"
-        f"      \"source_links\": [{{\"title\": \"...\", \"url\": \"...\"}}],\n"
-        f"      \"difficulty\": \"intermediate\",\n"
-        f"      \"estimated_read_time\": \"3 min\"\n"
-        f"    }},\n"
-        f"    {{\n"
-        f"      \"id\": \"curiosity-2\",\n"
-        f"      \"content_type\": \"curiosity\",\n"
-        f"      \"category\": \"...\",\n"
-        f"      \"title\": \"...\",\n"
-        f"      \"summary\": \"...\",\n"
-        f"      \"educational_explanation\": \"...\",\n"
-        f"      \"why_it_matters\": \"HIDDEN MECHANISM: 90–120 words — see rules above.\",\n"
-        f"      \"source_links\": [],\n"
-        f"      \"difficulty\": \"intermediate\",\n"
-        f"      \"estimated_read_time\": \"3 min\"\n"
-        f"    }}\n"
-        f"  ]\n"
-        f"}}"
+    composer.add_section("source_grounding", (
+        f"SOURCE GROUNDING — MANDATORY\n"
+        f"ALLOWED: explain, simplify, connect, derive from retrieved sources.\n"
+        f"FORBIDDEN: invent facts, fabricate statistics or quotes, assert unsupported claims.\n"
+        f"Every card MUST include at least one `evidence` block that cites the Source-ID "
+        f"(e.g. '{_sid_prefix}{_batch_type}-1 reports ...').\n"
+        f"primary_source = the article that most directly grounds the evidence block. "
+        f"If no source supports a claim, omit the claim."
     ),                   priority=1, required=True,  source_pack="")
 
-    return composer.build()
+    if is_batch:
+        # Writer schema — cards only (no package_headline / learning_thread / action_item).
+        # Package-level metadata is stubbed in merge_batch_results() and replaced in 9.3.4D.
+        _is_curiosity_batch = _batch_type == "CURIOSITY"
+        _primary_array = "curiosity_insights" if _is_curiosity_batch else "insights"
+        _empty_array   = "insights" if _is_curiosity_batch else "curiosity_insights"
+        _card_id_ex    = "curiosity-1" if _is_curiosity_batch else "card-1"
+        _ctype_ex      = "curiosity"   if _is_curiosity_batch else "news"
+        composer.add_section("output_schema", (
+            f"SOURCE PROVENANCE RULES — MANDATORY:\n"
+            f"Every card MUST have a primary_source: the ONE article that most directly supports it.\n"
+            f"supporting_sources: additional retrieved articles that inform the card (0 or more).\n"
+            f"UNIQUENESS: each primary_source URL used as primary_source for AT MOST ONE card.\n"
+            f"  If a URL is already used as primary_source in an earlier card, use it as supporting_source only.\n"
+            f"ALL URLs must be taken verbatim from AVAILABLE ARTICLES above — never invent, guess, or fabricate.\n"
+            f"NEVER use example.com, placeholder URLs, or any URL not present in the AVAILABLE ARTICLES sections.\n\n"
+            f"BLOCK SELECTION PROCESS — run this reasoning for EACH card before choosing blocks:\n"
+            f"  1. SOURCE TYPE: Check the `Source type:` field in AVAILABLE ARTICLES for the primary source.\n"
+            f"  2. ARTICLE OBJECTIVE: What must the reader understand or be able to do after reading this card?\n"
+            f"  3. USER CONTEXT: Given this learner's intent profile and knowledge state, what structure serves them best?\n"
+            f"SOURCE TYPE → BLOCK PATTERNS (heuristics, not rules — override when content demands it):\n"
+            f"  government / regulatory  → timeline, evidence, implication, warning\n"
+            f"  research_paper           → explanation, evidence, mechanism, counterpoint\n"
+            f"  industry_report          → comparison, evidence, insight, implication\n"
+            f"  market_analysis          → key_takeaway, comparison, evidence, implication\n"
+            f"  news                     → key_takeaway, evidence, counterpoint, implication\n"
+            f"  educational              → explanation, example, evidence, step_list or mechanism\n"
+            f"  company_blog             → example or step_list, evidence, insight, warning\n"
+            f"  (unknown / mixed)        → infer from content: methodology → step_list; concept → mechanism; event → implication\n\n"
+            f"AVAILABLE BLOCK TYPES:\n"
+            f"  key_takeaway  — single most important insight (1–2 sentences)\n"
+            f"  evidence      — SOURCE BASIS: cite Source-IDs (e.g. '{_sid_prefix}{_batch_type}-N reports ...'); REQUIRED in every card\n"
+            f"  explanation   — explain, simplify, connect, or derive from source evidence (3–4 sentences max)\n"
+            f"  mechanism     — hidden causal chain or invisible incentive (max 50 words)\n"
+            f"  example       — concrete real-world instance that illustrates the concept (2–3 sentences)\n"
+            f"  timeline      — sequential events or progression; one item per line using \\n\n"
+            f"  comparison    — contrast between two approaches or outcomes; one item per line using \\n\n"
+            f"  step_list     — ordered procedure; one step per line using \\n, strip prose intro\n"
+            f"  warning       — risk, caveat, or common misunderstanding (2–3 sentences)\n"
+            f"  counterpoint  — opposing view or tension worth knowing (1–2 sentences)\n"
+            f"  insight       — non-obvious implication that rewards careful thinking (1–2 sentences)\n"
+            f"  implication   — forward-looking consequence for the learner's domain (1–2 sentences)\n"
+            f"  reflection    — metacognitive closing observation (1–2 sentences)\n"
+            f"  headline      — sub-heading to organise longer cards (title case, ≤6 words)\n\n"
+            f"BLOCK RULES:\n"
+            f"  • Every card must have exactly one `evidence` block (with Source-ID citation).\n"
+            f"  • Choose 4–5 blocks per card — prefer more short blocks over fewer long blocks.\n"
+            f"  • Every block: max 4–5 rendered lines. If content exceeds this, split into two blocks.\n"
+            f"  • Every card must contain at least one of: example, comparison, timeline, warning, step_list.\n"
+            f"  • Block selection must vary across cards — let source nature drive it, not card label.\n\n"
+            f"Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:\n\n"
+            f"{{\n"
+            f"  \"batch_id\": {batch_plan.batch_id},\n"
+            f"  \"{_primary_array}\": [\n"
+            f"    {{\n"
+            f"      \"id\": \"{_card_id_ex}\",\n"
+            f"      \"content_type\": \"{_ctype_ex}\",\n"
+            f"      \"narrative_frame\": \"INVESTIGATIVE\",\n"
+            f"      \"category\": \"specific topic area within {context.project_name}\",\n"
+            f"      \"title\": \"Specific, compelling title ≤ 12 words — never generic\",\n"
+            f"      \"summary\": \"HOOK: 1–2 sentences — tension or signal that makes this worth reading.\",\n"
+            f"      \"blocks\": [\n"
+            f"        {{\"type\": \"evidence\",    \"content\": \"SOURCE BASIS — {_sid_prefix}{_batch_type}-N reports ...\"}},\n"
+            f"        {{\"type\": \"implication\", \"content\": \"What this means for the learner's domain.\"}}\n"
+            f"      ],\n"
+            f"      \"primary_source\": {{\"title\": \"exact title from AVAILABLE ARTICLES\", \"url\": \"exact URL — never invent\"}},\n"
+            f"      \"supporting_sources\": [{{\"title\": \"exact title\", \"url\": \"exact URL from AVAILABLE ARTICLES\"}}],\n"
+            f"      \"difficulty\": \"{context.difficulty}\",\n"
+            f"      \"estimated_read_time\": \"X min\"\n"
+            f"    }}\n"
+            f"  ],\n"
+            f"  \"{_empty_array}\": []\n"
+            f"}}"
+        ),               priority=1, required=True, source_pack="")
+    else:
+        composer.add_section("output_schema", (
+            f"SOURCE PROVENANCE RULES — MANDATORY:\n"
+            f"Every card MUST have a primary_source: the ONE article that most directly supports it.\n"
+            f"supporting_sources: additional retrieved articles that inform the card (0 or more).\n"
+            f"UNIQUENESS: each primary_source URL must be used as primary_source for AT MOST ONE card.\n"
+            f"  If a URL is already used as primary_source in an earlier card, use it as supporting_source only.\n"
+            f"ALL URLs must be taken verbatim from AVAILABLE ARTICLES above — never invent, guess, or fabricate.\n"
+            f"NEVER use example.com, placeholder URLs, or any URL not present in the AVAILABLE ARTICLES sections.\n\n"
+            f"Respond ONLY with valid JSON — no markdown, no prose outside the JSON object:\n\n"
+            f"{{\n"
+            f"  \"package_headline\": \"Compelling, specific 10-word headline capturing today's editorial theme\",\n"
+            f"  \"content_mix\": \"e.g. '2 news · 3 educational + 2 curiosity picks'\",\n"
+            f"  \"learning_thread\": \"1–2 sentences: NAME the specific prior insight or mechanism being built on "
+            f"(not generic 'continues from Day X') — then state where today's content advances it and what question it leaves open next.\",\n"
+            f"  \"action_item\": \"INVESTIGATIVE MISSION: one specific, startable-in-10-minutes action using one of the 8 types above "
+            f"— references a named mechanism, company, or claim from today's cards "
+            f"— ends with a concrete thing to find, verify, compare, or build.\",\n"
+            f"BLOCK SELECTION PROCESS — run this reasoning for EACH card before choosing blocks:\n"
+            f"  1. SOURCE TYPE: Check the `Source type:` field in AVAILABLE ARTICLES for the primary source.\n"
+            f"     Use it as the first signal for block selection.\n"
+            f"  2. ARTICLE OBJECTIVE: What must the reader understand or be able to do after reading this specific card?\n"
+            f"  3. USER CONTEXT: Given this learner's intent profile and knowledge state, what structure serves them best?\n"
+            f"SOURCE TYPE → BLOCK PATTERNS (heuristics, not rules — override when content demands it):\n"
+            f"  government / regulatory  → timeline (what changed and when), evidence, implication, warning\n"
+            f"  research_paper           → explanation (build the model), evidence, mechanism, counterpoint\n"
+            f"  industry_report          → comparison (sector vs sector), evidence, insight, implication\n"
+            f"  market_analysis          → key_takeaway, comparison, evidence, implication\n"
+            f"  news                     → key_takeaway, evidence, counterpoint, implication\n"
+            f"  educational              → explanation, example, evidence, step_list or mechanism\n"
+            f"  company_blog             → example or step_list, evidence, insight, warning\n"
+            f"  (unknown / mixed)        → infer from content: methodology → step_list; concept → mechanism; event → implication\n\n"
+            f"AVAILABLE BLOCK TYPES:\n"
+            f"  key_takeaway  — single most important insight (1–2 sentences)\n"
+            f"  evidence      — SOURCE BASIS: cite Source-IDs (e.g. '{_sid_prefix}CORE-1 reports ...'); REQUIRED in every card\n"
+            f"  explanation   — explain, simplify, connect, or derive from source evidence (3–4 sentences max; split into two blocks if content is dense)\n"
+            f"  mechanism     — hidden causal chain or invisible incentive (max 50 words — tight, no padding)\n"
+            f"  example       — concrete real-world instance that illustrates the concept (2–3 sentences)\n"
+            f"  timeline      — sequential events or progression; one item per line using \\n\n"
+            f"  comparison    — contrast between two approaches or outcomes; one item per line using \\n\n"
+            f"  step_list     — ordered procedure; one step per line using \\n, strip prose intro\n"
+            f"  warning       — risk, caveat, or common misunderstanding (2–3 sentences)\n"
+            f"  counterpoint  — opposing view or tension worth knowing (1–2 sentences)\n"
+            f"  insight       — non-obvious implication that rewards careful thinking (1–2 sentences)\n"
+            f"  implication   — forward-looking consequence for the learner's domain (1–2 sentences)\n"
+            f"  reflection    — metacognitive closing observation (1–2 sentences)\n"
+            f"  headline      — sub-heading to organise longer cards (title case, ≤6 words)\n\n"
+            f"BLOCK RULES:\n"
+            f"  • Every card must have exactly one `evidence` block (with Source-ID citation).\n"
+            f"  • Choose 4–5 blocks per card — prefer more short blocks over fewer long blocks.\n"
+            f"  • Every block: max 4–5 rendered lines. If content exceeds this, split into two blocks.\n"
+            f"  • Every card must contain at least one of: example, comparison, timeline, warning, step_list.\n"
+            f"  • Block selection must vary across cards — let source nature drive it, not card label.\n\n"
+            f"  \"insights\": [\n"
+            f"    {{\n"
+            f"      \"id\": \"card-1\",\n"
+            f"      \"content_type\": \"news\",\n"
+            f"      \"narrative_frame\": \"INVESTIGATIVE\",\n"
+            f"      \"category\": \"specific topic area within {context.project_name}\",\n"
+            f"      \"title\": \"Specific, compelling title ≤ 12 words — never generic\",\n"
+            f"      \"summary\": \"HOOK: 1–2 sentences — tension or signal that makes this worth reading. No definition openings.\",\n"
+            f"      \"blocks\": [\n"
+            f"        {{\"type\": \"timeline\",    \"content\": \"Concrete sequence: what changed and when.\"}},\n"
+            f"        {{\"type\": \"evidence\",    \"content\": \"SOURCE BASIS — {_sid_prefix}CORE-N reports ...\"}},\n"
+            f"        {{\"type\": \"implication\", \"content\": \"What this means for the learner's domain.\"}}\n"
+            f"      ],\n"
+            f"      \"primary_source\": {{\"title\": \"exact title from AVAILABLE ARTICLES\", \"url\": \"exact URL — never invent\"}},\n"
+            f"      \"supporting_sources\": [{{\"title\": \"exact title\", \"url\": \"exact URL from AVAILABLE ARTICLES\"}}],\n"
+            f"      \"difficulty\": \"{context.difficulty}\",\n"
+            f"      \"estimated_read_time\": \"X min\"\n"
+            f"    }}\n"
+            f"  ],\n"
+            f"  \"curiosity_insights\": [\n"
+            f"    {{\n"
+            f"      \"id\": \"curiosity-1\",\n"
+            f"      \"content_type\": \"curiosity\",\n"
+            f"      \"category\": \"e.g. 'Hidden Mechanism' or 'Origin Myth Shattered'\",\n"
+            f"      \"title\": \"Story-driven, intriguing title ≤ 12 words\",\n"
+            f"      \"summary\": \"Hook: 2–3 sentences starting with what's strange or counterintuitive — make the reader say 'wait, really?'\",\n"
+            f"      \"blocks\": [\n"
+            f"        {{\"type\": \"insight\",      \"content\": \"The non-obvious thing the source reveals.\"}},\n"
+            f"        {{\"type\": \"evidence\",     \"content\": \"SOURCE BASIS — {_sid_prefix}CORE-N reports ...\"}},\n"
+            f"        {{\"type\": \"counterpoint\", \"content\": \"The tension that makes this surprising.\"}},\n"
+            f"        {{\"type\": \"reflection\",   \"content\": \"What this changes about how to think about the topic.\"}}\n"
+            f"      ],\n"
+            f"      \"primary_source\": {{\"title\": \"exact title from AVAILABLE ARTICLES\", \"url\": \"exact URL — never invent\"}},\n"
+            f"      \"supporting_sources\": [],\n"
+            f"      \"difficulty\": \"intermediate\",\n"
+            f"      \"estimated_read_time\": \"3 min\"\n"
+            f"    }}\n"
+            f"  ]\n"
+            f"}}\nRepeat curiosity card structure for every curiosity article."
+        ),               priority=1, required=True,  source_pack="")
+
+    _log_prompt_breakdown(
+        composer,
+        PromptMode.BATCH if is_batch else PromptMode.PACKAGE,
+        batch_plan.batch_id if is_batch else None,
+    )
+    return composer
+
+
+# ── Backward-compatible package wrapper ──────────────────────────────────────
+
+def make_daily_package_composer(
+    project_name: str,
+    keywords: list[str],
+    difficulty: str,
+    day_number: int,
+    display_label: str,
+    core_articles: list[dict],
+    curiosity_articles: list[dict],
+    daily_core_article_count: int = 4,
+    curiosity_directives: str | None = None,
+    intelligence_context: str | None = None,
+    quality_feedback: str | None = None,
+    intent_profile: dict | None = None,
+    knowledge_state: dict | None = None,
+    article_plan_block: str | None = None,
+    article_budget_tokens: int = 0,
+    core_article_text: str | None = None,
+    curiosity_article_text: str | None = None,
+) -> PromptComposer:
+    """
+    Backward-compatible entry point — call signature unchanged from pre-9.3.4B.
+
+    Wraps build_batch_prompt() in PACKAGE mode (batch_plan=None).
+    Handles optional article text: when core_article_text is not supplied,
+    formats core_articles / curiosity_articles internally using ArticleCompressor.
+    Callers that pre-format (e.g. project_service after 9.3.3B budget calibration)
+    pass core_article_text / curiosity_article_text directly.
+    """
+    if core_article_text is None:
+        _total         = article_budget_tokens or 3000
+        _core_budget   = int(_total * 0.70)
+        _curio_budget  = _total - _core_budget
+        from .article_compressor import ArticleCompressor as _AC
+        _ac = _AC()
+        core_article_text,     _ = _ac.format_intel_batch(core_articles,      "CORE",      _core_budget)
+        curiosity_article_text, _ = _ac.format_intel_batch(curiosity_articles, "CURIOSITY", _curio_budget)
+
+    ctx = PromptContext(
+        project_name             = project_name,
+        keywords                 = keywords,
+        difficulty               = difficulty,
+        day_number               = day_number,
+        display_label            = display_label,
+        daily_core_article_count = daily_core_article_count,
+        intent_profile           = intent_profile,
+        knowledge_state          = knowledge_state,
+        curiosity_directives     = curiosity_directives,
+        intelligence_context     = intelligence_context,
+        quality_feedback         = quality_feedback,
+        article_plan_block       = article_plan_block,
+        article_budget_tokens    = article_budget_tokens,
+    )
+
+    return build_batch_prompt(
+        ctx,
+        batch_plan             = None,
+        core_article_text      = core_article_text or "",
+        curiosity_article_text = curiosity_article_text or "",
+    )

@@ -71,7 +71,7 @@ export async function getProject(projectId) {
   return apiFetch(`/projects/${encodeURIComponent(projectId)}`)
 }
 
-export async function createProject({ name, description, keywords, difficulty, focus_areas, color, preferred_sources = [], ignored_sources = [], daily_core_article_count = 4 }) {
+export async function createProject({ name, description, keywords, difficulty, color, daily_core_article_count = 4 }) {
   if (USE_MOCK) {
     await delay(400)
     const project = {
@@ -80,10 +80,7 @@ export async function createProject({ name, description, keywords, difficulty, f
       description:              description || "",
       keywords:                 keywords || [],
       difficulty:               difficulty || "intermediate",
-      focus_areas:              focus_areas || [],
       color:                    color || "blue",
-      preferred_sources:        preferred_sources || [],
-      ignored_sources:          ignored_sources || [],
       daily_core_article_count: daily_core_article_count || 4,
       insight_count:            0,
       last_insight_at:          null,
@@ -95,19 +92,30 @@ export async function createProject({ name, description, keywords, difficulty, f
   }
   return apiFetch("/projects", {
     method: "POST",
-    body: JSON.stringify({ name, description, keywords, difficulty, focus_areas, color, preferred_sources, ignored_sources, daily_core_article_count }),
+    body: JSON.stringify({ name, description, keywords, difficulty, color, daily_core_article_count }),
   })
 }
 
-export async function checkSourceRelevance(domain, projectName, keywords) {
+export async function updateIntentProfile(projectId, profile) {
   if (USE_MOCK) {
-    await delay(600)
-    return { relevant: true, reason: "Mock: defaulting to relevant" }
+    await delay(350)
+    return { ok: true, intent_profile: profile }
   }
-  return apiFetch("/projects/check-source-relevance", {
-    method: "POST",
-    body: JSON.stringify({ domain, project_name: projectName, keywords }),
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/intent-profile`, {
+    method: "PUT",
+    body: JSON.stringify(profile),
   })
+}
+
+export async function confirmIntent(projectId) {
+  if (USE_MOCK) {
+    await delay(200)
+    _mockProjects = _mockProjects.map(p =>
+      p.project_id === projectId ? { ...p, intent_confirmed: 1 } : p
+    )
+    return _mockProjects.find(p => p.project_id === projectId) ?? null
+  }
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/confirm-intent`, { method: "POST" })
 }
 
 export async function updateProject(projectId, fields) {
@@ -123,6 +131,34 @@ export async function updateProject(projectId, fields) {
   return apiFetch(`/projects/${encodeURIComponent(projectId)}`, {
     method: "PUT",
     body: JSON.stringify(fields),
+  })
+}
+
+export async function suggestKeywords(name, description, difficulty = "intermediate") {
+  if (USE_MOCK) {
+    await delay(1100)
+    const text = `${name} ${description}`.toLowerCase()
+    const adv  = difficulty === "advanced"
+    const beg  = difficulty === "beginner"
+    if (text.includes("ai") || text.includes("machine learning") || text.includes("llm") || text.includes("agent"))
+      return { keywords: adv
+        ? ["transformer architecture", "RLHF", "agentic workflows", "inference optimization", "multi-modal LLMs", "AI safety 2025", "foundation model evaluation"]
+        : beg
+        ? ["what is AI", "ChatGPT explained", "AI tools for beginners", "machine learning basics", "real-world AI applications 2025"]
+        : ["LLMs", "AI Agents", "RAG", "Enterprise AI", "MLOps", "Foundation Models", "AI deployment 2025"] }
+    if (text.includes("pharma") || text.includes("drug") || text.includes("medicine"))
+      return { keywords: ["USFDA", "generic drugs", "API manufacturing", "clinical trials", "pharma exports 2025", "drug pricing", "biosimilars"] }
+    if (text.includes("supply chain") || text.includes("logistics"))
+      return { keywords: ["demand forecasting", "logistics AI", "nearshoring 2025", "inventory optimization", "3PL", "cold chain"] }
+    if (text.includes("finance") || text.includes("invest") || text.includes("trading") || text.includes("quant"))
+      return { keywords: adv
+        ? ["factor model alpha decay", "vol surface arbitrage", "alternative data signals", "execution algorithms", "portfolio attribution 2025"]
+        : ["algorithmic trading", "factor models", "derivatives", "risk management 2025", "quantitative finance"] }
+    return { keywords: ["market analysis", "industry dynamics", "regulatory trends 2025", "competitive landscape", "emerging players"] }
+  }
+  return apiFetch("/projects/suggest-keywords", {
+    method: "POST",
+    body: JSON.stringify({ name, description, difficulty }),
   })
 }
 
@@ -153,6 +189,14 @@ export async function listProjectInsights(projectId, limit = 20) {
   return apiFetch(`/projects/${encodeURIComponent(projectId)}/insights?limit=${limit}`)
 }
 
+export async function getInsightStatus(projectId, insightId) {
+  if (USE_MOCK) {
+    await delay(200)
+    return { status: 'done' }
+  }
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/insights/${insightId}/status`)
+}
+
 export async function generateProjectInsight(projectId) {
   if (USE_MOCK) {
     await delay(1400)
@@ -161,7 +205,6 @@ export async function generateProjectInsight(projectId) {
     const project   = _mockProjects.find(p => p.project_id === projectId)
     const diff      = project?.difficulty || "intermediate"
     const name      = project?.name ?? "Your Project"
-    const areas     = project?.focus_areas || []
 
     const newPkg = {
       id:               `pkg-mock-${Date.now()}`,
@@ -176,11 +219,14 @@ export async function generateProjectInsight(projectId) {
         {
           id: "card-1",
           content_type: "news",
-          category: areas[0] || "industry trends",
+          category: "industry trends",
           title: `Shifting Dynamics Reshape ${name} Landscape`,
           summary: "Recent announcements signal a meaningful inflection point as leading practitioners and institutions adjust their strategic approaches. The changes reflect accumulating pressure from multiple directions.",
-          educational_explanation: "Inflection points in an industry typically emerge when several slower-moving forces — technology maturation, regulatory pressure, and talent redistribution — align simultaneously. Recognizing this pattern early lets you position your learning ahead of the mainstream shift rather than reacting after it has occurred. The key signal to watch is when incumbents change behaviour, because they tend to move only when the cost of inaction exceeds the cost of change.",
-          why_it_matters: `For someone building expertise in ${name}, understanding these structural shifts separates practitioners who lead from those who follow.`,
+          blocks: [
+            { type: "evidence",    content: `Multiple reports indicate that ${name} practitioners are accelerating structural changes — driven by technology maturation, regulatory pressure, and talent redistribution aligning simultaneously.` },
+            { type: "explanation", content: "Inflection points emerge when slower-moving forces align. The key signal: incumbents change behaviour only when the cost of inaction exceeds the cost of change — a pattern visible across every major industry transition." },
+            { type: "mechanism",   content: `For someone building expertise in ${name}, this structural shift creates a narrow window: the practitioners who recognise the inflection early can position their learning ahead of the mainstream, capturing the compounding advantage of early depth. Once the shift becomes obvious to everyone, the differentiation collapses.` },
+          ],
           source_links: [],
           difficulty: diff,
           estimated_read_time: "3 min",
@@ -188,11 +234,14 @@ export async function generateProjectInsight(projectId) {
         {
           id: "card-2",
           content_type: "news",
-          category: areas[1] || "technology",
+          category: "technology",
           title: "New Tools and Methodologies Accelerate Adoption",
           summary: "Practitioners report accelerating uptake of newer analytical and operational methods, with early results demonstrating measurable improvements over baseline approaches.",
-          educational_explanation: "Adoption curves in technical fields follow a predictable S-curve: slow early adoption as pioneers work out the kinks, rapid mainstream adoption once the value is demonstrated, and then a plateau as the approach becomes standard. Currently visible in this space is the transition from early to mainstream adoption — meaning the cost of not learning these methods is rising rapidly. Identifying which phase a methodology is in helps you calibrate investment: too early wastes effort on immature tools, too late means catching up on core competency.",
-          why_it_matters: "Tracking adoption trends lets you front-run the skills market and develop expertise before demand peaks.",
+          blocks: [
+            { type: "evidence",    content: "Adoption data shows this methodology moving from the early-majority into mainstream phase — measurable improvements over baseline approaches are now documented across multiple independent case studies." },
+            { type: "key_takeaway", content: "Identifying which phase a methodology occupies lets you calibrate investment: too early wastes effort on immature tools, too late means catching up on core competency." },
+            { type: "implication", content: "The cost of not learning these methods is rising rapidly. Practitioners who front-run mainstream adoption build the rarest asset in any field: a head start that cannot be bought later." },
+          ],
           source_links: [],
           difficulty: diff,
           estimated_read_time: "3 min",
@@ -203,8 +252,11 @@ export async function generateProjectInsight(projectId) {
           category: "market",
           title: "Regulatory and Competitive Signals Demand Attention",
           summary: "Regulatory bodies and major market participants have released guidance that reshapes operating expectations. The changes affect compliance timelines and create new differentiation opportunities.",
-          educational_explanation: "Regulatory signals typically lag industry practice by 2–5 years, but they carry significant weight once formalized. The smart practitioner response is to track the trajectory of emerging guidance and build systems that will be compliant before mandated — this converts a compliance cost into a competitive advantage. Understanding the feedback loop between voluntary best practice and eventual regulation is a core meta-skill in any fast-evolving domain.",
-          why_it_matters: "Anticipating regulatory direction protects your work from sudden compliance costs and signals domain maturity to stakeholders.",
+          blocks: [
+            { type: "evidence",      content: "Regulatory bodies have released formal guidance affecting compliance timelines. Major market participants have begun pre-compliance positioning ahead of the enforcement date." },
+            { type: "counterpoint",  content: "Sceptics argue regulatory signals in this domain consistently lag practice by 2–5 years and should not drive near-term investment. Historical precedent supports this — but ignores the asymmetric cost of being caught non-compliant at enforcement." },
+            { type: "warning",       content: "Compliance timing risk is real: organizations that delay until enforcement typically face compacted delivery windows, premium vendor pricing, and reduced negotiating leverage with regulators." },
+          ],
           source_links: [],
           difficulty: diff,
           estimated_read_time: "2 min",
@@ -215,8 +267,12 @@ export async function generateProjectInsight(projectId) {
           category: "fundamentals",
           title: `Concept: Systems Thinking — How to Reason About ${name} Holistically`,
           summary: "Systems thinking is the meta-skill that lets practitioners understand why isolated interventions often fail and how to design durable solutions that account for feedback effects.",
-          educational_explanation: "A system is any collection of interrelated components whose interactions produce emergent behaviour — behaviour that cannot be predicted by studying components in isolation. In practical terms, this means that improving one metric in isolation often degrades another: optimising for speed may harm quality, cutting costs may reduce resilience. The key concepts are: stocks (accumulated quantities), flows (rates of change), and feedback loops (self-reinforcing or balancing). To apply systems thinking, draw the causal loop diagram of your problem before proposing a solution. This surfaces hidden second-order effects that straightforward analysis misses. Example: in supply chains, reducing inventory buffers (stock) speeds up flow but amplifies volatility — the 'bullwhip effect'.",
-          why_it_matters: `Systems thinking is foundational for anyone working on complex ${name} problems where optimising locally produces sub-optimal global outcomes.`,
+          blocks: [
+            { type: "key_takeaway", content: "A system's behaviour emerges from component interactions, not components in isolation — optimising one metric in isolation often degrades another." },
+            { type: "evidence",     content: "The canonical example: in supply chains, reducing inventory buffers (stock) speeds up flow but amplifies demand volatility downstream — the documented 'bullwhip effect', studied across thousands of supply networks." },
+            { type: "example",      content: `In ${name}, this manifests when practitioners optimise for speed, only to discover that quality or resilience has silently degraded. The causal loop diagram surfaces these second-order effects before the intervention.` },
+            { type: "step_list",    content: "Apply systems thinking:\n1. Define stocks (what accumulates) and flows (rates of change)\n2. Map feedback loops: reinforcing (amplifying) vs balancing (stabilising)\n3. Draw the causal loop diagram before proposing a solution\n4. Identify second-order effects on adjacent metrics" },
+          ],
           source_links: [],
           difficulty: diff,
           estimated_read_time: "6 min",
@@ -227,8 +283,11 @@ export async function generateProjectInsight(projectId) {
           category: "methodology",
           title: "Concept: Signal vs Noise — Extracting Actionable Insight from Data",
           summary: "The analytical discipline of separating meaningful patterns from statistical noise is one of the most transferable and underrated skills in any data-rich domain.",
-          educational_explanation: "Every dataset contains both signal (the pattern you care about) and noise (random variation that obscures it). The fundamental mistake practitioners make is over-fitting: treating noise as signal by building models that explain past data perfectly but predict future data poorly. The antidote is a structured analytical process: define your hypothesis before looking at the data, determine what evidence would change your mind, apply consistent evaluation criteria, and document your reasoning chain. This last step — the reasoning log — is what makes your analysis auditable and improvable. In high-stakes domains, the discipline of the process matters more than the sophistication of the tool.",
-          why_it_matters: "Mastering this discipline converts you from a practitioner who reacts to data to one who extracts reliable, defensible insights from it.",
+          blocks: [
+            { type: "evidence",    content: "Studies on practitioner error in data-rich fields consistently find the same root cause: over-fitting — treating noise as signal by building models that explain past data perfectly but predict future data poorly." },
+            { type: "explanation", content: "The antidote is a structured analytical process: define the hypothesis before looking at the data, determine what evidence would change your mind, apply consistent evaluation criteria, and document the reasoning chain. The reasoning log is what makes analysis auditable and improvable." },
+            { type: "reflection",  content: "In high-stakes domains, the discipline of the process matters more than the sophistication of the tool. Mastering this converts you from a practitioner who reacts to data to one who extracts reliable, defensible insights from it." },
+          ],
           source_links: [],
           difficulty: diff,
           estimated_read_time: "5 min",
@@ -324,6 +383,14 @@ export async function updateProgression(projectId, fields) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Batch generation (scheduler / manual trigger)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export async function getJourneyPreview(projectId) {
+  if (USE_MOCK) {
+    await delay(150)
+    return { planned: false }
+  }
+  return apiFetch(`/projects/${encodeURIComponent(projectId)}/journey-preview`)
+}
 
 export async function triggerAllProjectsGeneration(force = false) {
   if (USE_MOCK) {

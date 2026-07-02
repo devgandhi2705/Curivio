@@ -6,11 +6,14 @@ Usage:
     from backend.utils.db import upsert_preference, get_preference, list_preferences, record_feedback
 """
 
+import logging
 import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ..database.schema import ALL_TABLES, MIGRATIONS
 
@@ -27,8 +30,9 @@ def init_db() -> None:
     with get_connection() as conn:
         for statement in ALL_TABLES:
             conn.execute(statement)
-        # Migrations are additive-only and safe to re-run; errors are silently
-        # ignored (e.g. duplicate column on an existing DB).
+        # Migrations are additive-only. OperationalError with "already exists" /
+        # "duplicate column" is expected on re-runs and silently skipped.
+        # Any other error is loud: logged at ERROR with traceback and re-raised.
         # A migration may be a single SQL string or a list of strings that must
         # all execute together (used for table-recreation migrations).
         for migration in MIGRATIONS:
@@ -38,8 +42,19 @@ def init_db() -> None:
                         conn.execute(stmt)
                 else:
                     conn.execute(migration)
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                # "already exists" / "duplicate column" → ADD already applied.
+                # "no such column" → DROP on a column that was never added (fresh DB).
+                # Both are expected idempotency outcomes; anything else is a real error.
+                if any(p in msg for p in ("already exists", "duplicate column", "no such column")):
+                    logger.debug("Migration skipped (already applied): %s", exc)
+                else:
+                    logger.error("Migration failed: %s", exc, exc_info=True)
+                    raise
             except Exception:
-                pass
+                logger.error("Migration failed with unexpected error", exc_info=True)
+                raise
 
 
 @contextmanager

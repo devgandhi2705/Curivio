@@ -479,23 +479,53 @@ class BudgetDegradationEngine:
         model_name: str,
         expected_output_tokens: int = 0,
         separator: str = "\n\n",
+        provider_tier: str | None = None,
     ) -> tuple[str, DegradationReport]:
         """
-        Degrade using the budget derived from the model's context window.
+        Degrade using the effective budget for this model + provider tier.
 
-        Convenience wrapper — derives the budget from BudgetAllocator.for_model()
-        so callers don't need to compute the budget manually.
+        The budget is MIN(model_context_budget, provider_tpm_safe_budget).
+        When provider_tier is None, the model's default_provider_tier is used
+        (e.g. "on_demand" for Groq free-tier models).
 
         Parameters
         ----------
         composer                PromptComposer to degrade.
-        model_name              Model name from the registry (e.g. "llama-3.3-70b-versatile").
-        expected_output_tokens  Caller's estimate of the model output size.
-                                When larger than the model's output_reserve, this value is used.
-        separator               Section separator (must match composer's separator).
+        model_name              Model name from the registry.
+        expected_output_tokens  Caller's estimate of output size.
+        separator               Section separator (must match composer's).
+        provider_tier           Override the tier used for budget computation.
+                                None → use model's default_provider_tier.
+
+        ArticleCompressor / MemoryCompressor integration note
+        -------------------------------------------------------
+        Steps 4 (TRIM_MEMORY) and 5 (TRIM_ARTICLES) use text truncation because
+        the degradation engine only has section text — the original article dicts
+        and memory dicts required by ArticleCompressor / MemoryCompressor are not
+        available here.
+
+        Both compressors are valid and should be wired at the PROMPT BUILD layer
+        (project_insight_prompt.py / make_daily_package_composer), not here.
+        Pre-compressing articles with ArticleCompressor.format_within_budget() and
+        memory with MemoryCompressor.format_within_budget() BEFORE sections are
+        added to the PromptComposer is Phase 9.3 work; until then, Steps 4/5
+        serve as text-truncation fallbacks with equivalent savings.
         """
-        from .budget_allocator import BudgetAllocator   # deferred: avoids circular import
-        budget = BudgetAllocator.for_model(model_name).compute_budget(expected_output_tokens)
+        from ..services.model_registry import get_model_config  # deferred: circular import
+        cfg = get_model_config(model_name)
+        budget = cfg.get_effective_prompt_budget(tier=provider_tier)
+        # get_effective_prompt_budget handles expected_output through the allocator;
+        # subtract it here to stay consistent with BudgetAllocator.compute_budget().
+        if expected_output_tokens > 0:
+            from .budget_allocator import BudgetAllocator
+            budget = BudgetAllocator.for_model(model_name).compute_budget(expected_output_tokens)
+            if provider_tier is not None or cfg.default_provider_tier:
+                from ..services.model_registry import PROVIDER_SAFETY_FACTOR
+                active_tier = provider_tier or cfg.default_provider_tier
+                tier_cfg    = cfg.tier_limits.get(active_tier or "", {})
+                tpm         = tier_cfg.get("tpm")
+                if tpm is not None:
+                    budget = min(budget, int(tpm * PROVIDER_SAFETY_FACTOR))
         return cls(separator=separator).degrade(composer, budget)
 
     # ── Step implementations ──────────────────────────────────────────────────

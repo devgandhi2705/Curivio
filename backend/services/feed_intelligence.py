@@ -44,7 +44,6 @@ Public API
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -70,145 +69,6 @@ class FeedIntelligencePlan:
     curiosity_articles:  list[dict]
     intelligence_summary: str
     fallback_used:       bool = False
-
-
-# ── Query generation ───────────────────────────────────────────────────────────
-
-_STAGE_DEPTH_MODIFIER: dict[str, str] = {
-    "foundation":   "introduction basics explained",
-    "mechanisms":   "how it works process mechanism causal chain",
-    "dependencies": "dependency risk supply chain fragility upstream",
-    "optimization": "efficiency benchmarks competitive dynamics best practice",
-    "geopolitical": "geopolitics policy trade implications national strategy",
-    "disruption":   "disruption emerging threat startup challenger paradigm",
-    "synthesis":    "cross-domain strategy second-order effects future implications",
-}
-
-_GAP_TYPE_DEPTH: dict[str, str] = {
-    "concept":   "{concept} {domain} explained analysis real-world impact",
-    "mechanism": "how {concept} works {domain} process step by step",
-    "strategic": "{concept} {domain} strategic implications industry analysis 2025",
-}
-
-_GAP_TYPE_EXAMPLE: dict[str, str] = {
-    "concept":   "{concept} {domain} example case study company",
-    "mechanism": "{concept} {domain} failure success case mechanics",
-    "strategic": "{concept} {domain} strategic decision outcome result",
-}
-
-
-def _queries_for_concept(
-    concept: str,
-    domain: str,
-    gap_type: str,
-    progression_stage: str,
-    n_queries: int = 2,
-) -> list[str]:
-    """Generate n_queries targeted search queries for a concept."""
-    cl = concept.lower()
-    dl = domain.lower()
-
-    # Q1: news-anchored (always present)
-    q_news = f"{dl} {cl} 2025 2026"
-
-    # Q2: depth — stage-adapted
-    stage_mod = _STAGE_DEPTH_MODIFIER.get(progression_stage, "explained analysis")
-    depth_template = _GAP_TYPE_DEPTH.get(gap_type, "{concept} {domain} explained")
-    q_depth = depth_template.format(concept=cl, domain=dl) + " " + stage_mod[:20]
-
-    if n_queries == 2:
-        return [q_news, q_depth]
-
-    # Q3: example (only when 3 queries are requested)
-    example_template = _GAP_TYPE_EXAMPLE.get(gap_type, "{concept} {domain} example")
-    q_example = example_template.format(concept=cl, domain=dl)
-    return [q_news, q_depth, q_example]
-
-
-def _curiosity_queries_for_orchestrator(briefing) -> list[str]:
-    """
-    Extract targeted curiosity queries from the CuriosityBriefing.
-    Falls back to generic curiosity queries if briefing is unavailable.
-    """
-    if briefing is None:
-        return []
-    queries: list[str] = []
-    for card in [briefing.card_1, briefing.card_2]:
-        if card is None:
-            continue
-        anchor = card.anchor_concept.lower()
-        target = card.target_concept.lower()
-        domain = card.domain.lower()
-        if anchor and target:
-            queries.append(f"{domain} {anchor} {target} history failure mechanism")
-        elif anchor:
-            queries.append(f"{domain} {anchor} surprising counterintuitive hidden")
-    return queries[:2]
-
-
-# ── Article retrieval ──────────────────────────────────────────────────────────
-
-def _search(query: str) -> list[dict]:
-    """Thin wrapper around retrieval_router.route — never raises."""
-    try:
-        from .retrieval_router import route
-        return route(query, mode="feed")
-    except Exception as e:
-        logger.debug("[feed_intelligence] search failed for %r: %s", query, e)
-        return []
-
-
-def _dedup(articles: list[dict]) -> list[dict]:
-    seen: set[str] = set()
-    out: list[dict] = []
-    for a in articles:
-        url = a.get("url", "")
-        if url and url not in seen:
-            seen.add(url)
-            out.append(a)
-        elif not url:
-            out.append(a)
-    return out
-
-
-# ── Article scoring ────────────────────────────────────────────────────────────
-
-def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text.lower().strip())
-
-
-def _score_article(article: dict, concept_targets: list[ConceptTarget]) -> float:
-    """
-    Score an article by how well it matches the concept targets.
-    First target (highest readiness) gets weight 1.0, second 0.6, third 0.3.
-    """
-    title   = _norm(article.get("title", ""))
-    snippet = _norm((article.get("content") or "")[:300])
-    text    = f"{title} {snippet}"
-
-    weights = [1.0, 0.6, 0.3]
-    score   = 0.0
-
-    for i, ct in enumerate(concept_targets[:3]):
-        w = weights[i]
-        concept_words = {wd for wd in ct.concept.lower().split() if len(wd) >= 3}
-        domain_words  = {wd for wd in ct.domain.lower().split()  if len(wd) >= 3}
-        concept_hits  = sum(1 for wd in concept_words if wd in text)
-        domain_hits   = 1 if any(wd in text for wd in domain_words) else 0
-        if concept_words:
-            score += w * (concept_hits / len(concept_words) + 0.1 * domain_hits)
-
-    return score
-
-
-def _rank_articles(
-    articles: list[dict],
-    concept_targets: list[ConceptTarget],
-) -> list[dict]:
-    """Sort articles by relevance to concept targets, highest score first."""
-    scored = [(a, _score_article(a, concept_targets)) for a in articles]
-    scored.sort(key=lambda x: -x[1])
-    return [a for a, _ in scored]
 
 
 # ── Intelligence summary ───────────────────────────────────────────────────────
@@ -242,12 +102,6 @@ def _build_intelligence_summary(
         )
 
     lines.append(f"Stage: {progression_stage.upper()}  |  Domain coverage: {coverage}%")
-    lines.append("")
-    lines.append("Article intent:")
-    for i, ct in enumerate(plan.concept_targets[:3], 1):
-        slots = f"article{'s' if ct.article_count > 1 else ''} {2*i-1}{'–'+str(2*i) if ct.article_count > 1 else ''}"
-        lines.append(f"  {slots}: retrieved to support '{ct.concept}' — use {ct.article_count} article(s)")
-
     lines.append("")
     lines.append("Generation mandate:")
 
@@ -317,55 +171,12 @@ def build_feed_intelligence(
             for c in lp.next_concepts[:max_concept_targets]
         ]
 
-        # ── Retrieve articles for each concept target ─────────────────────────
-        all_core_articles: list[dict] = []
-        article_slot = 0
-
-        for ct in concept_targets:
-            n_q = 2  # 2 queries per concept — same total as current pipeline
-            ct.queries = _queries_for_concept(
-                ct.concept, ct.domain, ct.gap_type, progression_stage, n_queries=n_q
-            )
-            concept_articles: list[dict] = []
-            for q in ct.queries:
-                concept_articles.extend(_search(q))
-            concept_articles = _dedup(concept_articles)
-            ct.article_count = len(concept_articles)
-
-            # Tag articles with their concept origin for slot tracking
-            for a in concept_articles:
-                a["_concept_target"] = ct.concept
-            all_core_articles.extend(concept_articles)
-
-        # ── Rank and deduplicate core articles ────────────────────────────────
-        core_articles = _dedup(all_core_articles)
-        core_articles = _rank_articles(core_articles, concept_targets)
-
-        # ── Curiosity articles: driven by orchestrator targets ────────────────
-        curiosity_articles: list[dict] = []
-        try:
-            from .curiosity_orchestrator import orchestrate
-            briefing = orchestrate(project_id)
-            curiosity_queries = _curiosity_queries_for_orchestrator(briefing)
-            for q in curiosity_queries:
-                curiosity_articles.extend(_search(q))
-            curiosity_articles = _dedup(curiosity_articles)
-        except Exception:
-            pass  # curiosity articles are optional
-
-        if not curiosity_articles:
-            # Generic fallback curiosity search
-            kw = " ".join((project.get("keywords") or [])[:2]) or project.get("name", "")
-            curiosity_articles = _search(
-                f"{kw} hidden mechanism surprising failure scandal controversy"
-            )
-
         # ── Build intelligence summary ────────────────────────────────────────
         plan = FeedIntelligencePlan(
             project_id=project_id,
             concept_targets=concept_targets,
-            core_articles=core_articles,
-            curiosity_articles=_dedup(curiosity_articles),
+            core_articles=[],
+            curiosity_articles=[],
             intelligence_summary="",  # filled below
             fallback_used=False,
         )
@@ -374,10 +185,9 @@ def build_feed_intelligence(
         )
 
         logger.info(
-            "[feed_intelligence] %s stage=%s targets=%s core=%d curiosity=%d",
+            "[feed_intelligence] %s stage=%s targets=%s",
             project_id, progression_stage,
             [ct.concept for ct in concept_targets],
-            len(core_articles), len(curiosity_articles),
         )
 
         return plan

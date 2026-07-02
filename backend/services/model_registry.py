@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# Applied to provider TPM limits to leave headroom for system overhead and
+# future prompt growth.  87.5% is the midpoint of the 85–90% safety target.
+PROVIDER_SAFETY_FACTOR: float = 0.875
+
 
 @dataclass
 class ModelConfig:
@@ -26,6 +30,10 @@ class ModelConfig:
     # Per-tier rate / request limits — provider-specific.
     # Groq example: {"on_demand": {"tpm": 12000}, "dev": {"tpm": 500000}}
     tier_limits: dict[str, dict] = field(default_factory=dict)
+    # The tier to enforce by default when no explicit tier is requested.
+    # Set to "on_demand" for Groq free-tier deployments so every assembler
+    # and preflight call respects the 12K per-request TPM ceiling automatically.
+    default_provider_tier: str | None = None
 
     # ── Derived budget properties ─────────────────────────────────────────────
 
@@ -36,13 +44,39 @@ class ModelConfig:
 
     @property
     def prompt_budget(self) -> int:
-        """Maximum tokens available for the input prompt."""
+        """Maximum tokens for the input prompt based on context window alone."""
         return self.safe_context_window - self.output_reserve
 
     @property
     def output_budget(self) -> int:
         """Tokens reserved for the model's output (completion)."""
         return self.output_reserve
+
+    def get_effective_prompt_budget(self, tier: str | None = None) -> int:
+        """
+        Prompt budget respecting BOTH model context limits AND provider tier limits.
+
+        effective = MIN(prompt_budget, floor(tier_tpm × PROVIDER_SAFETY_FACTOR))
+
+        Parameters
+        ----------
+        tier    Provider tier name (e.g. "on_demand").  When None, falls back to
+                default_provider_tier.  When neither is set, returns prompt_budget.
+        """
+        active_tier = tier or self.default_provider_tier
+        if not active_tier:
+            return self.prompt_budget
+        tier_cfg = self.tier_limits.get(active_tier, {})
+        tpm = tier_cfg.get("tpm")
+        if tpm is None:
+            return self.prompt_budget
+        provider_safe = int(tpm * PROVIDER_SAFETY_FACTOR)
+        return min(self.prompt_budget, provider_safe)
+
+    @property
+    def effective_prompt_budget(self) -> int:
+        """Effective budget using the default provider tier (or prompt_budget if unset)."""
+        return self.get_effective_prompt_budget()
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -54,52 +88,56 @@ _REGISTRY: dict[str, ModelConfig] = {
     # individual request to a hard TPM limit — this is what causes the 413.
 
     "llama-3.3-70b-versatile": ModelConfig(
-        model_name       = "llama-3.3-70b-versatile",
-        provider         = "groq",
-        context_window   = 128_000,
-        safe_utilization = 0.80,
-        output_reserve   = 8_000,
-        safety_buffer    = 2_000,
-        tier_limits      = {
+        model_name            = "llama-3.3-70b-versatile",
+        provider              = "groq",
+        context_window        = 128_000,
+        safe_utilization      = 0.80,
+        output_reserve        = 8_000,
+        safety_buffer         = 2_000,
+        tier_limits           = {
             "on_demand": {"tpm": 12_000},   # free tier — hard per-request cap
             "dev":       {"tpm": 500_000},
         },
+        default_provider_tier = "on_demand",
     ),
     "llama-3.1-70b-versatile": ModelConfig(
-        model_name       = "llama-3.1-70b-versatile",
-        provider         = "groq",
-        context_window   = 128_000,
-        safe_utilization = 0.80,
-        output_reserve   = 8_000,
-        safety_buffer    = 2_000,
-        tier_limits      = {
+        model_name            = "llama-3.1-70b-versatile",
+        provider              = "groq",
+        context_window        = 128_000,
+        safe_utilization      = 0.80,
+        output_reserve        = 8_000,
+        safety_buffer         = 2_000,
+        tier_limits           = {
             "on_demand": {"tpm": 12_000},
             "dev":       {"tpm": 500_000},
         },
+        default_provider_tier = "on_demand",
     ),
     "llama-3.1-8b-instant": ModelConfig(
-        model_name       = "llama-3.1-8b-instant",
-        provider         = "groq",
-        context_window   = 128_000,
-        safe_utilization = 0.80,
-        output_reserve   = 4_000,
-        safety_buffer    = 2_000,
-        tier_limits      = {
+        model_name            = "llama-3.1-8b-instant",
+        provider              = "groq",
+        context_window        = 128_000,
+        safe_utilization      = 0.80,
+        output_reserve        = 4_000,
+        safety_buffer         = 2_000,
+        tier_limits           = {
             "on_demand": {"tpm": 20_000},
             "dev":       {"tpm": 500_000},
         },
+        default_provider_tier = "on_demand",
     ),
     "gemma2-9b-it": ModelConfig(
-        model_name       = "gemma2-9b-it",
-        provider         = "groq",
-        context_window   = 8_192,
-        safe_utilization = 0.80,
-        output_reserve   = 2_000,
-        safety_buffer    = 500,
-        tier_limits      = {
+        model_name            = "gemma2-9b-it",
+        provider              = "groq",
+        context_window        = 8_192,
+        safe_utilization      = 0.80,
+        output_reserve        = 2_000,
+        safety_buffer         = 500,
+        tier_limits           = {
             "on_demand": {"tpm": 15_000},
             "dev":       {"tpm": 500_000},
         },
+        default_provider_tier = "on_demand",
     ),
 
     # ── OpenAI ────────────────────────────────────────────────────────────────

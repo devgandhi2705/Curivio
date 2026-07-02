@@ -308,9 +308,9 @@ def _assess_trust(articles: list[dict], domain: str) -> dict[str, int]:
 
     Returns {"trusted": N, "unknown": N, "spam": N}.
     """
-    from ..config.retrieval_config import get_trusted_domains
+    from ..config.retrieval_config import get_authority_domains
 
-    trusted_domains = get_trusted_domains(domain)
+    authority_domains = get_authority_domains(domain)
     result = {"trusted": 0, "unknown": 0, "spam": 0}
 
     _SPAM = frozenset({"buzzfeed.com", "dailymail.co.uk", "tmz.com",
@@ -318,7 +318,7 @@ def _assess_trust(articles: list[dict], domain: str) -> dict[str, int]:
 
     for article in articles:
         netloc = _unique_netloc(article.get("url", ""))
-        if any(td in netloc for td in trusted_domains):
+        if any(td in netloc for td in authority_domains):
             result["trusted"] += 1
         elif any(s in netloc for s in _SPAM):
             result["spam"] += 1

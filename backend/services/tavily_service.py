@@ -545,7 +545,7 @@ def map_strategy(
 
 def _reextract_trusted(
     search_results: list[dict],
-    trusted_domains: dict[str, float],
+    authority_domains: dict[str, float],
     limit: int = _MAX_REEXTRACT,
 ) -> list[dict]:
     """
@@ -567,7 +567,7 @@ def _reextract_trusted(
             netloc = urlparse(url).netloc.lower().removeprefix("www.")
         except Exception:
             continue
-        if any(td in netloc for td in trusted_domains):
+        if any(td in netloc for td in authority_domains):
             op = url_preferred_operation(url)
             if op == "extract":
                 trusted_urls.append(url)

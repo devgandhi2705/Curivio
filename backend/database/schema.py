@@ -263,28 +263,31 @@ CREATE TABLE IF NOT EXISTS learning_projects (
     keywords                 TEXT    NOT NULL DEFAULT '[]',
     difficulty               TEXT    NOT NULL DEFAULT 'intermediate'
                                      CHECK(difficulty IN ('beginner', 'intermediate', 'advanced')),
-    focus_areas              TEXT    NOT NULL DEFAULT '[]',
     color                    TEXT    NOT NULL DEFAULT 'blue',
-    preferred_sources        TEXT    NOT NULL DEFAULT '[]',
-    ignored_sources          TEXT    NOT NULL DEFAULT '[]',
     daily_core_article_count INTEGER NOT NULL DEFAULT 4,
+    intent_profile           TEXT             DEFAULT NULL,
+    intent_confirmed         INTEGER NOT NULL DEFAULT 0,
     created_at               TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
-# Migration: add preferred_sources to existing databases that pre-date this column.
-# db.py runs these with try/except so duplicate-column errors are silently ignored.
-MIGRATE_ADD_PREFERRED_SOURCES = (
-    "ALTER TABLE learning_projects ADD COLUMN preferred_sources TEXT NOT NULL DEFAULT '[]'"
-)
-
 MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT = (
     "ALTER TABLE learning_projects ADD COLUMN daily_core_article_count INTEGER NOT NULL DEFAULT 4"
 )
 
-MIGRATE_ADD_IGNORED_SOURCES = (
-    "ALTER TABLE learning_projects ADD COLUMN ignored_sources TEXT NOT NULL DEFAULT '[]'"
+# Drop deprecated columns from existing databases (SQLite 3.35+).
+# These run with try/except so they fail silently on fresh databases that never had the columns.
+MIGRATE_DROP_FOCUS_AREAS = (
+    "ALTER TABLE learning_projects DROP COLUMN focus_areas"
+)
+
+MIGRATE_DROP_PREFERRED_SOURCES = (
+    "ALTER TABLE learning_projects DROP COLUMN preferred_sources"
+)
+
+MIGRATE_DROP_IGNORED_SOURCES = (
+    "ALTER TABLE learning_projects DROP COLUMN ignored_sources"
 )
 
 CREATE_PROJECT_INSIGHTS = """
@@ -292,8 +295,10 @@ CREATE TABLE IF NOT EXISTS project_insights (
     id           INTEGER   PRIMARY KEY AUTOINCREMENT,
     project_id   TEXT      NOT NULL REFERENCES learning_projects(project_id) ON DELETE CASCADE,
     day_number   INTEGER   NOT NULL DEFAULT 1,
-    insight_json TEXT      NOT NULL,
-    generated_at TEXT      NOT NULL DEFAULT CURRENT_TIMESTAMP
+    insight_json TEXT      NOT NULL DEFAULT '{}',
+    generated_at TEXT      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status       TEXT      NOT NULL DEFAULT 'done'
+                           CHECK(status IN ('generating', 'done', 'failed'))
 );
 """
 
@@ -460,6 +465,20 @@ CREATE TABLE IF NOT EXISTS conversation_knowledge_state (
 );
 """
 
+CREATE_PROJECT_LEARNING_STATE = """
+CREATE TABLE IF NOT EXISTS project_learning_state (
+    project_id       TEXT NOT NULL PRIMARY KEY
+                         REFERENCES learning_projects(project_id) ON DELETE CASCADE,
+    covered_topics   TEXT NOT NULL DEFAULT '[]',
+    active_topics    TEXT NOT NULL DEFAULT '[]',
+    knowledge_gaps   TEXT NOT NULL DEFAULT '[]',
+    recent_topics    TEXT NOT NULL DEFAULT '[]',
+    covered_entities TEXT NOT NULL DEFAULT '[]',
+    covered_keywords TEXT NOT NULL DEFAULT '[]',
+    updated_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 CREATE_PROJECT_LEARNING_MEMORY = """
 CREATE TABLE IF NOT EXISTS project_learning_memory (
     project_id         TEXT    NOT NULL PRIMARY KEY
@@ -539,6 +558,18 @@ MIGRATE_ADD_OPENING_HOOKS_USED = (
     "ALTER TABLE project_learning_memory ADD COLUMN opening_hooks_used TEXT NOT NULL DEFAULT '[]'"
 )
 
+MIGRATE_ADD_INTENT_PROFILE = (
+    "ALTER TABLE learning_projects ADD COLUMN intent_profile TEXT DEFAULT NULL"
+)
+
+MIGRATE_ADD_INTENT_CONFIRMED = (
+    "ALTER TABLE learning_projects ADD COLUMN intent_confirmed INTEGER NOT NULL DEFAULT 0"
+)
+
+MIGRATE_DROP_LEARNING_BLUEPRINT = (
+    "ALTER TABLE learning_projects DROP COLUMN learning_blueprint"
+)
+
 CREATE_KNOWLEDGE_GRAPH_NODES = """
 CREATE TABLE IF NOT EXISTS knowledge_graph_nodes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -583,26 +614,113 @@ CREATE INDEX IF NOT EXISTS idx_kge_project_to
 
 CREATE_LEARNING_EVALUATIONS = """
 CREATE TABLE IF NOT EXISTS learning_evaluations (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id    TEXT    NOT NULL,
-    package_day   INTEGER NOT NULL DEFAULT 0,
-    overall_score REAL    NOT NULL DEFAULT 0.0,
-    scores_json   TEXT    NOT NULL DEFAULT '{}',
-    issues_json   TEXT    NOT NULL DEFAULT '[]',
-    recs_json     TEXT    NOT NULL DEFAULT '[]',
-    evaluated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id     TEXT    NOT NULL,
+    package_day    INTEGER NOT NULL DEFAULT 0,
+    overall_score  REAL    NOT NULL DEFAULT 0.0,
+    scores_json    TEXT    NOT NULL DEFAULT '{}',
+    issues_json    TEXT    NOT NULL DEFAULT '[]',
+    recs_json      TEXT    NOT NULL DEFAULT '[]',
+    top_gaps_json  TEXT    NOT NULL DEFAULT '[]',
+    evaluated_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
+
+MIGRATE_ADD_TOP_GAPS_JSON = (
+    "ALTER TABLE learning_evaluations ADD COLUMN top_gaps_json TEXT NOT NULL DEFAULT '[]'"
+)
 
 CREATE_LEARNING_EVALUATIONS_IDX = """
 CREATE INDEX IF NOT EXISTS idx_learning_evaluations_project
     ON learning_evaluations (project_id, evaluated_at DESC);
 """
 
+CREATE_ARTICLE_PROVENANCE = """
+CREATE TABLE IF NOT EXISTS article_provenance (
+    id              TEXT    PRIMARY KEY,
+    project_id      TEXT    NOT NULL,
+    insight_id      INTEGER,
+    feed_date       TEXT    NOT NULL,
+    title           TEXT    NOT NULL DEFAULT '',
+    url             TEXT    NOT NULL DEFAULT '',
+    domain          TEXT    NOT NULL DEFAULT '',
+    publisher       TEXT    NOT NULL DEFAULT '',
+    source_type     TEXT    NOT NULL DEFAULT '',
+    query_used      TEXT    NOT NULL DEFAULT '',
+    retrieval_score REAL    NOT NULL DEFAULT 0.0,
+    ranking_score   REAL    NOT NULL DEFAULT 0.0,
+    ranking_reason  TEXT    NOT NULL DEFAULT '',
+    selected        INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_ARTICLE_PROVENANCE_DATE_IDX = """
+CREATE INDEX IF NOT EXISTS idx_article_provenance_project_date
+    ON article_provenance (project_id, feed_date);
+"""
+
+CREATE_ARTICLE_PROVENANCE_URL_IDX = """
+CREATE INDEX IF NOT EXISTS idx_article_provenance_project_url
+    ON article_provenance (project_id, url);
+"""
+
+CREATE_RETRIEVAL_METRICS = """
+CREATE TABLE IF NOT EXISTS retrieval_metrics (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id               TEXT    NOT NULL,
+    insight_id               INTEGER NOT NULL,
+    computed_at              TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    retrieved_count          INTEGER NOT NULL DEFAULT 0,
+    validated_count          INTEGER NOT NULL DEFAULT 0,
+    rejected_count           INTEGER NOT NULL DEFAULT 0,
+    avg_relevance            REAL    NOT NULL DEFAULT 0.0,
+    unique_domains           INTEGER NOT NULL DEFAULT 0,
+    unique_publishers        INTEGER NOT NULL DEFAULT 0,
+    source_reuse_rate        REAL    NOT NULL DEFAULT 0.0,
+    primary_source_collisions INTEGER NOT NULL DEFAULT 0,
+    domain_concentration     REAL    NOT NULL DEFAULT 0.0,
+    articles_without_sources INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (project_id, insight_id)
+);
+"""
+
+CREATE_RETRIEVAL_METRICS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_retrieval_metrics_project
+    ON retrieval_metrics (project_id, computed_at DESC);
+"""
+
+CREATE_JOURNEY_PLANS = """
+CREATE TABLE IF NOT EXISTS journey_plans (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id       TEXT    NOT NULL REFERENCES learning_projects(project_id) ON DELETE CASCADE,
+    shape            TEXT    NOT NULL CHECK(shape IN ('fixed_sequence', 'rotating_theme')),
+    day_start        INTEGER NOT NULL,
+    day_end          INTEGER NOT NULL,
+    plan_content     TEXT    NOT NULL,
+    description_hash TEXT    NOT NULL DEFAULT '',
+    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_JOURNEY_PLANS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_journey_plans_project_days
+    ON journey_plans (project_id, day_start, day_end);
+"""
+
+MIGRATE_ADD_JOURNEY_SHAPE = (
+    "ALTER TABLE learning_projects ADD COLUMN journey_shape TEXT DEFAULT NULL"
+)
+
+MIGRATE_ADD_INSIGHT_STATUS = (
+    "ALTER TABLE project_insights ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
+)
+
 MIGRATIONS = [
-    MIGRATE_ADD_PREFERRED_SOURCES,
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
-    MIGRATE_ADD_IGNORED_SOURCES,
+    MIGRATE_DROP_FOCUS_AREAS,
+    MIGRATE_DROP_PREFERRED_SOURCES,
+    MIGRATE_DROP_IGNORED_SOURCES,
     MIGRATE_ADD_CHAT_SESSION_CONVERSATION_MODE,
     MIGRATE_FEED_CHAT_LINKS_ADD_EXPLAIN_SIMPLY,
     MIGRATE_ADD_USER_ID_PROJECTS,
@@ -611,8 +729,16 @@ MIGRATIONS = [
     MIGRATE_ADD_USER_ID_PREFERENCES,
     MIGRATE_ADD_USER_ID_CONCEPT_MEMORY,
     MIGRATE_ADD_USER_ID_PRIOR_RECS,
+    CREATE_PROJECT_LEARNING_MEMORY,
+    CREATE_PROJECT_LEARNING_MEMORY_IDX,
     MIGRATE_ADD_TITLE_PATTERNS_USED,
     MIGRATE_ADD_OPENING_HOOKS_USED,
+    MIGRATE_ADD_INTENT_PROFILE,
+    MIGRATE_ADD_INTENT_CONFIRMED,
+    MIGRATE_DROP_LEARNING_BLUEPRINT,
+    MIGRATE_ADD_JOURNEY_SHAPE,
+    MIGRATE_ADD_TOP_GAPS_JSON,
+    MIGRATE_ADD_INSIGHT_STATUS,
 ]
 
 ALL_TABLES = [
@@ -646,6 +772,7 @@ ALL_TABLES = [
     CREATE_PRIOR_RECOMMENDATIONS,
     CREATE_PRIOR_RECOMMENDATIONS_IDX,
     CREATE_LEARNING_PROJECTS,
+    CREATE_PROJECT_LEARNING_STATE,
     CREATE_PROJECT_INSIGHTS,
     CREATE_PROJECT_INSIGHTS_IDX,
     CREATE_PROJECT_PROGRESSION,
@@ -674,4 +801,11 @@ ALL_TABLES = [
     CREATE_KNOWLEDGE_GRAPH_EDGES_TO_IDX,
     CREATE_LEARNING_EVALUATIONS,
     CREATE_LEARNING_EVALUATIONS_IDX,
+    CREATE_ARTICLE_PROVENANCE,
+    CREATE_ARTICLE_PROVENANCE_DATE_IDX,
+    CREATE_ARTICLE_PROVENANCE_URL_IDX,
+    CREATE_RETRIEVAL_METRICS,
+    CREATE_RETRIEVAL_METRICS_IDX,
+    CREATE_JOURNEY_PLANS,
+    CREATE_JOURNEY_PLANS_IDX,
 ]

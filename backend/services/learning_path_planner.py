@@ -225,23 +225,22 @@ def _word_overlap(a: str, b: str) -> int:
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
-def _load_project_context(project_id: str) -> tuple[list[str], str, list[str]]:
-    """Return (keywords, difficulty, focus_areas) for the project."""
+def _load_project_context(project_id: str) -> tuple[list[str], str]:
+    """Return (keywords, difficulty) for the project."""
     try:
         from ..utils.db import get_connection
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT keywords, difficulty, focus_areas FROM learning_projects WHERE project_id = ?",
+                "SELECT keywords, difficulty FROM learning_projects WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
         if not row:
-            return [], "intermediate", []
+            return [], "intermediate"
         kw = json.loads(row["keywords"] or "[]")
-        fa = json.loads(row["focus_areas"] or "[]")
-        return kw, (row["difficulty"] or "intermediate"), fa
+        return kw, (row["difficulty"] or "intermediate")
     except Exception:
         logger.exception("[learning_path_planner] _load_project_context failed")
-        return [], "intermediate", []
+        return [], "intermediate"
 
 
 def _load_progression_stage(project_id: str) -> str:
@@ -529,8 +528,8 @@ def plan(
         from .knowledge_gap_detector import detect_gaps
         from .learning_graph import get_graph
 
-        keywords, difficulty, focus_areas = _load_project_context(project_id)
-        all_keywords = keywords + focus_areas
+        keywords, difficulty = _load_project_context(project_id)
+        all_keywords = keywords
         stage = _load_progression_stage(project_id)
         gap_report = detect_gaps(project_id)
         graph = get_graph(project_id)

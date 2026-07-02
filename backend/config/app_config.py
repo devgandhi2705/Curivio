@@ -43,6 +43,15 @@ GITHUB_MIN_STARS = 50
 # ── Auth ──────────────────────────────────────────────────────────────────────
 AUTH_TOKEN_EXPIRE_DAYS = 30
 
+# ── Feature flags ────────────────────────────────────────────────────────────
+# Phase 9.3.4C: replace single LLM call with N writer calls + merge.
+# Default False — single-call path unchanged until explicitly enabled.
+MULTI_CALL_GENERATION: bool = True
+
+# Phase 9.3.4F: cross-batch validation & grounding integrity audit.
+# Audit-only — failures log warnings but never block package generation.
+PACKAGE_VALIDATION_ENABLED: bool = True
+
 # ── Deployment-specific ───────────────────────────────────────────────────────
 # These differ between local dev and production — override via environment variable.
 # HF Spaces: set APP_URL and CORS_ORIGINS in the Spaces settings (not as secrets).

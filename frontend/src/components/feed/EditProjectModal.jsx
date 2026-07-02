@@ -2,7 +2,7 @@
  * EditProjectModal — edit an existing learning project.
  *
  * Pre-populates all fields from the project prop.
- * Organized into 4 sections: Identity, Learning, Retrieval, Appearance.
+ * Organized into 3 sections: Identity, Learning Setup, Appearance.
  * Does NOT wipe history, insights, or progression — only updates project config.
  *
  * Props:
@@ -11,7 +11,7 @@
  *   onSave(fields) → Promise — called with updated fields; throws on error
  */
 import { useState } from "react"
-import { checkSourceRelevance } from "../../api/projects.js"
+import { suggestKeywords } from "../../api/projects.js"
 
 // ── Constants (shared with CreateProjectModal) ────────────────────────────────
 
@@ -29,37 +29,21 @@ const DIFFICULTY_OPTIONS = [
   { id: "advanced",     label: "Advanced",     desc: "Deep domain expertise"     },
 ]
 
-const INTENSITY_OPTIONS = [
-  { count: 2, label: "Light",     desc: "2 articles · focused depth"    },
-  { count: 4, label: "Standard",  desc: "4 articles · balanced breadth" },
-  { count: 6, label: "Intensive", desc: "6 articles · wide coverage"    },
-]
+const INTENSITY_MIN = 3
+const INTENSITY_MAX = 10
 
-// ── Domain helpers ────────────────────────────────────────────────────────────
-
-function normalizeDomain(raw) {
-  let s = raw.trim().toLowerCase()
-  s = s.replace(/^https?:\/\//, "")
-  s = s.split("/")[0].split("?")[0].split("#")[0]
-  s = s.replace(/^www\./, "").replace(/\.$/, "")
-  return s
+function intensityDesc(count) {
+  if (count <= 4) return "Light · focused depth"
+  if (count <= 6) return "Standard · balanced breadth"
+  if (count <= 8) return "Broad · expanded coverage"
+  return "Intensive · wide coverage"
 }
 
-function isValidDomain(s) {
-  return s.length > 0 && s.length <= 100 && /^[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)+$/.test(s)
-}
-
-async function checkDomainReachable(domain) {
-  const controller = new AbortController()
-  const tid = setTimeout(() => controller.abort(), 6000)
-  try {
-    await fetch(`https://${domain}`, { mode: "no-cors", signal: controller.signal })
-    clearTimeout(tid)
-    return true
-  } catch {
-    clearTimeout(tid)
-    return false
-  }
+// Auto-grow a textarea to fit its content, no fixed/scrollable box.
+function autoResize(el) {
+  if (!el) return
+  el.style.height = "auto"
+  el.style.height = `${el.scrollHeight}px`
 }
 
 // ── Section label ─────────────────────────────────────────────────────────────
@@ -78,7 +62,6 @@ function Chip({ label, onRemove, variant = "default" }) {
   const styles = {
     default: "bg-slate-800 text-slate-300 border-slate-700/50 [--x:theme(colors.slate.500)] hover:[--x:theme(colors.slate.300)]",
     blue:    "bg-blue-900/40 text-blue-300 border-blue-800/40 [--x:theme(colors.blue.400)] hover:[--x:theme(colors.blue.200)]",
-    violet:  "bg-violet-900/30 text-violet-300 border-violet-800/40 [--x:theme(colors.violet.400)] hover:[--x:theme(colors.violet.200)]",
   }
   return (
     <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs border ${styles[variant]}`}>
@@ -97,32 +80,22 @@ function Chip({ label, onRemove, variant = "default" }) {
 
 // ── Tag input row ─────────────────────────────────────────────────────────────
 
-function TagInput({ value, onChange, onAdd, placeholder, buttonLabel = "Add", disabled = false, loading = false }) {
+function TagInput({ value, onChange, onAdd, placeholder }) {
   return (
     <div className="flex gap-2">
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
-        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (!disabled) onAdd() } }}
+        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onAdd() } }}
         placeholder={placeholder}
-        disabled={disabled}
-        className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 disabled:opacity-50"
+        className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
       />
       <button
         type="button"
         onClick={onAdd}
-        disabled={disabled}
-        className="min-w-[64px] px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+        className="min-w-[64px] px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors flex items-center justify-center"
       >
-        {loading ? (
-          <>
-            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-              <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Checking
-          </>
-        ) : (buttonLabel)}
+        Add
       </button>
     </div>
   )
@@ -130,26 +103,38 @@ function TagInput({ value, onChange, onAdd, placeholder, buttonLabel = "Add", di
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function EditProjectModal({ project, onClose, onSave }) {
+export default function EditProjectModal({ project, onClose, onSave, onEditPersona }) {
   // ── State — pre-populated from project ─────────────────────────────────────
-  const [name,             setName]             = useState(project.name || "")
-  const [description,      setDescription]      = useState(project.description || "")
-  const [keywords,         setKeywords]         = useState([...(project.keywords || [])])
-  const [kwInput,          setKwInput]          = useState("")
-  const [difficulty,       setDifficulty]       = useState(project.difficulty || "intermediate")
-  const [focusAreas,       setFocusAreas]       = useState([...(project.focus_areas || [])])
-  const [faInput,          setFaInput]          = useState("")
-  const [color,            setColor]            = useState(project.color || "blue")
-  const [preferredSources,      setPreferredSources]      = useState([...(project.preferred_sources || [])])
-  const [ignoredSources,        setIgnoredSources]        = useState([...(project.ignored_sources || [])])
-  const [srcInput,              setSrcInput]              = useState("")
-  const [srcError,              setSrcError]              = useState(null)
-  const [srcChecking,           setSrcChecking]           = useState(false)
-  const [srcCheckPhase,         setSrcCheckPhase]         = useState("")
-  const [srcWarnOnly,           setSrcWarnOnly]           = useState(false)
-  const [dailyCoreArticleCount, setDailyCoreArticleCount] = useState(project.daily_core_article_count || 4)
+  const [name,                  setName]                  = useState(project.name || "")
+  const [description,           setDescription]           = useState(project.description || "")
+  const [keywords,              setKeywords]              = useState([...(project.keywords || [])])
+  const [kwInput,               setKwInput]               = useState("")
+  const [difficulty,            setDifficulty]            = useState(project.difficulty || "intermediate")
+  const [color,                 setColor]                 = useState(project.color || "blue")
+  const [dailyCoreArticleCount, setDailyCoreArticleCount] = useState(
+    Math.min(INTENSITY_MAX, Math.max(INTENSITY_MIN, project.daily_core_article_count || 4))
+  )
   const [saving,                setSaving]                = useState(false)
   const [error,                 setError]                 = useState(null)
+  const [suggestLoading,        setSuggestLoading]        = useState(false)
+  const [suggestError,          setSuggestError]          = useState(null)
+  const [suggestions,           setSuggestions]           = useState(null)
+
+  // ── Keyword suggestion ─────────────────────────────────────────────────────
+  async function runSuggestions() {
+    if (!name.trim() || description.trim().length < 10) return
+    setSuggestLoading(true)
+    setSuggestError(null)
+    setSuggestions(null)
+    try {
+      const result = await suggestKeywords(name.trim(), description.trim(), difficulty)
+      setSuggestions(result?.keywords || [])
+    } catch {
+      setSuggestError("AI keyword generation is unavailable right now (API connection issue). Type your own keywords in the field below and press Enter to add them.")
+    } finally {
+      setSuggestLoading(false)
+    }
+  }
 
   // ── Keyword handlers ───────────────────────────────────────────────────────
   function addKeyword() {
@@ -158,77 +143,11 @@ export default function EditProjectModal({ project, onClose, onSave }) {
     setKwInput("")
   }
 
-  // ── Focus area handlers ────────────────────────────────────────────────────
-  function addFocusArea() {
-    const t = faInput.trim()
-    if (t && !focusAreas.includes(t)) setFocusAreas(prev => [...prev, t])
-    setFaInput("")
-  }
-
-  // ── Source handlers ────────────────────────────────────────────────────────
-  async function addSource() {
-    if (srcChecking) return
-    setSrcError(null)
-    setSrcWarnOnly(false)
-    const domain = normalizeDomain(srcInput)
-    if (!domain) { setSrcInput(""); return }
-    if (!isValidDomain(domain)) {
-      setSrcError("Invalid URL — enter a domain like arxiv.org or https://sec.gov")
-      return
-    }
-    if (preferredSources.includes(domain) || ignoredSources.includes(domain)) {
-      setSrcError("Already added")
-      setSrcInput("")
-      return
-    }
-
-    // Phase 1 — reachability
-    setSrcChecking(true)
-    setSrcCheckPhase("reachability")
-    const reachable = await checkDomainReachable(domain)
-    if (!reachable) {
-      setSrcChecking(false)
-      setSrcCheckPhase("")
-      setSrcError(`Could not reach ${domain} — double-check the URL`)
-      setSrcWarnOnly(true)
-      return
-    }
-
-    // Phase 2 — relevance
-    setSrcCheckPhase("relevance")
-    const result = await checkSourceRelevance(domain, project.name, project.keywords || [])
-    setSrcChecking(false)
-    setSrcCheckPhase("")
-
-    if (!result.relevant) {
-      setIgnoredSources(prev => [...prev, domain])
-      setSrcInput("")
-      return
-    }
-    setPreferredSources(prev => [...prev, domain])
-    setSrcInput("")
-  }
-
-  function forceAddSource() {
-    const domain = normalizeDomain(srcInput)
-    if (domain && !preferredSources.includes(domain)) {
-      setPreferredSources(prev => [...prev, domain])
-      setIgnoredSources(prev => prev.filter(d => d !== domain))
-    }
-    setSrcInput("")
-    setSrcError(null)
-    setSrcWarnOnly(false)
-  }
-
-  function promoteIgnored(domain) {
-    setIgnoredSources(prev => prev.filter(d => d !== domain))
-    setPreferredSources(prev => [...prev, domain])
-  }
-
   // ── Submit ─────────────────────────────────────────────────────────────────
   async function handleSubmit(e) {
     e.preventDefault()
     if (!name.trim()) { setError("Project name is required."); return }
+    if (!description.trim()) { setError("Description is required."); return }
     setError(null)
     setSaving(true)
     try {
@@ -237,10 +156,7 @@ export default function EditProjectModal({ project, onClose, onSave }) {
         description,
         keywords,
         difficulty,
-        focus_areas:              focusAreas,
         color,
-        preferred_sources:        preferredSources,
-        ignored_sources:          ignoredSources,
         daily_core_article_count: dailyCoreArticleCount,
       })
     } catch (err) {
@@ -303,14 +219,15 @@ export default function EditProjectModal({ project, onClose, onSave }) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Description</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">Description *</label>
                   <textarea
+                    ref={el => autoResize(el)}
                     value={description}
-                    onChange={e => setDescription(e.target.value)}
+                    onChange={e => { setDescription(e.target.value); autoResize(e.target) }}
                     rows={2}
                     maxLength={300}
                     placeholder="What are you trying to learn or track?"
-                    className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50"
+                    className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50"
                   />
                 </div>
               </div>
@@ -347,23 +264,25 @@ export default function EditProjectModal({ project, onClose, onSave }) {
 
                 {/* Daily Intensity */}
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Daily Learning Intensity</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {INTENSITY_OPTIONS.map(opt => (
-                      <button
-                        key={opt.count}
-                        type="button"
-                        onClick={() => setDailyCoreArticleCount(opt.count)}
-                        className={`px-3 py-2 rounded-xl text-left border transition-all ${
-                          dailyCoreArticleCount === opt.count
-                            ? "bg-slate-700 border-slate-500 text-slate-100"
-                            : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-600"
-                        }`}
-                      >
-                        <div className="text-xs font-medium">{opt.label}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</div>
-                      </button>
-                    ))}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs text-slate-400">Daily Learning Intensity</label>
+                    <span className="text-xs font-medium text-slate-100">
+                      {dailyCoreArticleCount} article{dailyCoreArticleCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={INTENSITY_MIN}
+                    max={INTENSITY_MAX}
+                    step={1}
+                    value={dailyCoreArticleCount}
+                    onChange={e => setDailyCoreArticleCount(Number(e.target.value))}
+                    className="w-full h-1.5 rounded-full appearance-none bg-slate-700 accent-blue-500 cursor-pointer"
+                  />
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-slate-600">{INTENSITY_MIN}</span>
+                    <span className="text-[10px] text-slate-500">{intensityDesc(dailyCoreArticleCount)}</span>
+                    <span className="text-[10px] text-slate-600">{INTENSITY_MAX}</span>
                   </div>
                 </div>
 
@@ -388,28 +307,93 @@ export default function EditProjectModal({ project, onClose, onSave }) {
                       ))}
                     </div>
                   )}
-                </div>
 
-                {/* Focus Areas */}
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">
-                    Focus Areas <span className="text-slate-600 font-normal">(optional)</span>
-                  </label>
-                  <TagInput
-                    value={faInput}
-                    onChange={setFaInput}
-                    onAdd={addFocusArea}
-                    placeholder="e.g. Predictive Maintenance"
-                  />
-                  {focusAreas.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {focusAreas.map(fa => (
-                        <Chip
-                          key={fa}
-                          label={fa}
-                          onRemove={() => setFocusAreas(prev => prev.filter(f => f !== fa))}
-                        />
-                      ))}
+                  {/* Regenerate button */}
+                  <button
+                    type="button"
+                    onClick={runSuggestions}
+                    disabled={suggestLoading || !name.trim() || description.trim().length < 10}
+                    className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {suggestLoading ? (
+                      <>
+                        <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                          <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Generating keywords…
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" />
+                        </svg>
+                        Regenerate Keywords
+                      </>
+                    )}
+                  </button>
+
+                  {/* Error */}
+                  {suggestError && (
+                    <p className="mt-2 text-[10px] text-amber-400">{suggestError}</p>
+                  )}
+
+                  {/* Diff UI — shown after suggestions are returned */}
+                  {suggestions !== null && (
+                    <div className="mt-3 rounded-xl border border-slate-700/60 overflow-hidden">
+                      {/* Current */}
+                      <div className="px-3 py-2.5 bg-slate-800/40 border-b border-slate-700/40">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-2">Current</p>
+                        {keywords.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {keywords.map(kw => (
+                              <span key={kw} className="px-2 py-0.5 rounded-md text-[11px] bg-slate-700/60 text-slate-400 border border-slate-600/40">{kw}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-600 italic">No keywords set</p>
+                        )}
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex items-center justify-center py-1.5 bg-slate-800/20 border-b border-slate-700/40">
+                        <svg className="w-3 h-3 text-slate-600" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M8 2a.75.75 0 0 1 .75.75v8.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06L7.25 11.44V2.75A.75.75 0 0 1 8 2Z" />
+                        </svg>
+                      </div>
+
+                      {/* Suggested */}
+                      <div className="px-3 py-2.5 bg-slate-800/40">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-blue-500/60 mb-2">Suggested</p>
+                        {suggestions.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {suggestions.map(kw => (
+                              <span key={kw} className="px-2 py-0.5 rounded-md text-[11px] bg-blue-900/30 text-blue-300 border border-blue-700/40">{kw}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-600 italic">No suggestions returned</p>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-2 px-3 py-2.5 border-t border-slate-700/40 bg-slate-800/20">
+                        <button
+                          type="button"
+                          onClick={() => { setKeywords(suggestions); setSuggestions(null); setSuggestError(null) }}
+                          disabled={suggestions.length === 0}
+                          className="flex-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Accept All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setSuggestions(null); setSuggestError(null) }}
+                          className="flex-1 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-700/60 hover:bg-slate-700 border border-slate-600/40 transition-colors"
+                        >
+                          Discard
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -418,90 +402,7 @@ export default function EditProjectModal({ project, onClose, onSave }) {
 
             <div className="border-t border-slate-800/80" />
 
-            {/* ── Section 3: Retrieval ──────────────────────────────────── */}
-            <div>
-              <SectionLabel>Retrieval Anchors</SectionLabel>
-              <p className="text-[10px] text-slate-600 mb-3 leading-relaxed">
-                Web search will be biased toward these domains on the next generation.
-                Broader web search is always preserved.
-              </p>
-              <TagInput
-                value={srcInput}
-                onChange={v => { setSrcInput(v); setSrcError(null); setSrcWarnOnly(false) }}
-                onAdd={addSource}
-                placeholder="e.g. arxiv.org or https://sec.gov"
-                disabled={srcChecking}
-                loading={srcChecking}
-                buttonLabel={srcCheckPhase === "relevance" ? "Validating" : srcCheckPhase === "reachability" ? "Checking" : "Add"}
-              />
-              {srcError && (
-                <div className="flex items-center gap-2 mt-1.5">
-                  <p className="text-[11px] text-red-400">{srcError}</p>
-                  {srcWarnOnly && (
-                    <button
-                      type="button"
-                      onClick={forceAddSource}
-                      className="text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2 transition-colors flex-shrink-0"
-                    >
-                      Add anyway
-                    </button>
-                  )}
-                </div>
-              )}
-              {preferredSources.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {preferredSources.map(domain => (
-                    <Chip
-                      key={domain}
-                      label={domain}
-                      variant="violet"
-                      onRemove={() => setPreferredSources(prev => prev.filter(d => d !== domain))}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {ignoredSources.length > 0 && (
-                <div className="mt-2.5">
-                  <p className="text-[10px] text-slate-600 mb-1.5 flex items-center gap-1">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1ZM6.5 5.75a.75.75 0 0 0-1.5 0v.5c0 .414.336.75.75.75H6v3h-.25a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 0-1.5H8V5.75a.75.75 0 0 0-.75-.75H6.5ZM8 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
-                    </svg>
-                    Ignored — not relevant to this project
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {ignoredSources.map(domain => (
-                      <span
-                        key={domain}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-500 text-xs border border-slate-700/40 line-through"
-                      >
-                        {domain}
-                        <button
-                          type="button"
-                          onClick={() => promoteIgnored(domain)}
-                          title="Add anyway"
-                          className="text-slate-600 hover:text-slate-300 ml-0.5 no-underline leading-none transition-colors"
-                          style={{ textDecoration: "none" }}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIgnoredSources(prev => prev.filter(d => d !== domain))}
-                          className="text-slate-600 hover:text-slate-400 ml-0.5 leading-none transition-colors"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-slate-800/80" />
-
-            {/* ── Section 4: Appearance ─────────────────────────────────── */}
+            {/* ── Section 3: Appearance ─────────────────────────────────── */}
             <div>
               <SectionLabel>Appearance</SectionLabel>
               <div className="flex gap-2.5 items-center">
@@ -531,32 +432,48 @@ export default function EditProjectModal({ project, onClose, onSave }) {
           </div>
 
           {/* Footer */}
-          <div className="px-6 pb-5 flex gap-3 border-t border-slate-800/60 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !name.trim()}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                    <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Saving…
-                </>
-              ) : (
-                "Save Changes"
-              )}
-            </button>
+          <div className="px-6 pb-5 border-t border-slate-800/60 pt-4 space-y-2.5">
+            {/* Edit Persona — secondary action */}
+            {onEditPersona && (
+              <button
+                type="button"
+                onClick={onEditPersona}
+                disabled={saving}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all disabled:opacity-40"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z" />
+                </svg>
+                Edit Learning Persona
+              </button>
+            )}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={saving}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving || !name.trim() || !description.trim()}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {saving ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Saving…
+                  </>
+                ) : (
+                  "Save Changes"
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>

@@ -211,7 +211,7 @@ def _score_novelty(packages: list[dict], covered_concepts: list[str]) -> Dimensi
 
     # Compare against covered_concepts from before recent packages
     # (using the earlier portion of the list as "prior" knowledge)
-    prior_covered = set(c.lower() for c in covered_concepts[:-len(recent_cats) * 2])
+    prior_covered = set(c.lower() for c in covered_concepts[:max(0, len(covered_concepts) - 15)])
     novel = sum(1 for c in recent_cats if c not in prior_covered)
     score = round(novel / len(recent_cats), 3)
     note  = f"{novel} new / {len(recent_cats)} categories in last 2 packages"
@@ -241,8 +241,10 @@ def _score_progression(memory: dict, total_packages: int) -> DimensionScore:
     return DimensionScore("progression", score, _WEIGHTS["progression"], note)
 
 
-def _score_coverage(gap_score: float) -> DimensionScore:
+def _score_coverage(gap_score: float, active_domains: list) -> DimensionScore:
     """Coverage = 1 - gap_score (from knowledge gap detector)."""
+    if not active_domains:
+        return DimensionScore("coverage", 0.70, _WEIGHTS["coverage"], "Domain not in knowledge base — neutral score")
     score = round(max(0.0, 1.0 - gap_score), 3)
     note  = f"{round(score * 100)}% of active domain knowledge covered"
     return DimensionScore("coverage", score, _WEIGHTS["coverage"], note)
@@ -418,7 +420,7 @@ def evaluate(project_id: str, package: dict | None = None) -> LearningQualityRep
             _score_repetition(packages),
             _score_novelty(packages, covered_concepts),
             _score_progression(memory, total_pkgs),
-            _score_coverage(gap_report.gap_score),
+            _score_coverage(gap_report.gap_score, gap_report.active_domains),
             _score_difficulty_growth(packages),
             _score_concept_diversity(graph),
             _score_mechanism_diversity(covered_mechanisms),
@@ -467,8 +469,8 @@ def store_evaluation(report: LearningQualityReport) -> int:
         with get_connection() as conn:
             cursor = conn.execute(
                 """INSERT INTO learning_evaluations
-                   (project_id, package_day, overall_score, scores_json, issues_json, recs_json, evaluated_at)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   (project_id, package_day, overall_score, scores_json, issues_json, recs_json, top_gaps_json, evaluated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
                 (
                     report.project_id,
                     report.package_day,
@@ -476,6 +478,7 @@ def store_evaluation(report: LearningQualityReport) -> int:
                     json.dumps({d.name: {"score": d.score, "note": d.note} for d in report.dimensions}),
                     json.dumps(report.issues),
                     json.dumps(report.recommendations),
+                    json.dumps(report.top_gaps),
                     now,
                 ),
             )
@@ -516,7 +519,7 @@ def get_latest_evaluation(project_id: str) -> LearningQualityReport | None:
             dimensions=dims,
             issues=json.loads(row.get("issues_json", "[]")),
             recommendations=json.loads(row.get("recs_json", "[]")),
-            top_gaps=[],
+            top_gaps=json.loads(row.get("top_gaps_json", "[]")),
             evaluated_at=row.get("evaluated_at", ""),
         )
     except Exception:
@@ -565,6 +568,12 @@ def get_quality_feedback_block(project_id: str) -> str:
                 lines.append("Weak dimensions:")
                 for d in weak:
                     lines.append(f"  [{d.name}: {round(d.score*100)}%] {d.note}")
+
+        if report.top_gaps:
+            lines.append("")
+            lines.append("Priority gaps to address:")
+            for gap in report.top_gaps:
+                lines.append(f"  • {gap}")
 
         return "\n".join(lines)
 

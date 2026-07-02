@@ -730,8 +730,8 @@ def get_domain_config(domain: str) -> DomainRetrievalConfig:
     return DOMAIN_CONFIGS["default"]
 
 
-def get_trusted_domains(domain: str) -> dict[str, float]:
-    """Convenience accessor — returns only the trusted_domains dict."""
+def get_authority_domains(domain: str) -> dict[str, float]:
+    """Convenience accessor — returns the editorial authority-reputation map for a learning domain."""
     return get_domain_config(domain).trusted_domains
 
 

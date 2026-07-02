@@ -130,6 +130,19 @@ async def lifespan(_app: FastAPI):
     _db_size_after = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     logger.info("[db] init_db() complete — size now %d bytes", _db_size_after)
 
+    # Backfill intent profiles for existing projects that pre-date the intent architecture.
+    # Runs in a daemon thread so startup is not blocked.
+    import threading as _threading
+    def _backfill():
+        try:
+            from .services.intent_profile_service import backfill_intent_profiles
+            result = backfill_intent_profiles()
+            if result["total"] > 0:
+                logger.info("[startup] intent profile backfill: %s", result)
+        except Exception as _exc:
+            logger.warning("[startup] intent profile backfill failed (non-fatal): %s", _exc)
+    _threading.Thread(target=_backfill, daemon=True, name="intent-backfill").start()
+
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -1232,14 +1245,18 @@ INSIGHT_GEN_RATE    = cfg.INSIGHT_GEN_RATE
 
 class CreateProjectRequest(BaseModel):
     name:                     str
-    description:              str = ""
+    description:              str
     keywords:                 list[str] = []
     difficulty:               Literal["beginner", "intermediate", "advanced"] = "intermediate"
-    focus_areas:              list[str] = []
     color:                    str = "blue"
-    preferred_sources:        list[str] = []
-    ignored_sources:          list[str] = []
     daily_core_article_count: int = 4
+
+    @field_validator("description")
+    @classmethod
+    def description_required(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Description is required.")
+        return v
 
 
 class UpdateProjectRequest(BaseModel):
@@ -1247,28 +1264,8 @@ class UpdateProjectRequest(BaseModel):
     description:              str | None = None
     keywords:                 list[str] | None = None
     difficulty:               Literal["beginner", "intermediate", "advanced"] | None = None
-    focus_areas:              list[str] | None = None
     color:                    str | None = None
-    preferred_sources:        list[str] | None = None
-    ignored_sources:          list[str] | None = None
     daily_core_article_count: int | None = None
-
-
-class CheckSourceRelevanceRequest(BaseModel):
-    domain:       str
-    project_name: str
-    keywords:     list[str] = []
-
-
-@app.post("/projects/check-source-relevance")
-@limiter.limit(PROJECTS_RATE_LIMIT)
-async def check_source_relevance_endpoint(
-    request: Request,
-    data: CheckSourceRelevanceRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    from .services.project_service import check_source_relevance
-    return check_source_relevance(data.domain, data.project_name, data.keywords)
 
 
 @app.post("/projects")
@@ -1284,10 +1281,7 @@ async def create_project_endpoint(
         description=data.description,
         keywords=data.keywords,
         difficulty=data.difficulty,
-        focus_areas=data.focus_areas,
         color=data.color,
-        preferred_sources=data.preferred_sources,
-        ignored_sources=data.ignored_sources,
         daily_core_article_count=data.daily_core_article_count,
         user_id=current_user["user_id"],
     )
@@ -1301,6 +1295,24 @@ async def list_projects_endpoint(
 ):
     from .services.project_service import list_projects
     return list_projects(user_id=current_user["user_id"])
+
+
+class SuggestKeywordsRequest(BaseModel):
+    name:        str
+    description: str
+    difficulty:  Literal["beginner", "intermediate", "advanced"] = "intermediate"
+
+
+@app.post("/projects/suggest-keywords")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def suggest_keywords_endpoint(
+    request: Request,
+    data: SuggestKeywordsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from .services.intent_profile_service import suggest_keywords
+    keywords = suggest_keywords(data.name.strip(), data.description.strip(), data.difficulty)
+    return {"keywords": keywords}
 
 
 @app.get("/projects/{project_id}")
@@ -1332,6 +1344,64 @@ async def update_project_endpoint(
     return updated
 
 
+class UpdateIntentProfileRequest(BaseModel):
+    learning_subject: str = ""
+    persona:          str = ""
+    goal:             str = ""
+    industry_context: str = ""
+    primary_focus:    str = ""
+    search_lens:      str = ""
+    intent_summary:   str = ""
+
+
+@app.put("/projects/{project_id}/intent-profile")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def update_intent_profile_endpoint(
+    request:      Request,
+    project_id:   str,
+    data:         UpdateIntentProfileRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    import datetime
+    from .services.intent_profile_service import get_intent_profile, save_intent_profile
+    existing = get_intent_profile(project_id) or {}
+    meta = existing.get("_meta") or {}
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+    updated = {
+        **existing,
+        "learning_subject": data.learning_subject or existing.get("learning_subject", ""),
+        "persona":          data.persona          or existing.get("persona", ""),
+        "goal":             data.goal             or existing.get("goal", ""),
+        "industry_context": data.industry_context or existing.get("industry_context", ""),
+        "primary_focus":    data.primary_focus    or existing.get("primary_focus", ""),
+        "search_lens":      data.search_lens      or existing.get("search_lens", "Educational"),
+        "intent_summary":   data.intent_summary   or existing.get("intent_summary", ""),
+        "_meta": {
+            **meta,
+            "generated_by_ai":  True,
+            "persona_version":  (meta.get("persona_version") or 0) + 1,
+            "last_user_edit_at": now_iso,
+            "last_confirmed_at": now_iso,
+        },
+    }
+    save_intent_profile(project_id, updated)
+    return {"ok": True, "intent_profile": updated}
+
+
+@app.post("/projects/{project_id}/confirm-intent")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def confirm_intent_endpoint(
+    request: Request,
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from .services.project_service import confirm_intent
+    project = confirm_intent(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
 @app.delete("/projects/{project_id}")
 @limiter.limit(PROJECTS_RATE_LIMIT)
 async def delete_project_endpoint(
@@ -1345,20 +1415,141 @@ async def delete_project_endpoint(
     return {"project_id": project_id, "deleted": True}
 
 
+@app.get("/projects/{project_id}/journey-preview")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def journey_preview_endpoint(
+    request: Request,
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Read-only journey preview. Never triggers plan_journey or any LLM call."""
+    import json as _json
+    from .utils.db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(day_number), 0) AS max_day FROM project_insights "
+            "WHERE project_id = ? AND status != 'generating'",
+            (project_id,),
+        ).fetchone()
+        day_number = (row["max_day"] if row else 0) + 1
+
+        batch_row = conn.execute(
+            """SELECT * FROM journey_plans
+               WHERE project_id = ? AND day_start <= ? AND day_end >= ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (project_id, day_number, day_number),
+        ).fetchone()
+
+    if batch_row is None:
+        return {"planned": False}
+
+    batch = _json.loads(batch_row["plan_content"])
+    shape = batch_row["shape"]
+
+    if shape == "rotating_theme":
+        return {
+            "planned":         True,
+            "shape":           "rotating_theme",
+            "display_summary": batch.get("display_summary", ""),
+        }
+
+    # fixed_sequence — expose day_number + display_title only
+    days = batch.get("days") or []
+    today_entry = None
+    future_entries = []
+    past_today = False
+    for entry in days:
+        dn = entry.get("day_number")
+        if dn == day_number:
+            today_entry = {"day_number": dn, "display_title": entry.get("display_title", "")}
+            past_today = True
+        elif past_today:
+            future_entries.append({"day_number": dn, "display_title": entry.get("display_title", "")})
+
+    if today_entry is None:
+        return {"planned": False}
+
+    return {
+        "planned":         True,
+        "shape":           "fixed_sequence",
+        "today":           today_entry,
+        "upcoming":        future_entries[:4],
+        "remaining_count": max(0, len(future_entries) - 4),
+    }
+
+
 @app.post("/projects/{project_id}/insights/generate")
 @limiter.limit(INSIGHT_GEN_RATE)
 async def generate_insight_endpoint(
     request: Request,
     project_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    from .services.project_service import generate_project_insight
-    try:
-        return generate_project_insight(project_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    from .services.project_service import (
+        get_project,
+        _save_generating_stub,
+        _generate_insight_background,
+    )
+    from .utils.db import get_connection as _gc
+
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project {project_id!r} not found")
+
+    with _gc() as _conn:
+        _gen = _conn.execute(
+            "SELECT id, day_number, generated_at FROM project_insights "
+            "WHERE project_id = ? AND status = 'generating' ORDER BY id DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+    if _gen:
+        return {
+            "id":           _gen["id"],
+            "project_id":   project_id,
+            "day_number":   _gen["day_number"],
+            "generated_at": _gen["generated_at"],
+            "status":       "generating",
+        }
+
+    with _gc() as _conn:
+        _row = _conn.execute(
+            "SELECT COALESCE(MAX(day_number), 0) AS max_day FROM project_insights "
+            "WHERE project_id = ? AND status != 'generating'",
+            (project_id,),
+        ).fetchone()
+    day_number = (_row["max_day"] if _row else 0) + 1
+
+    stub_id, generated_at = _save_generating_stub(project_id, day_number)
+    background_tasks.add_task(_generate_insight_background, project_id, stub_id, day_number)
+
+    return {
+        "id":           stub_id,
+        "project_id":   project_id,
+        "day_number":   day_number,
+        "generated_at": generated_at,
+        "status":       "generating",
+    }
+
+
+@app.get("/projects/{project_id}/insights/{insight_id}/status")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def get_insight_status_endpoint(
+    request: Request,
+    project_id: str,
+    insight_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    from .utils.db import get_connection as _gc
+    with _gc() as _conn:
+        row = _conn.execute(
+            "SELECT status FROM project_insights WHERE id = ? AND project_id = ?",
+            (insight_id, project_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Insight not found")
+    return {"status": row["status"]}
 
 
 @app.delete("/projects/{project_id}/insights/{insight_id}")

@@ -17,7 +17,10 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  confirmIntent,
+  updateIntentProfile,
   generateProjectInsight,
+  getInsightStatus,
   deleteProjectInsight,
   getProgression,
   updateProgression,
@@ -32,6 +35,7 @@ import {
 import ProjectCard from "./ProjectCard.jsx"
 import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
+import IntentConfirmModal from "./IntentConfirmModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
@@ -211,11 +215,12 @@ export default function ProjectsPage({
   // Active project state
   const [activeId,       setActiveId]       = useState(null)
   const [insights,       setInsights]       = useState([])
-  const [loadingContent, setLoadingContent] = useState(false)
+  const [loadingContent, setLoadingContent] = useState(true)
 
   // Generation
   const [generating,     setGenerating]     = useState(false)
   const [genError,       setGenError]       = useState(null)
+  const [pendingStub,    setPendingStub]    = useState(null) // {id, day_number, generated_at, projectId}
 
   // Read state for the latest insight of the active project: Set<articleKey>
   const [readKeys,       setReadKeys]       = useState(new Set())
@@ -231,12 +236,16 @@ export default function ProjectsPage({
   const [showOnboarding, setShowOnboarding] = useState(false)
 
   // Modals
-  const [showCreate,        setShowCreate]        = useState(false)
-  const [creating,          setCreating]          = useState(false)
-  const [showEdit,          setShowEdit]          = useState(false)
-  const [pendingDelete,     setPendingDelete]     = useState(null)
-  const [showRenameProject, setShowRenameProject] = useState(false)
-  const [renameProjectDraft, setRenameProjectDraft] = useState('')
+  const [showCreate,           setShowCreate]           = useState(false)
+  const [creating,             setCreating]             = useState(false)
+  const [showEdit,             setShowEdit]             = useState(false)
+  const [pendingDelete,        setPendingDelete]        = useState(null)
+  const [showRenameProject,    setShowRenameProject]    = useState(false)
+  const [renameProjectDraft,   setRenameProjectDraft]   = useState('')
+  const [pendingConfirmProject, setPendingConfirmProject] = useState(null)
+  const [confirming,           setConfirming]           = useState(false)
+  const [showPersonaEditor,    setShowPersonaEditor]    = useState(false)
+  const [personaSaved,         setPersonaSaved]         = useState(false)
 
   // Export callbacks exposed by DailyPackageView for the current selection
   const [exportCallbacks, setExportCallbacks] = useState({ pdf: null, md: null })
@@ -389,6 +398,62 @@ export default function ProjectsPage({
     return () => window.removeEventListener('feed-generation-done', onDone)
   }, [activeId])
 
+  // Poll for background generation completion
+  useEffect(() => {
+    if (!pendingStub) return
+    const POLL_MS     = 8000
+    const GIVE_UP_MS  = 8 * 60 * 1000
+    const startedAt   = Date.now()
+    const { id: stubId, projectId: pid } = pendingStub
+
+    const timerId = setInterval(async () => {
+      if (Date.now() - startedAt > GIVE_UP_MS) {
+        clearInterval(timerId)
+        setPendingStub(null)
+        _generatingNow.delete(pid)
+        setGenerating(false)
+        setGenError("Generation is taking longer than expected. Please try again.")
+        return
+      }
+      try {
+        const { status } = await getInsightStatus(pid, stubId)
+        if (status === 'done') {
+          clearInterval(timerId)
+          const freshInsights = await listProjectInsights(pid)
+          const pkg = freshInsights.find(p => p.id === stubId)
+          setInsights(freshInsights)
+          if (pkg) {
+            setProjects(prev => prev.map(p =>
+              p.project_id === pid
+                ? { ...p, insight_count: pkg.day_number, last_insight_at: pkg.generated_at, last_package_headline: pkg.package_headline ?? p.last_package_headline }
+                : p
+            ))
+          }
+          setReadKeys(new Set())
+          setRelatedChatsMap(new Map())
+          getProgression(pid)
+            .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
+            .catch(() => {})
+          _generatingNow.delete(pid)
+          setGenerating(false)
+          setPendingStub(null)
+          window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
+        } else if (status === 'failed') {
+          clearInterval(timerId)
+          setPendingStub(null)
+          _generatingNow.delete(pid)
+          setGenerating(false)
+          setGenError("Generation failed. Please try again.")
+        }
+        // status === 'generating': keep polling
+      } catch (_) {
+        // network error — keep polling, will time out eventually
+      }
+    }, POLL_MS)
+
+    return () => clearInterval(timerId)
+  }, [pendingStub])
+
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleSelect = useCallback((project) => {
@@ -404,34 +469,12 @@ export default function ProjectsPage({
     setGenError(null)
     const pid = activeId
     try {
-      const pkg = await generateProjectInsight(pid)
-      setInsights(prev => {
-        if (prev.some(p => p.id === pkg.id)) return prev
-        return [pkg, ...prev]
-      })
-      setProjects(prev =>
-        prev.map(p =>
-          p.project_id === pid
-            ? {
-                ...p,
-                insight_count:         pkg.day_number,
-                last_insight_at:       pkg.generated_at,
-                last_package_headline: pkg.package_headline ?? p.last_package_headline,
-              }
-            : p
-        )
-      )
-      setReadKeys(new Set())
-      setRelatedChatsMap(new Map())
-      getProgression(pid)
-        .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
-        .catch(() => {})
+      const stub = await generateProjectInsight(pid)
+      setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
     } catch (e) {
       setGenError(e.message || "Generation failed. Please try again.")
-    } finally {
       _generatingNow.delete(pid)
       setGenerating(false)
-      window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
     }
   }, [activeId, generating])
 
@@ -444,26 +487,12 @@ export default function ProjectsPage({
     try {
       await deleteProjectInsight(pid, insightId)
       setInsights(prev => prev.filter(p => p.id !== insightId))
-      const pkg = await generateProjectInsight(pid)
-      setInsights(prev => [pkg, ...prev])
-      setProjects(prev =>
-        prev.map(p =>
-          p.project_id === pid
-            ? { ...p, last_package_headline: pkg.package_headline ?? p.last_package_headline }
-            : p
-        )
-      )
-      setReadKeys(new Set())
-      setRelatedChatsMap(new Map())
-      getProgression(pid)
-        .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
-        .catch(() => {})
+      const stub = await generateProjectInsight(pid)
+      setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
     } catch (e) {
       setGenError(e.message || "Regeneration failed. Please try again.")
-    } finally {
       _generatingNow.delete(pid)
       setGenerating(false)
-      window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
     }
   }, [activeId, generating])
 
@@ -474,9 +503,44 @@ export default function ProjectsPage({
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
       setShowCreate(false)
+      setPendingConfirmProject(project) // show intent confirmation before first generate
     } catch (_) {}
     finally { setCreating(false) }
   }, [])
+
+  const handleConfirmIntent = useCallback(async (editedProfile) => {
+    if (!pendingConfirmProject) return
+    setConfirming(true)
+    try {
+      await updateIntentProfile(pendingConfirmProject.project_id, editedProfile)
+      const updated = await confirmIntent(pendingConfirmProject.project_id)
+      if (updated) {
+        setProjects(prev => prev.map(p =>
+          p.project_id === updated.project_id ? { ...p, ...updated } : p
+        ))
+      }
+    } catch (_) {}
+    finally {
+      setConfirming(false)
+      setPendingConfirmProject(null)
+    }
+  }, [pendingConfirmProject])
+
+  const handleEditFromConfirm = useCallback(() => {
+    setPendingConfirmProject(null)
+    setShowEdit(true)
+  }, [])
+
+  const handleSavePersona = useCallback(async (editedProfile) => {
+    if (!activeId) return
+    setConfirming(true)
+    try {
+      await updateIntentProfile(activeId, editedProfile)
+      setShowPersonaEditor(false)
+      setPersonaSaved(true)
+    } catch (_) {}
+    finally { setConfirming(false) }
+  }, [activeId])
 
   const handleOnboardingComplete = useCallback(async (fields) => {
     setCreating(true)
@@ -489,22 +553,12 @@ export default function ProjectsPage({
       setGenerating(true)
       const pid = project.project_id
       try {
-        const pkg = await generateProjectInsight(pid)
-        setInsights([pkg])
-        setProjects(prev =>
-          prev.map(p =>
-            p.project_id === pid
-              ? { ...p, insight_count: pkg.day_number, last_insight_at: pkg.generated_at, last_package_headline: pkg.package_headline ?? p.last_package_headline }
-              : p
-          )
-        )
-        setReadKeys(new Set())
+        const stub = await generateProjectInsight(pid)
+        setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
       } catch (e) {
         setGenError(e.message || "Generation failed. Please try again.")
-      } finally {
         _generatingNow.delete(pid)
         setGenerating(false)
-        window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
       }
     } catch (_) {}
     finally { setCreating(false) }
@@ -685,12 +739,64 @@ export default function ProjectsPage({
         />
       )}
 
+      {pendingConfirmProject && (
+        <IntentConfirmModal
+          project={pendingConfirmProject}
+          mode="confirm"
+          onSave={handleConfirmIntent}
+          onCancel={handleEditFromConfirm}
+          saving={confirming}
+        />
+      )}
+
+      {showPersonaEditor && activeProject && (
+        <IntentConfirmModal
+          project={activeProject}
+          mode="edit"
+          onSave={handleSavePersona}
+          onCancel={() => setShowPersonaEditor(false)}
+          saving={confirming}
+        />
+      )}
+
       {showEdit && activeProject && (
         <EditProjectModal
           project={activeProject}
           onClose={() => setShowEdit(false)}
           onSave={handleEditProject}
+          onEditPersona={() => { setShowEdit(false); setShowPersonaEditor(true) }}
         />
+      )}
+
+      {/* Post-persona-save prompt */}
+      {personaSaved && (
+        <div className="fixed bottom-5 right-5 z-40 w-80 bg-slate-800 border border-slate-700/60 rounded-2xl shadow-2xl p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-7 h-7 rounded-lg bg-blue-950/60 border border-blue-800/40 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg className="w-3 h-3 text-blue-400" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm6.854-1.354a.5.5 0 0 0-.708 0L6.5 8.793 5.354 7.646a.5.5 0 1 0-.708.708l1.5 1.5a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0 0-.708Z" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-200 leading-tight">Intent Profile Updated</p>
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">Keywords may be stale — regenerate to match your new persona.</p>
+              <div className="flex gap-2 mt-2.5">
+                <button
+                  onClick={() => { setPersonaSaved(false); setShowEdit(true) }}
+                  className="flex-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                >
+                  Regenerate Keywords
+                </button>
+                <button
+                  onClick={() => setPersonaSaved(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-300 bg-slate-700/60 hover:bg-slate-700 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {pendingDelete && (

@@ -1,0 +1,2113 @@
+{
+  "cells": {
+    "case1__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Learning Data Structures and Algorithms from scratch with the goal of technical interviews is a progressive subject with a defined set of core concepts and problem-solving techniques that lead to a tangible skill endpoint.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Introduction to Data Structures and Algorithms, their importance in software engineering and technical interviews.\",\n      \"display_title\": \"Welcome to DSA: Your Interview Prep Journey Starts Here\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Sets the stage and explains the 'why' behind learning DSA, motivating the learner for the journey ahead.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Understanding Time Complexity, introducing Big O notation (O(1), O(log n), O(n)).\",\n      \"display_title\": \"Demystifying Big O: Understanding Time Complexity\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Big O is fundamental for evaluating algorithm efficiency and is a core concept that underpins all subsequent algorithm discussions.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Deeper dive into Big O: Space Complexity, average/worst/best case analysis, common time complexities (O(n log n), O(n^2), O(2^n)).\",\n      \"display_title\": \"Beyond Time: Space Complexity & Real-World Big O\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Completes the foundational understanding of algorithm analysis before introducing specific data structures.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Arrays: Definition, characteristics, operations (access, insertion, deletion), static vs. dynamic arrays.\",\n      \"display_title\": \"Mastering Arrays: The Foundation of Data Storage\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Arrays are the most basic and widely used data structure, essential for building more complex structures and algorithms.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Array-based problem-solving: implementing common array operations, basic search/manipulation problems (e.g., finding max/min, reversing, two-pointers concept).\",\n      \"display_title\": \"Array Adventures: Solving Your First Coding Problems\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Applies theoretical knowledge to practical coding problems, reinforcing understanding of array properties and problem-solving techniques.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Linked Lists: Introduction, types (singly), nodes, pointers, advantages over arrays.\",\n      \"display_title\": \"Introduction to Linked Lists: A Flexible Alternative\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduces the second fundamental data structure, highlighting its differences and use cases compared to arrays.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Linked Lists operations: Traversal, insertion at head/tail/middle, deletion.\",\n      \"display_title\": \"Navigating Linked Lists: Operations and Manipulation\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Builds practical skills for manipulating linked lists, crucial for solving more advanced problems.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Linked List problem-solving: reversing a linked list, finding middle element, cycle detection (basic).\",\n      \"display_title\": \"Linked List Challenges: Sharpen Your Pointer Skills\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Reinforces linked list concepts through common interview-style problems, enhancing practical application.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Recursion: Concept, base case, recursive step, call stack visualization.\",\n      \"display_title\": \"Unraveling Recursion: Thinking in Self-Referential Steps\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduces a powerful algorithmic paradigm used extensively in tree, graph, and dynamic programming problems.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Recursion practice: Fibonacci sequence, factorial, tower of Hanoi (conceptual), debugging recursive calls.\",\n      \"display_title\": \"Recursive Puzzles: Applying the Power of Self-Calls\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Solidifies understanding of recursion with classic examples and prepares for its application in more complex data structures and algorithms.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Learning Data Structures and Algorithms from scratch with the goal of technical interviews is a progressive subject with a defined set of core concepts and problem-solving techniques that lead to a tangible skill endpoint.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Introduction to Data Structures and Algorithms, their importance in software engineering and technical interviews.",
+            "display_title": "Welcome to DSA: Your Interview Prep Journey Starts Here",
+            "frame_hint": "timeline",
+            "rationale": "Sets the stage and explains the 'why' behind learning DSA, motivating the learner for the journey ahead."
+          },
+          {
+            "day_number": 2,
+            "focus": "Understanding Time Complexity, introducing Big O notation (O(1), O(log n), O(n)).",
+            "display_title": "Demystifying Big O: Understanding Time Complexity",
+            "frame_hint": "timeline",
+            "rationale": "Big O is fundamental for evaluating algorithm efficiency and is a core concept that underpins all subsequent algorithm discussions."
+          },
+          {
+            "day_number": 3,
+            "focus": "Deeper dive into Big O: Space Complexity, average/worst/best case analysis, common time complexities (O(n log n), O(n^2), O(2^n)).",
+            "display_title": "Beyond Time: Space Complexity & Real-World Big O",
+            "frame_hint": "timeline",
+            "rationale": "Completes the foundational understanding of algorithm analysis before introducing specific data structures."
+          },
+          {
+            "day_number": 4,
+            "focus": "Arrays: Definition, characteristics, operations (access, insertion, deletion), static vs. dynamic arrays.",
+            "display_title": "Mastering Arrays: The Foundation of Data Storage",
+            "frame_hint": "timeline",
+            "rationale": "Arrays are the most basic and widely used data structure, essential for building more complex structures and algorithms."
+          },
+          {
+            "day_number": 5,
+            "focus": "Array-based problem-solving: implementing common array operations, basic search/manipulation problems (e.g., finding max/min, reversing, two-pointers concept).",
+            "display_title": "Array Adventures: Solving Your First Coding Problems",
+            "frame_hint": "timeline",
+            "rationale": "Applies theoretical knowledge to practical coding problems, reinforcing understanding of array properties and problem-solving techniques."
+          },
+          {
+            "day_number": 6,
+            "focus": "Linked Lists: Introduction, types (singly), nodes, pointers, advantages over arrays.",
+            "display_title": "Introduction to Linked Lists: A Flexible Alternative",
+            "frame_hint": "timeline",
+            "rationale": "Introduces the second fundamental data structure, highlighting its differences and use cases compared to arrays."
+          },
+          {
+            "day_number": 7,
+            "focus": "Linked Lists operations: Traversal, insertion at head/tail/middle, deletion.",
+            "display_title": "Navigating Linked Lists: Operations and Manipulation",
+            "frame_hint": "timeline",
+            "rationale": "Builds practical skills for manipulating linked lists, crucial for solving more advanced problems."
+          },
+          {
+            "day_number": 8,
+            "focus": "Linked List problem-solving: reversing a linked list, finding middle element, cycle detection (basic).",
+            "display_title": "Linked List Challenges: Sharpen Your Pointer Skills",
+            "frame_hint": "timeline",
+            "rationale": "Reinforces linked list concepts through common interview-style problems, enhancing practical application."
+          },
+          {
+            "day_number": 9,
+            "focus": "Recursion: Concept, base case, recursive step, call stack visualization.",
+            "display_title": "Unraveling Recursion: Thinking in Self-Referential Steps",
+            "frame_hint": "timeline",
+            "rationale": "Introduces a powerful algorithmic paradigm used extensively in tree, graph, and dynamic programming problems."
+          },
+          {
+            "day_number": 10,
+            "focus": "Recursion practice: Fibonacci sequence, factorial, tower of Hanoi (conceptual), debugging recursive calls.",
+            "display_title": "Recursive Puzzles: Applying the Power of Self-Calls",
+            "frame_hint": "timeline",
+            "rationale": "Solidifies understanding of recursion with classic examples and prepares for its application in more complex data structures and algorithms."
+          }
+        ]
+      },
+      "latency_ms": 16639,
+      "timestamp": "2026-06-26T15:50:23.703882+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 1,
+          "evidence": "Distinct frame_hint values (1): ['timeline']"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers most of the checklist items but misses or stops short on several key areas such as stacks & queues, hashing / hash tables, trees (incl. BST), graphs (BFS/DFS), and dynamic programming.",
+          "hit": [
+            "Big-O / complexity analysis",
+            "arrays & strings",
+            "recursion",
+            "linked lists"
+          ],
+          "missed": [
+            "stacks & queues",
+            "hashing / hash tables",
+            "trees (incl. BST)",
+            "graphs (BFS/DFS)",
+            "dynamic programming",
+            "sorting algorithms"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": 3,
+          "na": false,
+          "evidence": "Each concept builds logically on prior ones, introducing foundational concepts before moving on to more complex data structures and algorithms."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_title fields are natural and engaging, making the content more approachable for learners."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case1__gemini-3.5-flash": {
+      "status": "skipped-quota-exhausted",
+      "raw_output": null,
+      "parsed_output": null,
+      "latency_ms": 0,
+      "timestamp": "2026-06-26T19:05:26.070894+00:00",
+      "retried": true,
+      "scores": null
+    },
+    "case1__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Data structures and algorithms have a defined set of core concepts that can be mastered sequentially to achieve interview readiness.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Big-O Notation and Time/Space Complexity\",\n      \"display_title\": \"Understanding Algorithmic Efficiency\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Essential foundation to analyze and compare the performance of future data structures.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Arrays and Dynamic Arrays (ArrayLists)\",\n      \"display_title\": \"Foundational Linear Structures\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"The most fundamental memory structures; needed to understand indexing and memory layout.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Linked Lists (Singly and Doubly)\",\n      \"display_title\": \"Pointers and Nodes\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduces non-contiguous memory management and pointer manipulation.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Stacks and Queues\",\n      \"display_title\": \"LIFO vs FIFO Operations\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Standard abstract data types built on top of linear structures.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Hash Tables and Hash Functions\",\n      \"display_title\": \"Constant Time Lookups\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"The most important tool for optimizing search and storage operations.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Introduction to Binary Trees\",\n      \"display_title\": \"Hierarchical Data Foundations\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Shifts perspective from linear to branching structures.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Binary Search Trees (BST)\",\n      \"display_title\": \"Efficient Searching and Sorting\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Building on trees to maintain order and facilitate logarithmic search.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Recursion Fundamentals\",\n      \"display_title\": \"Thinking Recursively\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Prerequisite logic for effectively traversing trees and graphs.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Sorting Algorithms (Merge Sort, Quick Sort)\",\n      \"display_title\": \"Divide and Conquer\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Classic algorithms that illustrate optimal search and arrangement strategies.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Binary Search Algorithm\",\n      \"display_title\": \"Searching Sorted Arrays\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Puts algorithmic logic into practice to solve search problems efficiently.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Data structures and algorithms have a defined set of core concepts that can be mastered sequentially to achieve interview readiness.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Big-O Notation and Time/Space Complexity",
+            "display_title": "Understanding Algorithmic Efficiency",
+            "frame_hint": "timeline",
+            "rationale": "Essential foundation to analyze and compare the performance of future data structures."
+          },
+          {
+            "day_number": 2,
+            "focus": "Arrays and Dynamic Arrays (ArrayLists)",
+            "display_title": "Foundational Linear Structures",
+            "frame_hint": "timeline",
+            "rationale": "The most fundamental memory structures; needed to understand indexing and memory layout."
+          },
+          {
+            "day_number": 3,
+            "focus": "Linked Lists (Singly and Doubly)",
+            "display_title": "Pointers and Nodes",
+            "frame_hint": "timeline",
+            "rationale": "Introduces non-contiguous memory management and pointer manipulation."
+          },
+          {
+            "day_number": 4,
+            "focus": "Stacks and Queues",
+            "display_title": "LIFO vs FIFO Operations",
+            "frame_hint": "timeline",
+            "rationale": "Standard abstract data types built on top of linear structures."
+          },
+          {
+            "day_number": 5,
+            "focus": "Hash Tables and Hash Functions",
+            "display_title": "Constant Time Lookups",
+            "frame_hint": "timeline",
+            "rationale": "The most important tool for optimizing search and storage operations."
+          },
+          {
+            "day_number": 6,
+            "focus": "Introduction to Binary Trees",
+            "display_title": "Hierarchical Data Foundations",
+            "frame_hint": "timeline",
+            "rationale": "Shifts perspective from linear to branching structures."
+          },
+          {
+            "day_number": 7,
+            "focus": "Binary Search Trees (BST)",
+            "display_title": "Efficient Searching and Sorting",
+            "frame_hint": "timeline",
+            "rationale": "Building on trees to maintain order and facilitate logarithmic search."
+          },
+          {
+            "day_number": 8,
+            "focus": "Recursion Fundamentals",
+            "display_title": "Thinking Recursively",
+            "frame_hint": "timeline",
+            "rationale": "Prerequisite logic for effectively traversing trees and graphs."
+          },
+          {
+            "day_number": 9,
+            "focus": "Sorting Algorithms (Merge Sort, Quick Sort)",
+            "display_title": "Divide and Conquer",
+            "frame_hint": "timeline",
+            "rationale": "Classic algorithms that illustrate optimal search and arrangement strategies."
+          },
+          {
+            "day_number": 10,
+            "focus": "Binary Search Algorithm",
+            "display_title": "Searching Sorted Arrays",
+            "frame_hint": "timeline",
+            "rationale": "Puts algorithmic logic into practice to solve search problems efficiently."
+          }
+        ]
+      },
+      "latency_ms": 5811,
+      "timestamp": "2026-06-26T15:50:12.867917+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 1,
+          "evidence": "Distinct frame_hint values (1): ['timeline']"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers most of the checklist items but misses 'graphs (BFS/DFS)' and 'dynamic programming'.",
+          "hit": [
+            "Big-O / complexity analysis",
+            "arrays & strings",
+            "linked lists",
+            "stacks & queues",
+            "hashing / hash tables",
+            "trees (incl. BST)",
+            "recursion",
+            "sorting algorithms"
+          ],
+          "missed": [
+            "graphs (BFS/DFS)",
+            "dynamic programming"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": 2,
+          "na": false,
+          "evidence": "The plan introduces concepts in a mostly logical order, but recursion is introduced after trees, which could be considered a minor slip since recursion is often used to traverse trees."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display titles are natural and engaging, making the plan easy to follow for a user."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case2__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Understanding the human immune system, from basic components to the function of vaccines, is a subject with a clear, learnable progression and a defined endpoint for foundational mastery.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Definition and purpose of the immune system; overview of its main components and functions.\",\n      \"display_title\": \"Welcome to Your Body's Defense: An Introduction to the Immune System\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Establishes a foundational understanding and context for the entire journey, defining what the immune system is and why it's crucial.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Differentiating between innate and adaptive immunity, highlighting their key characteristics and roles.\",\n      \"display_title\": \"Two Branches of Defense: Innate vs. Adaptive Immunity\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Introduces the two principal divisions of the immune system, providing a high-level conceptual framework for subsequent detailed learning.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Exploring the physical and chemical barriers (skin, mucous membranes, pH, beneficial microbes) as the body's first line of defense.\",\n      \"display_title\": \"Your Body's Shield: Physical and Chemical Barriers\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Begins the detailed exploration of innate immunity by covering the immediate, non-cellular defenses that pathogens encounter first.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Identifying and describing the main cells of the innate immune system: phagocytes (macrophages, neutrophils), natural killer (NK) cells, mast cells, and dendritic cells (as initial detectors).\",\n      \"display_title\": \"The Patrol Squad: Cells of Innate Immunity\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Details the cellular components responsible for the immediate, non-specific responses characteristic of innate immunity.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Understanding the process, signs (redness, heat, swelling, pain), and molecular mediators of the inflammatory response, and its purpose in healing and pathogen containment.\",\n      \"display_title\": \"Fire Alarm! Understanding the Inflammatory Response\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Explains a critical, integrated process of innate immunity that coordinates defense and repair at the site of injury or infection.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Introducing the key characteristics of adaptive immunity (specificity, memory) and the primary lymphocytes: B cells and T cells.\",\n      \"display_title\": \"The Specialized Forces: Introduction to Adaptive Immunity\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Marks the transition from innate to adaptive immunity, introducing the specialized cells that provide a highly targeted and long-lasting defense.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Understanding B cell development, the structure and diverse functions of antibodies (neutralization, opsonization, complement activation), and the concept of humoral immunity.\",\n      \"display_title\": \"Antibody Army: How B Cells Drive Humoral Immunity\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Focuses on the B lymphocyte arm of adaptive immunity, detailing how antibodies are produced and their critical roles in pathogen clearance.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Exploring Helper T cell types, their recognition of antigens presented on MHC Class II molecules, activation pathways, and their role in orchestrating broader immune responses through cytokines.\",\n      \"display_title\": \"The Command Center: Helper T Cells and Their Role\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Explains the central role of Helper T cells as coordinators of both humoral and cell-mediated immunity, crucial for an effective adaptive response.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Understanding Cytotoxic T lymphocyte (CTL) function, their recognition of antigens on MHC Class I molecules, and how they directly eliminate infected or cancerous cells.\",\n      \"display_title\": \"The Hit Squad: Cytotoxic T Cells and Direct Cell Killing\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Details the direct cellular killing mechanism of adaptive immunity, providing insight into how the body clears intracellular pathogens and abnormal cells.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Explaining the formation of memory B and T cells, the characteristics of the secondary immune response (faster, stronger), and the fundamental importance of immunological memory for long-term protection.\",\n      \"display_title\": \"Learning from Experience: The Power of Immunological Memory\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Consolidates the concept of immunological memory, which is a hallmark of adaptive immunity and lays the groundwork for understanding vaccine efficacy.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Understanding the human immune system, from basic components to the function of vaccines, is a subject with a clear, learnable progression and a defined endpoint for foundational mastery.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Definition and purpose of the immune system; overview of its main components and functions.",
+            "display_title": "Welcome to Your Body's Defense: An Introduction to the Immune System",
+            "frame_hint": "timeline",
+            "rationale": "Establishes a foundational understanding and context for the entire journey, defining what the immune system is and why it's crucial."
+          },
+          {
+            "day_number": 2,
+            "focus": "Differentiating between innate and adaptive immunity, highlighting their key characteristics and roles.",
+            "display_title": "Two Branches of Defense: Innate vs. Adaptive Immunity",
+            "frame_hint": "comparison",
+            "rationale": "Introduces the two principal divisions of the immune system, providing a high-level conceptual framework for subsequent detailed learning."
+          },
+          {
+            "day_number": 3,
+            "focus": "Exploring the physical and chemical barriers (skin, mucous membranes, pH, beneficial microbes) as the body's first line of defense.",
+            "display_title": "Your Body's Shield: Physical and Chemical Barriers",
+            "frame_hint": "timeline",
+            "rationale": "Begins the detailed exploration of innate immunity by covering the immediate, non-cellular defenses that pathogens encounter first."
+          },
+          {
+            "day_number": 4,
+            "focus": "Identifying and describing the main cells of the innate immune system: phagocytes (macrophages, neutrophils), natural killer (NK) cells, mast cells, and dendritic cells (as initial detectors).",
+            "display_title": "The Patrol Squad: Cells of Innate Immunity",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Details the cellular components responsible for the immediate, non-specific responses characteristic of innate immunity."
+          },
+          {
+            "day_number": 5,
+            "focus": "Understanding the process, signs (redness, heat, swelling, pain), and molecular mediators of the inflammatory response, and its purpose in healing and pathogen containment.",
+            "display_title": "Fire Alarm! Understanding the Inflammatory Response",
+            "frame_hint": "timeline",
+            "rationale": "Explains a critical, integrated process of innate immunity that coordinates defense and repair at the site of injury or infection."
+          },
+          {
+            "day_number": 6,
+            "focus": "Introducing the key characteristics of adaptive immunity (specificity, memory) and the primary lymphocytes: B cells and T cells.",
+            "display_title": "The Specialized Forces: Introduction to Adaptive Immunity",
+            "frame_hint": "timeline",
+            "rationale": "Marks the transition from innate to adaptive immunity, introducing the specialized cells that provide a highly targeted and long-lasting defense."
+          },
+          {
+            "day_number": 7,
+            "focus": "Understanding B cell development, the structure and diverse functions of antibodies (neutralization, opsonization, complement activation), and the concept of humoral immunity.",
+            "display_title": "Antibody Army: How B Cells Drive Humoral Immunity",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Focuses on the B lymphocyte arm of adaptive immunity, detailing how antibodies are produced and their critical roles in pathogen clearance."
+          },
+          {
+            "day_number": 8,
+            "focus": "Exploring Helper T cell types, their recognition of antigens presented on MHC Class II molecules, activation pathways, and their role in orchestrating broader immune responses through cytokines.",
+            "display_title": "The Command Center: Helper T Cells and Their Role",
+            "frame_hint": "timeline",
+            "rationale": "Explains the central role of Helper T cells as coordinators of both humoral and cell-mediated immunity, crucial for an effective adaptive response."
+          },
+          {
+            "day_number": 9,
+            "focus": "Understanding Cytotoxic T lymphocyte (CTL) function, their recognition of antigens on MHC Class I molecules, and how they directly eliminate infected or cancerous cells.",
+            "display_title": "The Hit Squad: Cytotoxic T Cells and Direct Cell Killing",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Details the direct cellular killing mechanism of adaptive immunity, providing insight into how the body clears intracellular pathogens and abnormal cells."
+          },
+          {
+            "day_number": 10,
+            "focus": "Explaining the formation of memory B and T cells, the characteristics of the secondary immune response (faster, stronger), and the fundamental importance of immunological memory for long-term protection.",
+            "display_title": "Learning from Experience: The Power of Immunological Memory",
+            "frame_hint": "timeline",
+            "rationale": "Consolidates the concept of immunological memory, which is a hallmark of adaptive immunity and lays the groundwork for understanding vaccine efficacy."
+          }
+        ]
+      },
+      "latency_ms": 13281,
+      "timestamp": "2026-06-26T15:51:42.858665+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 3,
+          "evidence": "Distinct frame_hint values (3): ['comparison', 'timeline', 'single-discovery-story']"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan comprehensively covers all checklist items, including innate immunity, adaptive immunity, lymphocytes, antibodies/antigens, immune memory, and how vaccines work, with a clear progression to a natural endpoint.",
+          "hit": [
+            "innate immunity",
+            "adaptive immunity",
+            "lymphocytes (T cells / B cells)",
+            "antibodies / antigens",
+            "immune memory",
+            "how vaccines work"
+          ],
+          "missed": [
+            "real disease / application example"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": 3,
+          "na": false,
+          "evidence": "Each concept builds logically on prior ones, with no skipped prerequisites, demonstrating a sound and coherent sequence."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "Display titles are natural, engaging, and clearly convey the focus of each day, making the learning journey appealing and easy to follow."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case2__gemini-3.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"The human immune system has a structured, fundamental blueprint that can be fully comprehended through a sequential progression from basic physical barriers to complex adaptive memory and clinical vaccines.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Overview of physical barriers and the initial rapid innate immune system recognition pathways.\",\n      \"display_title\": \"The First Line of Defense: Physical Barriers and Innate Detection\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Establishes the foundational distinction between passive physical blockades and active biological recognition mechanisms.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Innate cellular responders specifically macrophages, neutrophils, and natural killer cells.\",\n      \"display_title\": \"The Cellular Infantry: Phagocytes and Natural Killer Cells\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Tracks the step-by-step biological response of an innate cell encountering, engulfing, and digesting a pathogen.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"The biochemical cascade of inflammation, including cytokine signaling, histamines, and vasodilation.\",\n      \"display_title\": \"Red Alert: The Inflammatory Response and Cytokine Signaling\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Maps the sequential chemical warning system that alerts systemic defenses to a localized injury or infection.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Antigen presentation mechanisms involving dendritic cells and Major Histocompatibility Complex (MHC) molecules.\",\n      \"display_title\": \"The Handshake: Antigen Presentation and the MHC Bridge\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Explains how the innate immune system passes the baton to the highly specific adaptive immune system.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"B-cell activation, humoral immunity, antibody structure, and the five major antibody classes.\",\n      \"display_title\": \"Custom Weaponry: B-Cells and Antibodies\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Examines the diverse structures and specific roles of different antibody classes (IgG, IgM, IgA, IgE, IgD).\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"T-cell maturation, activation, and differentiation into Helper T-cells and Cytotoxic T-cells.\",\n      \"display_title\": \"Commanders and Assassins: Helper and Cytotoxic T-Cells\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Contrasts the regulatory role of Helper T-cells with the direct cellular destruction executed by Cytotoxic T-cells.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Development of memory B and T cells and the differences between primary and secondary immune responses.\",\n      \"display_title\": \"Never Forget: Immunological Memory and Secondary Response\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Compares the slow, initial response of a naive system to the rapid, aggressive response of a primed system.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Anatomy of the lymphatic system, tracking the movement of lymph through nodes, spleen, and thymus.\",\n      \"display_title\": \"The Security Network: Lymph Nodes and Lymphatic Highways\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Traces the path of a pathogen carrying fluid as it is filtered and inspected through the physical lymphatic system.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"The history and biological mechanism of vaccines, starting with Edward Jenner's smallpox discovery to modern mRNA technology.\",\n      \"display_title\": \"Training the Troops: How Vaccines Work\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Uses the narrative of the first vaccine to frame how humanity learned to safely trigger immunological memory.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Immune system dysfunctions including autoimmune diseases, hypersensitivities, and immunodeficiencies.\",\n      \"display_title\": \"Friendly Fire and Failures: Autoimmunity and Allergies\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Compares healthy targeted immune protection against systemic errors where the system targets self-tissues or harmless proteins.\"\n    }\n  ]\n}\n}",
+      "parsed_output": null,
+      "latency_ms": 15500,
+      "timestamp": "2026-06-26T19:13:44.989725+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 0,
+          "evidence": "output shape='', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 0,
+          "evidence": "JSON parse failed"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": null,
+          "na": true,
+          "evidence": "No output"
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "No output"
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "No output"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "No output"
+        },
+        "user_facing_polish": {
+          "score": null,
+          "evidence": "No output"
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case2__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"The immune system is a biological system with established core mechanisms and functions that can be mapped from innate basics to complex adaptive responses and medical interventions.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Barriers and the innate immune system overview\",\n      \"display_title\": \"The First Line of Defense\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Starting with innate immunity provides the necessary foundational context before moving to specialized cells.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"White blood cell types and their roles\",\n      \"display_title\": \"The Cellular Infantry\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Identifying the specific actors is required to understand how they interact in later stages.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Inflammation as a signaling mechanism\",\n      \"display_title\": \"The Alarm System\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Explaining inflammation bridges the gap between surface barriers and systemic response.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Introduction to the adaptive immune system\",\n      \"display_title\": \"Beyond the Basics\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Shifting the focus to the system's ability to learn and adapt is the logical next step.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Function of B-cells and antibodies\",\n      \"display_title\": \"The Precision Attack\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"B-cells and antibodies are central to the adaptive response; they need dedicated exploration.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"T-cells and cellular immunity\",\n      \"display_title\": \"The Targeted Hunters\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"T-cells function differently than B-cells; contrasting them clarifies their specific duties.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Immunological memory and lifelong protection\",\n      \"display_title\": \"The Body's Library\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Explaining memory helps the learner understand how immunity lasts after an initial infection.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Principles of vaccination and exposure\",\n      \"display_title\": \"Training the Troops\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Applying the learned concepts of memory and adaptation to how vaccines actually work.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Autoimmunity and system dysfunction\",\n      \"display_title\": \"When the Shield Breaks\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Exploring when the system fails provides deeper appreciation for how it functions when healthy.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Review of the immune lifecycle\",\n      \"display_title\": \"The Orchestrated Defense\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Synthesizing all parts of the journey into a cohesive understanding of human immunity.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "The immune system is a biological system with established core mechanisms and functions that can be mapped from innate basics to complex adaptive responses and medical interventions.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Barriers and the innate immune system overview",
+            "display_title": "The First Line of Defense",
+            "frame_hint": "timeline",
+            "rationale": "Starting with innate immunity provides the necessary foundational context before moving to specialized cells."
+          },
+          {
+            "day_number": 2,
+            "focus": "White blood cell types and their roles",
+            "display_title": "The Cellular Infantry",
+            "frame_hint": "comparison",
+            "rationale": "Identifying the specific actors is required to understand how they interact in later stages."
+          },
+          {
+            "day_number": 3,
+            "focus": "Inflammation as a signaling mechanism",
+            "display_title": "The Alarm System",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Explaining inflammation bridges the gap between surface barriers and systemic response."
+          },
+          {
+            "day_number": 4,
+            "focus": "Introduction to the adaptive immune system",
+            "display_title": "Beyond the Basics",
+            "frame_hint": "timeline",
+            "rationale": "Shifting the focus to the system's ability to learn and adapt is the logical next step."
+          },
+          {
+            "day_number": 5,
+            "focus": "Function of B-cells and antibodies",
+            "display_title": "The Precision Attack",
+            "frame_hint": "comparison",
+            "rationale": "B-cells and antibodies are central to the adaptive response; they need dedicated exploration."
+          },
+          {
+            "day_number": 6,
+            "focus": "T-cells and cellular immunity",
+            "display_title": "The Targeted Hunters",
+            "frame_hint": "comparison",
+            "rationale": "T-cells function differently than B-cells; contrasting them clarifies their specific duties."
+          },
+          {
+            "day_number": 7,
+            "focus": "Immunological memory and lifelong protection",
+            "display_title": "The Body's Library",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Explaining memory helps the learner understand how immunity lasts after an initial infection."
+          },
+          {
+            "day_number": 8,
+            "focus": "Principles of vaccination and exposure",
+            "display_title": "Training the Troops",
+            "frame_hint": "timeline",
+            "rationale": "Applying the learned concepts of memory and adaptation to how vaccines actually work."
+          },
+          {
+            "day_number": 9,
+            "focus": "Autoimmunity and system dysfunction",
+            "display_title": "When the Shield Breaks",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Exploring when the system fails provides deeper appreciation for how it functions when healthy."
+          },
+          {
+            "day_number": 10,
+            "focus": "Review of the immune lifecycle",
+            "display_title": "The Orchestrated Defense",
+            "frame_hint": "timeline",
+            "rationale": "Synthesizing all parts of the journey into a cohesive understanding of human immunity."
+          }
+        ]
+      },
+      "latency_ms": 3781,
+      "timestamp": "2026-06-26T15:51:33.354856+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 3,
+          "evidence": "Distinct frame_hint values (3): ['comparison', 'timeline', 'single-discovery-story']"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan comprehensively covers all checklist items from innate immunity to how vaccines work, including real disease/application examples through the discussion of immune system components and functions.",
+          "hit": [
+            "innate immunity",
+            "adaptive immunity",
+            "lymphocytes (T cells / B cells)",
+            "antibodies / antigens",
+            "immune memory",
+            "how vaccines work"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": 3,
+          "na": false,
+          "evidence": "Each day's focus logically builds upon the previous, starting with barriers and innate immunity, progressing through white blood cells, inflammation, and into adaptive immunity, covering T and B cells, antibodies, immune memory, and finally vaccines, demonstrating a coherent and progressive sequence."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "Display titles such as 'The First Line of Defense', 'The Cellular Infantry', and 'The Orchestrated Defense' are natural and engaging, suggesting a well-considered user experience."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case3__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The startup funding and venture capital landscape is constantly evolving with new deals, fund formations, market trends, and policy changes, making 'staying updated' the primary goal rather than reaching a fixed learning endpoint.\",\n  \"themes\": [\n    {\n      \"name\": \"Recent Funding Rounds & Exits\",\n      \"description\": \"Tracking significant seed, Series A-Z funding rounds, M&A activities, and IPOs across various sectors.\"\n    },\n    {\n      \"name\": \"Venture Capital Landscape\",\n      \"description\": \"Insights into new VC funds, changes in investment theses, LP commitments, and prominent investor moves.\"\n    },\n    {\n      \"name\": \"Startup Ecosystem Trends & Policy\",\n      \"description\": \"Analysis of emerging startup sectors, macroeconomic impacts, regional shifts, and relevant regulatory developments.\"\n    },\n    {\n      \"name\": \"Founder & Investor Perspectives\",\n      \"description\": \"Key takeaways from interviews, founder stories, investor analyses, and strategic advice from industry leaders.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"techcrunch.com\",\n    \"axios.com/pro\",\n    \"sifted.eu\",\n    \"wallstreetjournal.com\",\n    \"fortune.com/venture\"\n  ],\n  \"display_summary\": \"Currently tracking: Latest Funding Rounds, VC Landscape, Ecosystem Trends, and Founder/Investor Perspectives.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The startup funding and venture capital landscape is constantly evolving with new deals, fund formations, market trends, and policy changes, making 'staying updated' the primary goal rather than reaching a fixed learning endpoint.",
+        "themes": [
+          {
+            "name": "Recent Funding Rounds & Exits",
+            "description": "Tracking significant seed, Series A-Z funding rounds, M&A activities, and IPOs across various sectors."
+          },
+          {
+            "name": "Venture Capital Landscape",
+            "description": "Insights into new VC funds, changes in investment theses, LP commitments, and prominent investor moves."
+          },
+          {
+            "name": "Startup Ecosystem Trends & Policy",
+            "description": "Analysis of emerging startup sectors, macroeconomic impacts, regional shifts, and relevant regulatory developments."
+          },
+          {
+            "name": "Founder & Investor Perspectives",
+            "description": "Key takeaways from interviews, founder stories, investor analyses, and strategic advice from industry leaders."
+          }
+        ],
+        "trusted_sources": [
+          "techcrunch.com",
+          "axios.com/pro",
+          "sifted.eu",
+          "wallstreetjournal.com",
+          "fortune.com/venture"
+        ],
+        "display_summary": "Currently tracking: Latest Funding Rounds, VC Landscape, Ecosystem Trends, and Founder/Investor Perspectives."
+      },
+      "latency_ms": 6608,
+      "timestamp": "2026-06-26T15:53:51.488535+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers most of the checklist items including funding rounds, M&A/exits, founder stories, and macro conditions, with only 'specific verticals' not explicitly mentioned.",
+          "hit": [
+            "funding rounds / VC activity",
+            "M&A / exits",
+            "founder stories",
+            "macro conditions"
+          ],
+          "missed": [
+            "specific verticals"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "The themes are distinct and jointly cover the domain, including recent funding rounds, venture capital landscape, ecosystem trends, and founder/investor perspectives.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 2,
+          "evidence": "The trusted sources include some domain-specific outlets like techcrunch.com but also more general ones like wallstreetjournal.com and fortune.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging, providing a clear overview of the current focus areas."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case3__gemini-3.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The venture capital and startup ecosystem is continuously evolving with new deals, shifting macroeconomic factors, and regulatory changes, making it an ongoing tracking effort rather than a finite curriculum.\",\n  \"themes\": [\n    {\n      \"name\": \"VC Macro Trends & Fundraises\",\n      \"description\": \"Analysis of venture capital fund-raising, dry powder levels, shifting valuation multiples, and broader ecosystem health.\"\n    },\n    {\n      \"name\": \"Early-Stage Activity (Seed & Series A)\",\n      \"description\": \"Tracking emerging sectors, innovative seed-stage deals, and strategic narratives behind successful early raises.\"\n    },\n    {\n      \"name\": \"Late-Stage & Exits (M&A/IPOs)\",\n      \"description\": \"Monitoring mega-rounds, strategic corporate acquisitions, IPO windows, and liquidity events.\"\n    },\n    {\n      \"name\": \"Deal Structuring & Founder Strategies\",\n      \"description\": \"Deconstructing term sheets, governance shifts, down-round strategies, and founder negotiation tactics in the current market.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"techcrunch.com\",\n    \"pitchbook.com\",\n    \"crunchbase.com\",\n    \"strictlyvc.com\",\n    \"theprime.vc\",\n    \"venturebeat.com\"\n  ],\n  \"display_summary\": \"Currently tracking: VC Macro Trends, Early-Stage Deals, Late-Stage Exits, and Deal Structuring Strategies\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The venture capital and startup ecosystem is continuously evolving with new deals, shifting macroeconomic factors, and regulatory changes, making it an ongoing tracking effort rather than a finite curriculum.",
+        "themes": [
+          {
+            "name": "VC Macro Trends & Fundraises",
+            "description": "Analysis of venture capital fund-raising, dry powder levels, shifting valuation multiples, and broader ecosystem health."
+          },
+          {
+            "name": "Early-Stage Activity (Seed & Series A)",
+            "description": "Tracking emerging sectors, innovative seed-stage deals, and strategic narratives behind successful early raises."
+          },
+          {
+            "name": "Late-Stage & Exits (M&A/IPOs)",
+            "description": "Monitoring mega-rounds, strategic corporate acquisitions, IPO windows, and liquidity events."
+          },
+          {
+            "name": "Deal Structuring & Founder Strategies",
+            "description": "Deconstructing term sheets, governance shifts, down-round strategies, and founder negotiation tactics in the current market."
+          }
+        ],
+        "trusted_sources": [
+          "techcrunch.com",
+          "pitchbook.com",
+          "crunchbase.com",
+          "strictlyvc.com",
+          "theprime.vc",
+          "venturebeat.com"
+        ],
+        "display_summary": "Currently tracking: VC Macro Trends, Early-Stage Deals, Late-Stage Exits, and Deal Structuring Strategies"
+      },
+      "latency_ms": 10530,
+      "timestamp": "2026-06-26T15:53:55.419994+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers most checklist items including funding rounds, M&A/exits, and specific verticals through its themes.",
+          "hit": [
+            "funding rounds / VC activity",
+            "M&A / exits",
+            "specific verticals"
+          ],
+          "missed": [
+            "founder stories",
+            "macro conditions"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct, covering VC macro trends, early-stage activity, late-stage exits, and deal structuring strategies, jointly covering the domain.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "Trusted sources include domain-specific outlets like techcrunch.com, pitchbook.com, and crunchbase.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally, providing a clear overview of the tracked topics."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case3__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"Venture capital and startup markets are dynamic, cyclical, and driven by real-time macroeconomic shifts, meaning there is no final state of knowledge to achieve.\",\n  \"themes\": [\n    {\n      \"name\": \"Market Sentiment & Macro\",\n      \"description\": \"Analyzing interest rate impacts, dry powder availability, and valuation trends.\"\n    },\n    {\n      \"name\": \"The Founder's Playbook\",\n      \"description\": \"Strategies for pitching, cap table management, and navigating dilution.\"\n    },\n    {\n      \"name\": \"M&A and Liquidity Events\",\n      \"description\": \"Tracking exits, secondary markets, and the current landscape for IPOs.\"\n    },\n    {\n      \"name\": \"Investor Thesis Shifts\",\n      \"description\": \"Understanding what VCs are prioritizing in their current investment mandates.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"techcrunch.com\",\n    \"pitchbook.com\",\n    \"axios.com/pro/deals\",\n    \"theinformation.com\",\n    \"crunchbase.com/news\"\n  ],\n  \"display_summary\": \"Currently tracking: Macro market shifts, founder fundraising strategies, exit environments, and evolving VC investment theses.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "Venture capital and startup markets are dynamic, cyclical, and driven by real-time macroeconomic shifts, meaning there is no final state of knowledge to achieve.",
+        "themes": [
+          {
+            "name": "Market Sentiment & Macro",
+            "description": "Analyzing interest rate impacts, dry powder availability, and valuation trends."
+          },
+          {
+            "name": "The Founder's Playbook",
+            "description": "Strategies for pitching, cap table management, and navigating dilution."
+          },
+          {
+            "name": "M&A and Liquidity Events",
+            "description": "Tracking exits, secondary markets, and the current landscape for IPOs."
+          },
+          {
+            "name": "Investor Thesis Shifts",
+            "description": "Understanding what VCs are prioritizing in their current investment mandates."
+          }
+        ],
+        "trusted_sources": [
+          "techcrunch.com",
+          "pitchbook.com",
+          "axios.com/pro/deals",
+          "theinformation.com",
+          "crunchbase.com/news"
+        ],
+        "display_summary": "Currently tracking: Macro market shifts, founder fundraising strategies, exit environments, and evolving VC investment theses."
+      },
+      "latency_ms": 2422,
+      "timestamp": "2026-06-26T15:53:47.314500+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers most checklist items, including funding rounds/VC activity, M&A/exits, and macro conditions, but misses specific verticals and founder stories.",
+          "hit": [
+            "funding rounds / VC activity",
+            "M&A / exits",
+            "macro conditions"
+          ],
+          "missed": [
+            "founder stories",
+            "specific verticals"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "The themes are distinct and jointly cover the domain, including market sentiment, founder strategies, M&A and liquidity events, and investor thesis shifts.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "The trusted sources match the expected domain-specific outlets, including techcrunch.com, pitchbook.com, crunchbase.com, and theinformation.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case4__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The pharmaceutical industry is dynamic, with continuous advancements in drug development, regulatory changes, and evolving market dynamics, meaning there's no fixed endpoint to being 'updated'.\",\n  \"themes\": [\n    {\n      \"name\": \"Drug Approvals & Pipeline\",\n      \"description\": \"Updates on new drug approvals (FDA, EMA), significant clinical trial results, and progress in the drug development pipeline.\"\n    },\n    {\n      \"name\": \"Pharma M&A and Deals\",\n      \"description\": \"Coverage of major mergers, acquisitions, partnerships, and investment rounds within the pharmaceutical and biotech sectors.\"\n    },\n    {\n      \"name\": \"Regulatory & Policy Shifts\",\n      \"description\": \"News on changes in drug pricing, patent law, healthcare policy, and other regulatory actions affecting the industry.\"\n    },\n    {\n      \"name\": \"Biotech Innovations & Trends\",\n      \"description\": \"Emerging scientific breakthroughs, new therapeutic modalities, and significant trends in biotechnology.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"fda.gov\",\n    \"reuters.com\",\n    \"fiercepharma.com\",\n    \"endpointsnews.com\",\n    \"clinicaltrials.gov\"\n  ],\n  \"display_summary\": \"Currently tracking: Drug Approvals & Pipeline, Pharma M&A and Deals, Regulatory & Policy Shifts, Biotech Innovations & Trends\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The pharmaceutical industry is dynamic, with continuous advancements in drug development, regulatory changes, and evolving market dynamics, meaning there's no fixed endpoint to being 'updated'.",
+        "themes": [
+          {
+            "name": "Drug Approvals & Pipeline",
+            "description": "Updates on new drug approvals (FDA, EMA), significant clinical trial results, and progress in the drug development pipeline."
+          },
+          {
+            "name": "Pharma M&A and Deals",
+            "description": "Coverage of major mergers, acquisitions, partnerships, and investment rounds within the pharmaceutical and biotech sectors."
+          },
+          {
+            "name": "Regulatory & Policy Shifts",
+            "description": "News on changes in drug pricing, patent law, healthcare policy, and other regulatory actions affecting the industry."
+          },
+          {
+            "name": "Biotech Innovations & Trends",
+            "description": "Emerging scientific breakthroughs, new therapeutic modalities, and significant trends in biotechnology."
+          }
+        ],
+        "trusted_sources": [
+          "fda.gov",
+          "reuters.com",
+          "fiercepharma.com",
+          "endpointsnews.com",
+          "clinicaltrials.gov"
+        ],
+        "display_summary": "Currently tracking: Drug Approvals & Pipeline, Pharma M&A and Deals, Regulatory & Policy Shifts, Biotech Innovations & Trends"
+      },
+      "latency_ms": 6437,
+      "timestamp": "2026-06-26T15:54:03.872994+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all checklist items including FDA approvals, clinical trial results, M&A deals, pricing and policy, and R&D breakthroughs.",
+          "hit": [
+            "FDA / regulatory approvals",
+            "clinical trial results",
+            "M&A / licensing deals",
+            "pricing & policy",
+            "R&D breakthroughs"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "The themes are distinct and jointly cover the pharmaceutical industry domain, including drug approvals, M&A deals, regulatory shifts, and biotech innovations.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "The trusted sources include domain-specific outlets such as fda.gov, fiercepharma.com, and endpointsnews.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display summary reads naturally and is engaging, providing a clear overview of the current tracking themes."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case4__gemini-3.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The pharmaceutical landscape is continuously changing with ongoing drug approvals, clinical trials, and corporate deals, meaning it has no fixed endpoint and requires continuous monitoring.\",\n  \"themes\": [\n    {\n      \"name\": \"Regulatory & FDA Approvals\",\n      \"description\": \"Tracking FDA, EMA, and global agency approvals, Complete Response Letters (CRLs), advisory committee votes, and expanded indications.\"\n    },\n    {\n      \"name\": \"Clinical Trial Readouts\",\n      \"description\": \"Analyzing newly released Phase I/II/III data, pipeline advancements, primary endpoint achievements, and patient safety readouts.\"\n    },\n    {\n      \"name\": \"Pharma M&A & Deals\",\n      \"description\": \"Monitoring acquisitions, licensing deals, venture capital inflows, and strategic alliances shaping the biotech and pharma landscape.\"\n    },\n    {\n      \"name\": \"Pricing, Policy & Market Access\",\n      \"description\": \"Following drug pricing legislation, patent cliffs, generic/biosimilar competition, and healthcare reimbursement policy updates.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"fda.gov\",\n    \"fiercepharma.com\",\n    \"endpointsnews.com\",\n    \"biopharmadive.com\",\n    \"statnews.com\",\n    \"reuters.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Regulatory Decisions, Clinical Trials, M&A activity, and Biotech Policy & Pricing.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The pharmaceutical landscape is continuously changing with ongoing drug approvals, clinical trials, and corporate deals, meaning it has no fixed endpoint and requires continuous monitoring.",
+        "themes": [
+          {
+            "name": "Regulatory & FDA Approvals",
+            "description": "Tracking FDA, EMA, and global agency approvals, Complete Response Letters (CRLs), advisory committee votes, and expanded indications."
+          },
+          {
+            "name": "Clinical Trial Readouts",
+            "description": "Analyzing newly released Phase I/II/III data, pipeline advancements, primary endpoint achievements, and patient safety readouts."
+          },
+          {
+            "name": "Pharma M&A & Deals",
+            "description": "Monitoring acquisitions, licensing deals, venture capital inflows, and strategic alliances shaping the biotech and pharma landscape."
+          },
+          {
+            "name": "Pricing, Policy & Market Access",
+            "description": "Following drug pricing legislation, patent cliffs, generic/biosimilar competition, and healthcare reimbursement policy updates."
+          }
+        ],
+        "trusted_sources": [
+          "fda.gov",
+          "fiercepharma.com",
+          "endpointsnews.com",
+          "biopharmadive.com",
+          "statnews.com",
+          "reuters.com"
+        ],
+        "display_summary": "Currently tracking: Regulatory Decisions, Clinical Trials, M&A activity, and Biotech Policy & Pricing."
+      },
+      "latency_ms": 9281,
+      "timestamp": "2026-06-26T15:54:06.722809+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers most checklist items but misses 'R&D breakthroughs'.",
+          "hit": [
+            "FDA / regulatory approvals",
+            "clinical trial results",
+            "M&A / licensing deals",
+            "pricing & policy"
+          ],
+          "missed": [
+            "R&D breakthroughs"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the pharmaceutical industry domain.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "Trusted sources include domain-specific outlets like fda.gov, fiercepharma.com, and statnews.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display summary is natural and engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case4__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The pharmaceutical industry is in a state of constant flux driven by R&D breakthroughs, shifting regulatory landscapes, and market consolidation, making it a continuous monitoring task rather than a finite curriculum.\",\n  \"themes\": [\n    {\n      \"name\": \"FDA & Regulatory Hurdles\",\n      \"description\": \"Monitoring new drug approvals, fast-track designations, and rejected applications.\"\n    },\n    {\n      \"name\": \"Clinical Pipeline Updates\",\n      \"description\": \"Analyzing phase-gate outcomes and data readouts for late-stage clinical trials.\"\n    },\n    {\n      \"name\": \"Market Dynamics & M&A\",\n      \"description\": \"Tracking strategic acquisitions, partnerships, and high-level corporate pharmaceutical shifts.\"\n    },\n    {\n      \"name\": \"Policy & Pricing\",\n      \"description\": \"Keeping current on legislative changes, drug pricing negotiations, and healthcare access laws.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"fiercepharma.com\",\n    \"statnews.com\",\n    \"fda.gov\",\n    \"biopharmadive.com\",\n    \"evaluate.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Regulatory approvals, clinical trial readouts, industry consolidation, and pricing policy updates.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The pharmaceutical industry is in a state of constant flux driven by R&D breakthroughs, shifting regulatory landscapes, and market consolidation, making it a continuous monitoring task rather than a finite curriculum.",
+        "themes": [
+          {
+            "name": "FDA & Regulatory Hurdles",
+            "description": "Monitoring new drug approvals, fast-track designations, and rejected applications."
+          },
+          {
+            "name": "Clinical Pipeline Updates",
+            "description": "Analyzing phase-gate outcomes and data readouts for late-stage clinical trials."
+          },
+          {
+            "name": "Market Dynamics & M&A",
+            "description": "Tracking strategic acquisitions, partnerships, and high-level corporate pharmaceutical shifts."
+          },
+          {
+            "name": "Policy & Pricing",
+            "description": "Keeping current on legislative changes, drug pricing negotiations, and healthcare access laws."
+          }
+        ],
+        "trusted_sources": [
+          "fiercepharma.com",
+          "statnews.com",
+          "fda.gov",
+          "biopharmadive.com",
+          "evaluate.com"
+        ],
+        "display_summary": "Currently tracking: Regulatory approvals, clinical trial readouts, industry consolidation, and pricing policy updates."
+      },
+      "latency_ms": 2375,
+      "timestamp": "2026-06-26T15:53:59.809151+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers most checklist items but misses 'R&D breakthroughs'.",
+          "hit": [
+            "FDA / regulatory approvals",
+            "clinical trial results",
+            "M&A / licensing deals",
+            "pricing & policy"
+          ],
+          "missed": [
+            "R&D breakthroughs"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the pharmaceutical industry domain.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "Trusted sources include domain-specific outlets like fiercepharma.com, statnews.com, and fda.gov.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case5__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The 'Latest AI Trends' is a continuously evolving subject with no fixed endpoint, requiring ongoing monitoring to stay current.\",\n  \"themes\": [\n    {\n      \"name\": \"Model Advancements\",\n      \"description\": \"New AI model releases, significant capability jumps, and benchmark achievements.\"\n    },\n    {\n      \"name\": \"Industry & Investment\",\n      \"description\": \"Funding rounds, M&A activity, major partnerships, and market shifts in the AI industry.\"\n    },\n    {\n      \"name\": \"Policy & Ethics\",\n      \"description\": \"Developments in AI regulation, governance frameworks, and ethical discussions.\"\n    },\n    {\n      \"name\": \"Applications & Products\",\n      \"description\": \"Emerging AI-powered products, enterprise adoption, and novel use cases across sectors.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"techcrunch.com\",\n    \"reuters.com\",\n    \"arxiv.org\",\n    \"theverge.com\",\n    \"bloomberg.com\",\n    \"openai.com\",\n    \"deepmind.google\"\n  ],\n  \"display_summary\": \"Currently tracking: Model Advancements, Industry & Investment, Policy & Ethics, and Applications & Products.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The 'Latest AI Trends' is a continuously evolving subject with no fixed endpoint, requiring ongoing monitoring to stay current.",
+        "themes": [
+          {
+            "name": "Model Advancements",
+            "description": "New AI model releases, significant capability jumps, and benchmark achievements."
+          },
+          {
+            "name": "Industry & Investment",
+            "description": "Funding rounds, M&A activity, major partnerships, and market shifts in the AI industry."
+          },
+          {
+            "name": "Policy & Ethics",
+            "description": "Developments in AI regulation, governance frameworks, and ethical discussions."
+          },
+          {
+            "name": "Applications & Products",
+            "description": "Emerging AI-powered products, enterprise adoption, and novel use cases across sectors."
+          }
+        ],
+        "trusted_sources": [
+          "techcrunch.com",
+          "reuters.com",
+          "arxiv.org",
+          "theverge.com",
+          "bloomberg.com",
+          "openai.com",
+          "deepmind.google"
+        ],
+        "display_summary": "Currently tracking: Model Advancements, Industry & Investment, Policy & Ethics, and Applications & Products."
+      },
+      "latency_ms": 8983,
+      "timestamp": "2026-06-26T15:54:17.717509+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all checklist items including model releases/research, industry/funding, regulation, and enterprise adoption.",
+          "hit": [
+            "model releases / research",
+            "industry / funding",
+            "regulation",
+            "enterprise adoption"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain of latest AI trends.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "Trusted sources include domain-specific outlets like arxiv.org and techcrunch.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case5__gemini-3.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The AI industry is evolving at an unprecedented pace with continuous model releases, shifting regulatory landscapes, and emerging business models, making it a field requiring ongoing tracking rather than a static curriculum.\",\n  \"themes\": [\n    {\n      \"name\": \"Foundation Models & Capabilities\",\n      \"description\": \"New LLM releases, multimodal breakthroughs, and benchmark performances.\"\n    },\n    {\n      \"name\": \"Enterprise Adoption & Business Strategy\",\n      \"description\": \"How corporations are integrating AI, measuring ROI, and restructuring workflows.\"\n    },\n    {\n      \"name\": \"AI Infrastructure & Hardware\",\n      \"description\": \"GPU constraints, custom silicon developments, and data center energy demands.\"\n    },\n    {\n      \"name\": \"Regulatory & Policy Landscape\",\n      \"description\": \"Evolving legislation like the EU AI Act, copyright lawsuits, and safety standards.\"\n    },\n    {\n      \"name\": \"M&A, Funding & Partnerships\",\n      \"description\": \"Venture capital trends, big tech acquisitions, and strategic ecosystem alliances.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"venturebeat.com\",\n    \"techcrunch.com\",\n    \"bloomberg.com\",\n    \"mckinsey.com\",\n    \"stratechery.com\",\n    \"reuters.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Foundation Models, Enterprise ROI, Infrastructure Bottlenecks, AI Policy, and Ecosystem Funding.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The AI industry is evolving at an unprecedented pace with continuous model releases, shifting regulatory landscapes, and emerging business models, making it a field requiring ongoing tracking rather than a static curriculum.",
+        "themes": [
+          {
+            "name": "Foundation Models & Capabilities",
+            "description": "New LLM releases, multimodal breakthroughs, and benchmark performances."
+          },
+          {
+            "name": "Enterprise Adoption & Business Strategy",
+            "description": "How corporations are integrating AI, measuring ROI, and restructuring workflows."
+          },
+          {
+            "name": "AI Infrastructure & Hardware",
+            "description": "GPU constraints, custom silicon developments, and data center energy demands."
+          },
+          {
+            "name": "Regulatory & Policy Landscape",
+            "description": "Evolving legislation like the EU AI Act, copyright lawsuits, and safety standards."
+          },
+          {
+            "name": "M&A, Funding & Partnerships",
+            "description": "Venture capital trends, big tech acquisitions, and strategic ecosystem alliances."
+          }
+        ],
+        "trusted_sources": [
+          "venturebeat.com",
+          "techcrunch.com",
+          "bloomberg.com",
+          "mckinsey.com",
+          "stratechery.com",
+          "reuters.com"
+        ],
+        "display_summary": "Currently tracking: Foundation Models, Enterprise ROI, Infrastructure Bottlenecks, AI Policy, and Ecosystem Funding."
+      },
+      "latency_ms": 6593,
+      "timestamp": "2026-06-26T15:54:15.321611+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all checklist items including model releases, industry and funding, regulation, and enterprise adoption.",
+          "hit": [
+            "model releases / research",
+            "industry / funding",
+            "regulation",
+            "enterprise adoption"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain, including foundation models, enterprise adoption, AI infrastructure, regulatory landscape, and funding.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 2,
+          "evidence": "Trusted sources include relevant outlets like venturebeat.com and techcrunch.com, but also more generic sources like bloomberg.com and reuters.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case5__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"The rapid evolution of AI models, market dynamics, and shifting global regulations ensures that there is no final state of 'knowing,' only a continuous process of staying updated.\",\n  \"themes\": [\n    {\n      \"name\": \"Model Benchmarks & Capability Shifts\",\n      \"description\": \"Analyzing technical whitepapers and release notes to understand the shifting ceiling of foundation model performance.\"\n    },\n    {\n      \"name\": \"Corporate AI Strategy & Ecosystems\",\n      \"description\": \"Tracking how major tech firms are integrating AI into business models, M&A activity, and strategic partnerships.\"\n    },\n    {\n      \"name\": \"Global AI Governance & Policy\",\n      \"description\": \"Monitoring legislative updates, safety standards, and regional regulatory frameworks impacting implementation.\"\n    },\n    {\n      \"name\": \"Emerging AI Business Use-Cases\",\n      \"description\": \"Identifying shifts from 'AI hype' to functional enterprise deployment patterns and ROI metrics.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"arxiv.org\",\n    \"theverge.com\",\n    \"bloomberg.com\",\n    \"deepmind.google/discover\",\n    \"openai.com/news\"\n  ],\n  \"display_summary\": \"Currently tracking: Model Capabilities, Corporate Strategy, Global Policy, and Real-World Use-Cases.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "The rapid evolution of AI models, market dynamics, and shifting global regulations ensures that there is no final state of 'knowing,' only a continuous process of staying updated.",
+        "themes": [
+          {
+            "name": "Model Benchmarks & Capability Shifts",
+            "description": "Analyzing technical whitepapers and release notes to understand the shifting ceiling of foundation model performance."
+          },
+          {
+            "name": "Corporate AI Strategy & Ecosystems",
+            "description": "Tracking how major tech firms are integrating AI into business models, M&A activity, and strategic partnerships."
+          },
+          {
+            "name": "Global AI Governance & Policy",
+            "description": "Monitoring legislative updates, safety standards, and regional regulatory frameworks impacting implementation."
+          },
+          {
+            "name": "Emerging AI Business Use-Cases",
+            "description": "Identifying shifts from 'AI hype' to functional enterprise deployment patterns and ROI metrics."
+          }
+        ],
+        "trusted_sources": [
+          "arxiv.org",
+          "theverge.com",
+          "bloomberg.com",
+          "deepmind.google/discover",
+          "openai.com/news"
+        ],
+        "display_summary": "Currently tracking: Model Capabilities, Corporate Strategy, Global Policy, and Real-World Use-Cases."
+      },
+      "latency_ms": 4156,
+      "timestamp": "2026-06-26T15:54:12.888813+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all checklist items including model releases/research, industry/funding, regulation, and enterprise adoption.",
+          "hit": [
+            "model releases / research",
+            "industry / funding",
+            "regulation",
+            "enterprise adoption"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain of latest AI trends.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 2,
+          "evidence": "Trusted sources include arxiv.org, a domain-specific outlet, but also more general news sites like theverge.com and bloomberg.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case6__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"World news and current events are continuously unfolding, making 'staying current' an ongoing process rather than a fixed curriculum with an endpoint.\",\n  \"themes\": [\n    {\n      \"name\": \"Geopolitics & Diplomacy\",\n      \"description\": \"Major international conflicts, alliances, diplomatic efforts, and power shifts\"\n    },\n    {\n      \"name\": \"Global Economy & Markets\",\n      \"description\": \"Inflation, interest rates, trade agreements, energy markets, and financial stability\"\n    },\n    {\n      \"name\": \"Major Domestic Politics\",\n      \"description\": \"Elections, significant policy changes, and political stability in influential nations\"\n    },\n    {\n      \"name\": \"Humanitarian & Social Issues\",\n      \"description\": \"Major crises, human rights developments, global health concerns, and social movements\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"reuters.com\",\n    \"apnews.com\",\n    \"bbc.com\",\n    \"nytimes.com\",\n    \"ft.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Geopolitics & Diplomacy, Global Economy & Markets, Major Domestic Politics, Humanitarian & Social Issues\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "World news and current events are continuously unfolding, making 'staying current' an ongoing process rather than a fixed curriculum with an endpoint.",
+        "themes": [
+          {
+            "name": "Geopolitics & Diplomacy",
+            "description": "Major international conflicts, alliances, diplomatic efforts, and power shifts"
+          },
+          {
+            "name": "Global Economy & Markets",
+            "description": "Inflation, interest rates, trade agreements, energy markets, and financial stability"
+          },
+          {
+            "name": "Major Domestic Politics",
+            "description": "Elections, significant policy changes, and political stability in influential nations"
+          },
+          {
+            "name": "Humanitarian & Social Issues",
+            "description": "Major crises, human rights developments, global health concerns, and social movements"
+          }
+        ],
+        "trusted_sources": [
+          "reuters.com",
+          "apnews.com",
+          "bbc.com",
+          "nytimes.com",
+          "ft.com"
+        ],
+        "display_summary": "Currently tracking: Geopolitics & Diplomacy, Global Economy & Markets, Major Domestic Politics, Humanitarian & Social Issues"
+      },
+      "latency_ms": 8860,
+      "timestamp": "2026-06-26T15:54:28.581670+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers geopolitics, economy/markets, and domestic politics/policy, with humanitarian and social issues addressing a major ongoing global issue.",
+          "hit": [
+            "geopolitics",
+            "economy / markets",
+            "domestic politics / policy",
+            "one major ongoing global issue"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain of world news and current events.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 3,
+          "evidence": "Trusted sources include domain-specific outlets like reuters.com, apnews.com, and bbc.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case6__gemini-3.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"World news and international affairs are constantly evolving; staying informed requires a structured, rotating analysis of critical global domains rather than a finite syllabus.\",\n  \"themes\": [\n    {\n      \"name\": \"Geopolitics & Security\",\n      \"description\": \"Tracking active conflicts, diplomatic negotiations, and shifts in international alliances.\"\n    },\n    {\n      \"name\": \"Global Economy & Trade\",\n      \"description\": \"Monitoring trade disputes, central bank policies, supply chain changes, and global economic indicators.\"\n    },\n    {\n      \"name\": \"Climate & Resource Governance\",\n      \"description\": \"Examining environmental policies, energy transitions, and resource scarcity challenges worldwide.\"\n    },\n    {\n      \"name\": \"Democratic Health & Elections\",\n      \"description\": \"Following significant domestic elections, policy changes, and political movements in key sovereign nations.\"\n    },\n    {\n      \"name\": \"Transnational Technology & Society\",\n      \"description\": \"Investigating global tech regulation, public health trends, and transnational human rights developments.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"reuters.com\",\n    \"apnews.com\",\n    \"economist.com\",\n    \"bloomberg.com\",\n    \"foreignaffairs.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Geopolitics & Security, Global Economy & Trade, Climate Governance, Democratic Health, and Transnational Tech.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "World news and international affairs are constantly evolving; staying informed requires a structured, rotating analysis of critical global domains rather than a finite syllabus.",
+        "themes": [
+          {
+            "name": "Geopolitics & Security",
+            "description": "Tracking active conflicts, diplomatic negotiations, and shifts in international alliances."
+          },
+          {
+            "name": "Global Economy & Trade",
+            "description": "Monitoring trade disputes, central bank policies, supply chain changes, and global economic indicators."
+          },
+          {
+            "name": "Climate & Resource Governance",
+            "description": "Examining environmental policies, energy transitions, and resource scarcity challenges worldwide."
+          },
+          {
+            "name": "Democratic Health & Elections",
+            "description": "Following significant domestic elections, policy changes, and political movements in key sovereign nations."
+          },
+          {
+            "name": "Transnational Technology & Society",
+            "description": "Investigating global tech regulation, public health trends, and transnational human rights developments."
+          }
+        ],
+        "trusted_sources": [
+          "reuters.com",
+          "apnews.com",
+          "economist.com",
+          "bloomberg.com",
+          "foreignaffairs.com"
+        ],
+        "display_summary": "Currently tracking: Geopolitics & Security, Global Economy & Trade, Climate Governance, Democratic Health, and Transnational Tech."
+      },
+      "latency_ms": 80688,
+      "timestamp": "2026-06-26T19:15:07.690942+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers geopolitics, economy/markets, and one major ongoing global issue (climate governance), but misses domestic politics/policy as a distinct theme, despite 'Democratic Health & Elections' partially addressing it.",
+          "hit": [
+            "geopolitics",
+            "economy / markets",
+            "one major ongoing global issue"
+          ],
+          "missed": [
+            "domestic politics / policy"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain of world news and current events, with minimal overlap.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 2,
+          "evidence": "Trusted sources include domain-specific outlets like reuters.com and apnews.com, but also more specialized sources like economist.com and foreignaffairs.com, with no direct match to bbc.com.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging, providing a clear overview of the current focus areas."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case6__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"rotating_theme\",\n  \"day_count\": 14,\n  \"reasoning\": \"World news is a perpetual flow of unfolding events with no static end point, requiring constant synthesis of evolving geopolitical and economic dynamics.\",\n  \"themes\": [\n    {\n      \"name\": \"Geopolitical Flashpoints\",\n      \"description\": \"Monitoring active conflicts, territorial disputes, and shifting diplomatic alliances.\"\n    },\n    {\n      \"name\": \"Global Economic Indicators\",\n      \"description\": \"Tracking inflation trends, central bank policies, and major trade agreements.\"\n    },\n    {\n      \"name\": \"International Governance\",\n      \"description\": \"Following actions by the UN, EU, and other multi-lateral bodies impacting global law.\"\n    },\n    {\n      \"name\": \"Emerging Tech & Infrastructure\",\n      \"description\": \"Developments in energy transitions, digital infrastructure, and cross-border policy.\"\n    }\n  ],\n  \"trusted_sources\": [\n    \"reuters.com\",\n    \"apnews.com\",\n    \"economist.com\",\n    \"foreignpolicy.com\",\n    \"aljazeera.com\"\n  ],\n  \"display_summary\": \"Currently tracking: Geopolitical Flashpoints, Global Economic Indicators, International Governance, and Emerging Tech & Infrastructure.\"\n}",
+      "parsed_output": {
+        "shape": "rotating_theme",
+        "day_count": 14,
+        "reasoning": "World news is a perpetual flow of unfolding events with no static end point, requiring constant synthesis of evolving geopolitical and economic dynamics.",
+        "themes": [
+          {
+            "name": "Geopolitical Flashpoints",
+            "description": "Monitoring active conflicts, territorial disputes, and shifting diplomatic alliances."
+          },
+          {
+            "name": "Global Economic Indicators",
+            "description": "Tracking inflation trends, central bank policies, and major trade agreements."
+          },
+          {
+            "name": "International Governance",
+            "description": "Following actions by the UN, EU, and other multi-lateral bodies impacting global law."
+          },
+          {
+            "name": "Emerging Tech & Infrastructure",
+            "description": "Developments in energy transitions, digital infrastructure, and cross-border policy."
+          }
+        ],
+        "trusted_sources": [
+          "reuters.com",
+          "apnews.com",
+          "economist.com",
+          "foreignpolicy.com",
+          "aljazeera.com"
+        ],
+        "display_summary": "Currently tracking: Geopolitical Flashpoints, Global Economic Indicators, International Governance, and Emerging Tech & Infrastructure."
+      },
+      "latency_ms": 4921,
+      "timestamp": "2026-06-26T15:54:24.655227+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='rotating_theme', expected='rotating_theme'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme — no day entries, frame_hint N/A"
+        },
+        "coverage_completeness": {
+          "score": 2,
+          "evidence": "The plan covers geopolitics and economy/markets, but misses domestic politics/policy and only touches on one major ongoing global issue indirectly through other themes.",
+          "hit": [
+            "geopolitics",
+            "economy / markets"
+          ],
+          "missed": [
+            "domestic politics / policy",
+            "one major ongoing global issue"
+          ]
+        },
+        "sequencing_soundness": {
+          "score": null,
+          "na": true,
+          "evidence": "rotating_theme"
+        },
+        "theme_distinctiveness": {
+          "score": 3,
+          "evidence": "Themes are distinct and jointly cover the domain of world news and current events.",
+          "na": false
+        },
+        "source_quality": {
+          "score": 2,
+          "evidence": "Mostly relevant sources, but lacks bbc.com and includes foreignpolicy.com and aljazeera.com which are not in the expected list.",
+          "na": false
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "The display_summary field reads naturally and is engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case7__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Learning chess from beginner to strong intermediate involves mastering a defined set of rules, strategies, and tactical patterns, making it a learnable and reachable subject with a clear endpoint.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Chessboard setup and individual piece movements (pawn, knight, bishop, rook, queen, king)\",\n      \"display_title\": \"Understanding the Board & How Each Piece Moves\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"The absolute first step to playing chess is knowing how the pieces are set up and how they legally move.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Special chess moves: castling, en passant, pawn promotion; and the ultimate objective of the game (checkmate)\",\n      \"display_title\": \"Special Moves & The Goal: Achieving Checkmate\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduces crucial special rules and defines the game's objective, building upon basic movement knowledge.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Distinguishing between check, checkmate, and stalemate; identifying legal responses to check\",\n      \"display_title\": \"Check, Checkmate, and Stalemate: Knowing the Game's Endings\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Essential for understanding game termination conditions and avoiding illegal moves or missed wins/draws.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Relative value of chess pieces; simple exchanges and trading material effectively\",\n      \"display_title\": \"The Value of Your Pieces: Making Smart Trades\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Teaches fundamental decision-making regarding material, which is critical for evaluating positions and moves.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Introduction to basic tactical motifs: forks and pins, and how to identify them in simple positions\",\n      \"display_title\": \"First Tactics: Uncovering Forks and Pins\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Introduces the learner to their first practical attacking patterns, crucial for converting advantages.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Core opening principles: controlling the center, developing pieces, king safety (castling early)\",\n      \"display_title\": \"Blueprint for Success: Core Opening Principles\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Establishes a foundational understanding of how to begin a game effectively, preparing for the middlegame.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Exploring common basic opening sequences: Italian Game, Ruy Lopez (first few moves) and their underlying ideas\",\n      \"display_title\": \"Your First Openings: Italian Game & Ruy Lopez\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Provides concrete examples of applying opening principles, giving the learner a starting repertoire.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Basic endgame concepts: King and Rook vs. King checkmate patterns, the 'box' method\",\n      \"display_title\": \"Winning Simple Endgames: King and Rook vs. King\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Introduces the first concrete endgame technique, essential for converting material advantages into a win.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Introduction to positional play: understanding central control, space, and pawn structure basics\",\n      \"display_title\": \"Beyond Tactics: Understanding Positional Play\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Broadens the learner's perspective beyond just tactics, introducing the strategic elements of chess.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Reviewing one's own games: identifying mistakes, missed opportunities (tactical and strategic), and learning from them\",\n      \"display_title\": \"Learning From Your Games: The Post-Mortem\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Encourages self-improvement through critical analysis, a vital skill for progressing past the beginner stage.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Learning chess from beginner to strong intermediate involves mastering a defined set of rules, strategies, and tactical patterns, making it a learnable and reachable subject with a clear endpoint.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Chessboard setup and individual piece movements (pawn, knight, bishop, rook, queen, king)",
+            "display_title": "Understanding the Board & How Each Piece Moves",
+            "frame_hint": "timeline",
+            "rationale": "The absolute first step to playing chess is knowing how the pieces are set up and how they legally move."
+          },
+          {
+            "day_number": 2,
+            "focus": "Special chess moves: castling, en passant, pawn promotion; and the ultimate objective of the game (checkmate)",
+            "display_title": "Special Moves & The Goal: Achieving Checkmate",
+            "frame_hint": "timeline",
+            "rationale": "Introduces crucial special rules and defines the game's objective, building upon basic movement knowledge."
+          },
+          {
+            "day_number": 3,
+            "focus": "Distinguishing between check, checkmate, and stalemate; identifying legal responses to check",
+            "display_title": "Check, Checkmate, and Stalemate: Knowing the Game's Endings",
+            "frame_hint": "timeline",
+            "rationale": "Essential for understanding game termination conditions and avoiding illegal moves or missed wins/draws."
+          },
+          {
+            "day_number": 4,
+            "focus": "Relative value of chess pieces; simple exchanges and trading material effectively",
+            "display_title": "The Value of Your Pieces: Making Smart Trades",
+            "frame_hint": "comparison",
+            "rationale": "Teaches fundamental decision-making regarding material, which is critical for evaluating positions and moves."
+          },
+          {
+            "day_number": 5,
+            "focus": "Introduction to basic tactical motifs: forks and pins, and how to identify them in simple positions",
+            "display_title": "First Tactics: Uncovering Forks and Pins",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Introduces the learner to their first practical attacking patterns, crucial for converting advantages."
+          },
+          {
+            "day_number": 6,
+            "focus": "Core opening principles: controlling the center, developing pieces, king safety (castling early)",
+            "display_title": "Blueprint for Success: Core Opening Principles",
+            "frame_hint": "timeline",
+            "rationale": "Establishes a foundational understanding of how to begin a game effectively, preparing for the middlegame."
+          },
+          {
+            "day_number": 7,
+            "focus": "Exploring common basic opening sequences: Italian Game, Ruy Lopez (first few moves) and their underlying ideas",
+            "display_title": "Your First Openings: Italian Game & Ruy Lopez",
+            "frame_hint": "timeline",
+            "rationale": "Provides concrete examples of applying opening principles, giving the learner a starting repertoire."
+          },
+          {
+            "day_number": 8,
+            "focus": "Basic endgame concepts: King and Rook vs. King checkmate patterns, the 'box' method",
+            "display_title": "Winning Simple Endgames: King and Rook vs. King",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Introduces the first concrete endgame technique, essential for converting material advantages into a win."
+          },
+          {
+            "day_number": 9,
+            "focus": "Introduction to positional play: understanding central control, space, and pawn structure basics",
+            "display_title": "Beyond Tactics: Understanding Positional Play",
+            "frame_hint": "timeline",
+            "rationale": "Broadens the learner's perspective beyond just tactics, introducing the strategic elements of chess."
+          },
+          {
+            "day_number": 10,
+            "focus": "Reviewing one's own games: identifying mistakes, missed opportunities (tactical and strategic), and learning from them",
+            "display_title": "Learning From Your Games: The Post-Mortem",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Encourages self-improvement through critical analysis, a vital skill for progressing past the beginner stage."
+          }
+        ]
+      },
+      "latency_ms": 11171,
+      "timestamp": "2026-06-26T15:54:50.680654+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 3,
+          "evidence": "Distinct frame_hint values (3): ['comparison', 'timeline', 'single-discovery-story']"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all checklist items, including piece movement/rules, opening principles, tactics, basic endgames, positional strategy, and reviewing one's own games, reaching a natural endpoint.",
+          "hit": [
+            "piece movement / rules",
+            "opening principles",
+            "tactics (forks / pins / skewers)",
+            "basic endgames",
+            "positional strategy",
+            "reviewing your own games"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": 3,
+          "na": false,
+          "evidence": "Each concept builds logically upon prior ones, with no prerequisite skipped, demonstrating a sound sequence."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "Display titles are natural and engaging, such as 'Understanding the Board & How Each Piece Moves' and 'Beyond Tactics: Understanding Positional Play'."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case7__gemini-3.5-flash": {
+      "status": "pending",
+      "raw_output": null,
+      "parsed_output": null,
+      "latency_ms": 0,
+      "timestamp": "2026-06-26T19:15:38.891498+00:00",
+      "retried": false,
+      "scores": null
+    },
+    "case7__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Chess has a structured foundation of rules, tactics, and endgame principles that allow a beginner to build a measurable, logical progression toward intermediate proficiency.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Board setup and piece movement\",\n      \"display_title\": \"The Arena and its Actors\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Before playing, the learner must master how each piece moves and the board coordinate system.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Check, checkmate, and stalemate\",\n      \"display_title\": \"Understanding the Win Condition\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Understanding the difference between a win and a draw is essential for every decision made on the board.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Basic opening principles: central control and development\",\n      \"display_title\": \"Building a Solid Foundation\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Beginners often move pieces aimlessly; learning to prioritize the center sets up a stronger game.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Simple tactical motifs: forks and pins\",\n      \"display_title\": \"The Art of the Double Attack\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Tactics win games at the beginner level; recognizing forks and pins is the first step toward board vision.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"King and Rook vs King endgame\",\n      \"display_title\": \"The First Checkmate Pattern\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Mastering the basic checkmate ensures the learner can convert a material advantage into a win.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Relative value of pieces and piece trades\",\n      \"display_title\": \"Evaluating the Exchange\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Learning why trading a knight for a bishop can be beneficial helps the learner stop blundering material.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"King safety: castling and pawn structure\",\n      \"display_title\": \"Protecting the Monarch\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"A king in the center is a vulnerability; castling early is a crucial transition from the opening to the middlegame.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Common beginner traps and opening pitfalls\",\n      \"display_title\": \"Avoiding the Early Blunders\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Awareness of Scholar's Mate and other traps prevents the learner from losing prematurely.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Introduction to positional thinking: weak squares\",\n      \"display_title\": \"The Quiet Game\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introducing the idea that pieces have better and worse squares is the start of positional play.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Review of fundamental principles and first full-game analysis\",\n      \"display_title\": \"Connecting the Dots\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Synthesizing the first 9 days into a cohesive understanding of how a full game flows.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Chess has a structured foundation of rules, tactics, and endgame principles that allow a beginner to build a measurable, logical progression toward intermediate proficiency.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Board setup and piece movement",
+            "display_title": "The Arena and its Actors",
+            "frame_hint": "timeline",
+            "rationale": "Before playing, the learner must master how each piece moves and the board coordinate system."
+          },
+          {
+            "day_number": 2,
+            "focus": "Check, checkmate, and stalemate",
+            "display_title": "Understanding the Win Condition",
+            "frame_hint": "timeline",
+            "rationale": "Understanding the difference between a win and a draw is essential for every decision made on the board."
+          },
+          {
+            "day_number": 3,
+            "focus": "Basic opening principles: central control and development",
+            "display_title": "Building a Solid Foundation",
+            "frame_hint": "timeline",
+            "rationale": "Beginners often move pieces aimlessly; learning to prioritize the center sets up a stronger game."
+          },
+          {
+            "day_number": 4,
+            "focus": "Simple tactical motifs: forks and pins",
+            "display_title": "The Art of the Double Attack",
+            "frame_hint": "timeline",
+            "rationale": "Tactics win games at the beginner level; recognizing forks and pins is the first step toward board vision."
+          },
+          {
+            "day_number": 5,
+            "focus": "King and Rook vs King endgame",
+            "display_title": "The First Checkmate Pattern",
+            "frame_hint": "timeline",
+            "rationale": "Mastering the basic checkmate ensures the learner can convert a material advantage into a win."
+          },
+          {
+            "day_number": 6,
+            "focus": "Relative value of pieces and piece trades",
+            "display_title": "Evaluating the Exchange",
+            "frame_hint": "timeline",
+            "rationale": "Learning why trading a knight for a bishop can be beneficial helps the learner stop blundering material."
+          },
+          {
+            "day_number": 7,
+            "focus": "King safety: castling and pawn structure",
+            "display_title": "Protecting the Monarch",
+            "frame_hint": "timeline",
+            "rationale": "A king in the center is a vulnerability; castling early is a crucial transition from the opening to the middlegame."
+          },
+          {
+            "day_number": 8,
+            "focus": "Common beginner traps and opening pitfalls",
+            "display_title": "Avoiding the Early Blunders",
+            "frame_hint": "timeline",
+            "rationale": "Awareness of Scholar's Mate and other traps prevents the learner from losing prematurely."
+          },
+          {
+            "day_number": 9,
+            "focus": "Introduction to positional thinking: weak squares",
+            "display_title": "The Quiet Game",
+            "frame_hint": "timeline",
+            "rationale": "Introducing the idea that pieces have better and worse squares is the start of positional play."
+          },
+          {
+            "day_number": 10,
+            "focus": "Review of fundamental principles and first full-game analysis",
+            "display_title": "Connecting the Dots",
+            "frame_hint": "timeline",
+            "rationale": "Synthesizing the first 9 days into a cohesive understanding of how a full game flows."
+          }
+        ]
+      },
+      "latency_ms": 3953,
+      "timestamp": "2026-06-26T15:54:43.449997+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": 3,
+          "evidence": "output shape='fixed_sequence', expected='fixed_sequence'"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": 1,
+          "evidence": "Distinct frame_hint values (1): ['timeline']"
+        },
+        "coverage_completeness": {
+          "score": 3,
+          "evidence": "The plan covers all essential checklist items, including piece movement, opening principles, tactics, basic endgames, positional strategy, and reviewing games.",
+          "hit": [
+            "piece movement / rules",
+            "opening principles",
+            "tactics (forks / pins / skewers)",
+            "basic endgames",
+            "positional strategy",
+            "reviewing your own games"
+          ],
+          "missed": []
+        },
+        "sequencing_soundness": {
+          "score": 3,
+          "na": false,
+          "evidence": "Each concept builds logically on prior ones, with no noticeable gaps or prerequisite concepts skipped."
+        },
+        "theme_distinctiveness": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "source_quality": {
+          "score": null,
+          "na": true,
+          "evidence": "fixed_sequence"
+        },
+        "user_facing_polish": {
+          "score": 2,
+          "evidence": "Display titles, such as 'The Arena and its Actors' and 'The Quiet Game', are natural and engaging."
+        },
+        "case_8_analysis": null
+      }
+    },
+    "case8__gemini-2.5-flash": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Machine Learning fundamentals represent a well-defined body of knowledge that can be systematically learned and mastered, providing a solid foundation for continuous research engagement.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Define Machine Learning, supervised vs unsupervised vs reinforcement learning, key applications and challenges.\",\n      \"display_title\": \"What is Machine Learning? An Overview\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Establish foundational understanding of ML definitions, categories, and real-world relevance as the starting point for the journey.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Linear Regression model, understanding the cost function (e.g., Mean Squared Error), and the Gradient Descent optimization algorithm.\",\n      \"display_title\": \"Building Your First Model: Linear Regression\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduce a simple, interpretable model to grasp core ML concepts like prediction, loss, and iterative optimization.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Logistic Regression for binary classification, the sigmoid activation function, decision boundaries, and cross-entropy loss.\",\n      \"display_title\": \"From Regression to Classification: Logistic Regression\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Extend the understanding of linear models to solve classification problems, a fundamental and widely used ML task.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Introduction to neural network architecture, from perceptrons to multi-layer perceptrons (MLPs), and common activation functions.\",\n      \"display_title\": \"The Dawn of Neural Networks: From Perceptrons to MLPs\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduce the basic building blocks of deep learning, setting the stage for understanding more complex network structures.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Detailed explanation of the backpropagation algorithm, including the chain rule, forward and backward passes, and weight updates.\",\n      \"display_title\": \"How Neural Networks Learn: Understanding Backpropagation\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Explain the fundamental algorithm that enables neural networks to efficiently learn from data and update their parameters.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"High-level intuition and applications of Convolutional Neural Networks (CNNs) for image data and Recurrent Neural Networks (RNNs) for sequence data.\",\n      \"display_title\": \"Diving Deeper: Specialized Architectures (CNNs & RNNs)\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Provide an initial exposure to specialized deep learning architectures that are crucial for specific data types and tasks.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Understanding the bias-variance trade-off, identifying overfitting and underfitting, and regularization techniques (L1, L2, Dropout).\",\n      \"display_title\": \"Navigating Model Challenges: Overfitting and Regularization\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Address common pitfalls in model training and introduce critical methods to build robust and generalizable ML models.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Techniques for data cleaning, handling missing values, categorical encoding, feature scaling, and basic feature engineering.\",\n      \"display_title\": \"Preparing Your Data: Preprocessing and Feature Engineering\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Emphasize the critical importance of data quality and preparation, as these steps profoundly impact model performance.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Key evaluation metrics for classification (accuracy, precision, recall, F1-score, ROC-AUC) and regression (MAE, RMSE, R-squared).\",\n      \"display_title\": \"Measuring Success: Key Evaluation Metrics\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Equip the learner with the tools to properly assess, compare, and understand the performance of different ML models.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Overview of current ML research areas, how to find and interpret research papers (e.g., arXiv, top conferences), and prominent research labs.\",\n      \"display_title\": \"Stepping into the Research World: How to Stay Current\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Bridge the gap between fundamentals and the research frontier, guiding the learner on effective ways to engage with ongoing advancements.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Machine Learning fundamentals represent a well-defined body of knowledge that can be systematically learned and mastered, providing a solid foundation for continuous research engagement.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Define Machine Learning, supervised vs unsupervised vs reinforcement learning, key applications and challenges.",
+            "display_title": "What is Machine Learning? An Overview",
+            "frame_hint": "timeline",
+            "rationale": "Establish foundational understanding of ML definitions, categories, and real-world relevance as the starting point for the journey."
+          },
+          {
+            "day_number": 2,
+            "focus": "Linear Regression model, understanding the cost function (e.g., Mean Squared Error), and the Gradient Descent optimization algorithm.",
+            "display_title": "Building Your First Model: Linear Regression",
+            "frame_hint": "timeline",
+            "rationale": "Introduce a simple, interpretable model to grasp core ML concepts like prediction, loss, and iterative optimization."
+          },
+          {
+            "day_number": 3,
+            "focus": "Logistic Regression for binary classification, the sigmoid activation function, decision boundaries, and cross-entropy loss.",
+            "display_title": "From Regression to Classification: Logistic Regression",
+            "frame_hint": "timeline",
+            "rationale": "Extend the understanding of linear models to solve classification problems, a fundamental and widely used ML task."
+          },
+          {
+            "day_number": 4,
+            "focus": "Introduction to neural network architecture, from perceptrons to multi-layer perceptrons (MLPs), and common activation functions.",
+            "display_title": "The Dawn of Neural Networks: From Perceptrons to MLPs",
+            "frame_hint": "timeline",
+            "rationale": "Introduce the basic building blocks of deep learning, setting the stage for understanding more complex network structures."
+          },
+          {
+            "day_number": 5,
+            "focus": "Detailed explanation of the backpropagation algorithm, including the chain rule, forward and backward passes, and weight updates.",
+            "display_title": "How Neural Networks Learn: Understanding Backpropagation",
+            "frame_hint": "timeline",
+            "rationale": "Explain the fundamental algorithm that enables neural networks to efficiently learn from data and update their parameters."
+          },
+          {
+            "day_number": 6,
+            "focus": "High-level intuition and applications of Convolutional Neural Networks (CNNs) for image data and Recurrent Neural Networks (RNNs) for sequence data.",
+            "display_title": "Diving Deeper: Specialized Architectures (CNNs & RNNs)",
+            "frame_hint": "timeline",
+            "rationale": "Provide an initial exposure to specialized deep learning architectures that are crucial for specific data types and tasks."
+          },
+          {
+            "day_number": 7,
+            "focus": "Understanding the bias-variance trade-off, identifying overfitting and underfitting, and regularization techniques (L1, L2, Dropout).",
+            "display_title": "Navigating Model Challenges: Overfitting and Regularization",
+            "frame_hint": "timeline",
+            "rationale": "Address common pitfalls in model training and introduce critical methods to build robust and generalizable ML models."
+          },
+          {
+            "day_number": 8,
+            "focus": "Techniques for data cleaning, handling missing values, categorical encoding, feature scaling, and basic feature engineering.",
+            "display_title": "Preparing Your Data: Preprocessing and Feature Engineering",
+            "frame_hint": "timeline",
+            "rationale": "Emphasize the critical importance of data quality and preparation, as these steps profoundly impact model performance."
+          },
+          {
+            "day_number": 9,
+            "focus": "Key evaluation metrics for classification (accuracy, precision, recall, F1-score, ROC-AUC) and regression (MAE, RMSE, R-squared).",
+            "display_title": "Measuring Success: Key Evaluation Metrics",
+            "frame_hint": "timeline",
+            "rationale": "Equip the learner with the tools to properly assess, compare, and understand the performance of different ML models."
+          },
+          {
+            "day_number": 10,
+            "focus": "Overview of current ML research areas, how to find and interpret research papers (e.g., arXiv, top conferences), and prominent research labs.",
+            "display_title": "Stepping into the Research World: How to Stay Current",
+            "frame_hint": "timeline",
+            "rationale": "Bridge the gap between fundamentals and the research frontier, guiding the learner on effective ways to engage with ongoing advancements."
+          }
+        ]
+      },
+      "latency_ms": 14610,
+      "timestamp": "2026-06-26T15:55:19.166018+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": null,
+          "na": true,
+          "evidence": "Case 8 diagnostic — not scored"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "Case 8 diagnostic — not scored"
+        },
+        "case_8_analysis": "The model picked the 'fixed_sequence' shape cleanly, focusing on a systematic learning path for machine learning fundamentals. It did not explicitly blend both shapes or note the tension between the two intents. However, it attempted to address the 'rotating_theme' intent in the last day of the sequence, providing an overview of current research areas. The result is mostly coherent, but the 'fixed_sequence' shape reflects the stronger intent signal in the prompt for deeply understanding fundamentals."
+      }
+    },
+    "case8__gemini-3.5-flash": {
+      "status": "pending",
+      "raw_output": null,
+      "parsed_output": null,
+      "latency_ms": 0,
+      "timestamp": "2026-06-26T19:16:04.848292+00:00",
+      "retried": false,
+      "scores": null
+    },
+    "case8__gemini-3.1-flash-lite": {
+      "status": "done",
+      "raw_output": "{\n  \"shape\": \"fixed_sequence\",\n  \"day_count\": 10,\n  \"reasoning\": \"Machine learning fundamentals form a cohesive academic syllabus that transitions from linear algebra foundations to neural network architectures.\",\n  \"days\": [\n    {\n      \"day_number\": 1,\n      \"focus\": \"Mathematical foundations: Linear algebra, calculus, and probability for ML\",\n      \"display_title\": \"The Mathematical Bedrock of ML\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Establishes the quantitative literacy required to understand loss functions and gradients.\"\n    },\n    {\n      \"day_number\": 2,\n      \"focus\": \"Supervised learning: Linear regression and logistic regression basics\",\n      \"display_title\": \"Foundations of Supervised Learning\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Provides the simplest context for understanding optimization and model training.\"\n    },\n    {\n      \"day_number\": 3,\n      \"focus\": \"Optimization: Gradient descent and backpropagation\",\n      \"display_title\": \"How Models Learn: Optimization\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Moves from static models to the mechanism of iterative improvement.\"\n    },\n    {\n      \"day_number\": 4,\n      \"focus\": \"Neural network architectures: Perceptrons and Multi-Layer Perceptrons\",\n      \"display_title\": \"Building Blocks of Neural Networks\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Introduces the structural complexity required for deep learning.\"\n    },\n    {\n      \"day_number\": 5,\n      \"focus\": \"Regularization and generalization: Overfitting, underfitting, and bias-variance tradeoff\",\n      \"display_title\": \"The Art of Generalization\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Teaches the practical necessity of managing model performance on unseen data.\"\n    },\n    {\n      \"day_number\": 6,\n      \"focus\": \"Computer Vision basics: Convolutional Neural Networks (CNNs)\",\n      \"display_title\": \"Spatial Pattern Recognition\",\n      \"frame_hint\": \"timeline\",\n      \"rationale\": \"Applies fundamental concepts to specific architecture types for image processing.\"\n    },\n    {\n      \"day_number\": 7,\n      \"focus\": \"Sequence modeling: RNNs, LSTMs, and the Attention mechanism\",\n      \"display_title\": \"Processing Sequential Data\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Transitions from static architectures to those capable of handling temporal context.\"\n    },\n    {\n      \"day_number\": 8,\n      \"focus\": \"Transformer architecture: Self-attention and the path to LLMs\",\n      \"display_title\": \"The Transformer Revolution\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Connects foundational theory to the dominant architecture of current research.\"\n    },\n    {\n      \"day_number\": 9,\n      \"focus\": \"Reading academic papers: Analyzing research methodology and benchmarks\",\n      \"display_title\": \"Decoding Research Literature\",\n      \"frame_hint\": \"single-discovery-story\",\n      \"rationale\": \"Shifts focus from learning concepts to analyzing state-of-the-art research outputs.\"\n    },\n    {\n      \"day_number\": 10,\n      \"focus\": \"Synthesis: Evaluating model performance against industry benchmarks\",\n      \"display_title\": \"Assessing ML Research\",\n      \"frame_hint\": \"comparison\",\n      \"rationale\": \"Consolidates all previous modules into a framework for critical analysis.\"\n    }\n  ]\n}",
+      "parsed_output": {
+        "shape": "fixed_sequence",
+        "day_count": 10,
+        "reasoning": "Machine learning fundamentals form a cohesive academic syllabus that transitions from linear algebra foundations to neural network architectures.",
+        "days": [
+          {
+            "day_number": 1,
+            "focus": "Mathematical foundations: Linear algebra, calculus, and probability for ML",
+            "display_title": "The Mathematical Bedrock of ML",
+            "frame_hint": "timeline",
+            "rationale": "Establishes the quantitative literacy required to understand loss functions and gradients."
+          },
+          {
+            "day_number": 2,
+            "focus": "Supervised learning: Linear regression and logistic regression basics",
+            "display_title": "Foundations of Supervised Learning",
+            "frame_hint": "timeline",
+            "rationale": "Provides the simplest context for understanding optimization and model training."
+          },
+          {
+            "day_number": 3,
+            "focus": "Optimization: Gradient descent and backpropagation",
+            "display_title": "How Models Learn: Optimization",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Moves from static models to the mechanism of iterative improvement."
+          },
+          {
+            "day_number": 4,
+            "focus": "Neural network architectures: Perceptrons and Multi-Layer Perceptrons",
+            "display_title": "Building Blocks of Neural Networks",
+            "frame_hint": "timeline",
+            "rationale": "Introduces the structural complexity required for deep learning."
+          },
+          {
+            "day_number": 5,
+            "focus": "Regularization and generalization: Overfitting, underfitting, and bias-variance tradeoff",
+            "display_title": "The Art of Generalization",
+            "frame_hint": "comparison",
+            "rationale": "Teaches the practical necessity of managing model performance on unseen data."
+          },
+          {
+            "day_number": 6,
+            "focus": "Computer Vision basics: Convolutional Neural Networks (CNNs)",
+            "display_title": "Spatial Pattern Recognition",
+            "frame_hint": "timeline",
+            "rationale": "Applies fundamental concepts to specific architecture types for image processing."
+          },
+          {
+            "day_number": 7,
+            "focus": "Sequence modeling: RNNs, LSTMs, and the Attention mechanism",
+            "display_title": "Processing Sequential Data",
+            "frame_hint": "comparison",
+            "rationale": "Transitions from static architectures to those capable of handling temporal context."
+          },
+          {
+            "day_number": 8,
+            "focus": "Transformer architecture: Self-attention and the path to LLMs",
+            "display_title": "The Transformer Revolution",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Connects foundational theory to the dominant architecture of current research."
+          },
+          {
+            "day_number": 9,
+            "focus": "Reading academic papers: Analyzing research methodology and benchmarks",
+            "display_title": "Decoding Research Literature",
+            "frame_hint": "single-discovery-story",
+            "rationale": "Shifts focus from learning concepts to analyzing state-of-the-art research outputs."
+          },
+          {
+            "day_number": 10,
+            "focus": "Synthesis: Evaluating model performance against industry benchmarks",
+            "display_title": "Assessing ML Research",
+            "frame_hint": "comparison",
+            "rationale": "Consolidates all previous modules into a framework for critical analysis."
+          }
+        ]
+      },
+      "latency_ms": 3203,
+      "timestamp": "2026-06-26T15:55:07.765094+00:00",
+      "retried": false,
+      "scores": {
+        "shape_correctness": {
+          "score": null,
+          "na": true,
+          "evidence": "Case 8 diagnostic — not scored"
+        },
+        "technical_reliability": {
+          "score": 2,
+          "evidence": "Clean JSON, first try"
+        },
+        "frame_hint_variety": {
+          "score": null,
+          "na": true,
+          "evidence": "Case 8 diagnostic — not scored"
+        },
+        "case_8_analysis": "The model picked a 'fixed_sequence' shape cleanly, focusing on a structured learning path for machine learning fundamentals. It did not explicitly blend both intents or note the tension between the two, instead prioritizing the 'deeply understand fundamentals' aspect. The result is coherent and well-structured, reflecting the stronger intent signal in the prompt for foundational knowledge. However, it does not fully address the 'following the latest research as it happens' intent, which might require a 'rotating_theme' approach."
+      }
+    }
+  }
+}

@@ -36,9 +36,42 @@ function allCards(pkg) {
   return [...(pkg.insights || []), ...(pkg.curiosity_insights || [])]
 }
 
+// ─── Block renderers ──────────────────────────────────────────────────────────
+
+function _blockMd(btype, content) {
+  const text = (content || "").trim()
+  if (!text) return []
+  if (btype === "step_list") {
+    const steps = text.split("\n").map(s => s.replace(/^\d+\.\s*/, "").trim()).filter(Boolean)
+    return [...steps.map((s, i) => `${i + 1}. ${s}`), ""]
+  }
+  if (btype === "warning")      return [`> ⚠️ ${text}`, ""]
+  if (btype === "evidence")     return [`> ${text}`, ""]
+  if (btype === "key_takeaway") return [`**${text}**`, ""]
+  const label = btype ? btype.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "Note"
+  return [`**${label}**`, "", text, ""]
+}
+
+function _blockHtml(btype, content) {
+  const text = (content || "").trim()
+  if (!text) return ""
+  if (btype === "step_list") {
+    const steps = text.split("\n").map(s => s.replace(/^\d+\.\s*/, "").trim()).filter(Boolean)
+    return `<div class="block"><div class="section-label">Steps</div><ol class="steps">${steps.map(s => `<li>${escHtml(s)}</li>`).join("")}</ol></div>`
+  }
+  if (btype === "warning")
+    return `<div class="block block-warning"><span class="block-label">⚠️ Caution</span><p>${escHtml(text)}</p></div>`
+  if (btype === "evidence")
+    return `<blockquote class="block-evidence"><p>${escHtml(text)}</p></blockquote>`
+  if (btype === "key_takeaway")
+    return `<div class="block block-takeaway"><p>${escHtml(text)}</p></div>`
+  const label = btype ? btype.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "Note"
+  return `<div class="block block-generic"><div class="section-label">${escHtml(label)}</div><p>${escHtml(text)}</p></div>`
+}
+
 // ─── Markdown builder ─────────────────────────────────────────────────────────
 
-function buildMarkdown(pkg, { projectName = "", dayLabel = "" } = {}) {
+function buildMarkdown(pkg, { projectName = "", dayLabel = "", nextDayTitle = "" } = {}) {
   const label = dayLabel || `Day ${pkg.day_number}`
   const date  = fmtDate(pkg.generated_at)
   const lines = []
@@ -58,12 +91,16 @@ function buildMarkdown(pkg, { projectName = "", dayLabel = "" } = {}) {
     if (card.category)  lines.push(`*${card.category}*`, "")
     if (card.summary)   lines.push(card.summary, "")
 
-    if (card.educational_explanation) {
-      const h = card.content_type === "educational" ? "Deep Dive" : "Why This Works"
-      lines.push(`### ${h}`, "", card.educational_explanation, "")
-    }
-    if (card.why_it_matters) {
-      lines.push("### Why It Matters", "", card.why_it_matters, "")
+    if ((card.blocks || []).length > 0) {
+      for (const b of card.blocks) lines.push(..._blockMd(b.type || "", b.content || ""))
+    } else {
+      if (card.educational_explanation) {
+        const h = card.content_type === "educational" ? "Deep Dive" : "Why This Works"
+        lines.push(`### ${h}`, "", card.educational_explanation, "")
+      }
+      if (card.why_it_matters) {
+        lines.push("### Why It Matters", "", card.why_it_matters, "")
+      }
     }
 
     const sources = (card.source_links || []).map(resolveSource).filter(s => s.url)
@@ -80,6 +117,7 @@ function buildMarkdown(pkg, { projectName = "", dayLabel = "" } = {}) {
 
   const today = new Date().toISOString().slice(0, 10)
   lines.push("---", "", `*Exported from Curivio · ${today}*`)
+  if (nextDayTitle) lines.push("", `*Next up: ${nextDayTitle}*`)
 
   return lines.join("\n")
 }
@@ -141,20 +179,16 @@ function cardHtml(card) {
       </div>`
     : ""
 
-  const eduLabel = card.content_type === "educational" ? "Deep Dive" : "Why This Works"
-  const eduBlock = card.educational_explanation
-    ? `<div class="inset">
-        <div class="section-label">${eduLabel}</div>
-        <p>${escHtml(card.educational_explanation)}</p>
-      </div>`
-    : ""
-
-  const whyBlock = card.why_it_matters
-    ? `<div class="inset why">
-        <div class="section-label">Why It Matters</div>
-        <p>${escHtml(card.why_it_matters)}</p>
-      </div>`
-    : ""
+  let contentHtml = ""
+  if ((card.blocks || []).length > 0) {
+    contentHtml = card.blocks.map(b => _blockHtml(b.type || "", b.content || "")).join("\n")
+  } else {
+    const eduLabel = card.content_type === "educational" ? "Deep Dive" : "Why This Works"
+    if (card.educational_explanation)
+      contentHtml += `<div class="inset"><div class="section-label">${eduLabel}</div><p>${escHtml(card.educational_explanation)}</p></div>`
+    if (card.why_it_matters)
+      contentHtml += `<div class="inset why"><div class="section-label">Why It Matters</div><p>${escHtml(card.why_it_matters)}</p></div>`
+  }
 
   const catBadge = card.category
     ? `<span class="cat">${escHtml(card.category)}</span>`
@@ -166,13 +200,12 @@ function cardHtml(card) {
       <h2 class="card-title">${escHtml(card.title)}</h2>
       ${catBadge}
       <p class="summary">${escHtml(card.summary || "")}</p>
-      ${eduBlock}
-      ${whyBlock}
+      ${contentHtml}
       ${sourcesBlock}
     </div>`
 }
 
-function _buildPrintHtml(pkg, { projectName = "", dayLabel = "" } = {}) {
+function _buildPrintHtml(pkg, { projectName = "", dayLabel = "", nextDayTitle = "" } = {}) {
   const label = dayLabel || `Day ${pkg.day_number}`
   const date  = fmtDate(pkg.generated_at)
   const meta  = [label, date, projectName].filter(Boolean).join(" · ")
@@ -256,6 +289,19 @@ function _buildPrintHtml(pkg, { projectName = "", dayLabel = "" } = {}) {
     margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;
     font-size:10px;color:#94a3b8
   }
+  .next-up{display:block;margin-top:6px;font-size:10px;color:#64748b;font-style:italic}
+  .block{margin-bottom:10px}
+  .block-warning{border-left:3px solid #f59e0b;padding:8px 12px;background:#fffbeb;border-radius:0 4px 4px 0;margin-bottom:10px}
+  .block-label{display:block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#b45309;margin-bottom:4px}
+  .block-warning p{font-size:12px;color:#92400e;line-height:1.6;margin:0}
+  .block-evidence{border-left:3px solid #94a3b8;margin:0 0 10px;padding:6px 12px}
+  .block-evidence p{font-size:12px;color:#64748b;font-style:italic;margin:0;line-height:1.6}
+  .block-takeaway{background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;padding:8px 12px;margin-bottom:10px}
+  .block-takeaway p{font-size:12px;color:#1e40af;margin:0;line-height:1.6}
+  .block-generic{margin-bottom:10px}
+  .block-generic p{font-size:12px;color:#475569;margin:0;line-height:1.6}
+  .steps{padding-left:18px;margin:4px 0 0}
+  .steps li{font-size:12px;color:#374151;line-height:1.6;margin-bottom:3px}
   @media print{
     body{padding:20px 24px}
     .card{break-inside:avoid;page-break-inside:avoid}
@@ -270,7 +316,7 @@ function _buildPrintHtml(pkg, { projectName = "", dayLabel = "" } = {}) {
   ${threadHtml}
   ${allCards(pkg).map(cardHtml).join("\n")}
   ${actionHtml}
-  <div class="footer">Exported from Curivio · ${today}</div>
+  <div class="footer">Exported from Curivio · ${today}${nextDayTitle ? `<span class="next-up">Next up: ${escHtml(nextDayTitle)}</span>` : ""}</div>
 </body>
 </html>`
 }

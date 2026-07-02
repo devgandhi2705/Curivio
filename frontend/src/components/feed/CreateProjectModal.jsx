@@ -1,9 +1,18 @@
 /**
- * CreateProjectModal — form for creating a new learning project.
- * Collects name, description, keywords, difficulty, focus areas, and color.
+ * CreateProjectModal — AI-assisted project creation.
+ *
+ * Keyword flow:
+ *   1. User fills Name, Description, Level
+ *   2. User clicks "Generate Keywords" → POST /projects/suggest-keywords (name+description+level)
+ *   3. Chips populate with {keyword, source:"generated"}
+ *   4. User can add (source:"user"), delete, or drag-to-reorder any chip
+ *   5. Re-clicking Generate merges: preserves user-added, replaces AI set
+ *   6. Submit extracts plain strings — no metadata sent to API
+ *
+ * No automatic LLM calls from onChange/debounce — only explicit button click.
  */
-import { useState } from "react"
-import { checkSourceRelevance } from "../../api/projects.js"
+import { useState, useRef } from "react"
+import { suggestKeywords } from "../../api/projects.js"
 
 const COLORS = [
   { id: "blue",    label: "Blue",    class: "bg-blue-500"    },
@@ -14,192 +23,128 @@ const COLORS = [
 ]
 
 const DIFFICULTY_OPTIONS = [
-  { id: "beginner",     label: "Beginner",     desc: "New to this domain"           },
-  { id: "intermediate", label: "Intermediate", desc: "Some background knowledge"    },
-  { id: "advanced",     label: "Advanced",     desc: "Deep domain expertise"        },
+  { id: "beginner",     label: "Beginner",     desc: "New to this domain"        },
+  { id: "intermediate", label: "Intermediate", desc: "Some background knowledge" },
+  { id: "advanced",     label: "Advanced",     desc: "Deep domain expertise"     },
 ]
 
 const INTENSITY_OPTIONS = [
-  { count: 2, label: "Light",     desc: "2 articles · focused depth"   },
+  { count: 2, label: "Light",     desc: "2 articles · focused depth"    },
   { count: 4, label: "Standard",  desc: "4 articles · balanced breadth" },
   { count: 6, label: "Intensive", desc: "6 articles · wide coverage"    },
 ]
 
-const SUGGESTED_PROJECTS = [
-  {
-    name: "AI in Manufacturing",
-    keywords: ["predictive maintenance", "industrial AI", "computer vision", "digital twin"],
-    color: "blue",
-    preferred_sources: ["huggingface.co", "arxiv.org", "github.com"],
-  },
-  {
-    name: "Indian Pharma Exports",
-    keywords: ["USFDA", "generics", "API manufacturing", "export regulations"],
-    color: "emerald",
-    preferred_sources: ["who.int", "fda.gov"],
-  },
-  {
-    name: "Quantitative Finance",
-    keywords: ["algorithmic trading", "risk modeling", "derivatives", "factor models"],
-    color: "violet",
-    preferred_sources: ["sec.gov", "federalreserve.gov"],
-  },
-  {
-    name: "Supply Chain Intelligence",
-    keywords: ["demand forecasting", "logistics AI", "nearshoring", "disruption risk"],
-    color: "amber",
-    preferred_sources: ["worldbank.org", "wto.org"],
-  },
-]
-
-// ── Domain normalization helpers ───────────────────────────────────────────────
-
-function normalizeDomain(raw) {
-  let s = raw.trim().toLowerCase()
-  s = s.replace(/^https?:\/\//, "")
-  s = s.split("/")[0].split("?")[0].split("#")[0]
-  s = s.replace(/^www\./, "").replace(/\.$/, "")
-  return s
+// Keep all user-added keywords; replace the full AI-generated set with the new suggestions.
+function mergeKeywords(existing, suggested) {
+  const userAdded = existing.filter(k => k.source === "user")
+  const userWords = new Set(userAdded.map(k => k.keyword.toLowerCase()))
+  const newAI = suggested
+    .filter(s => !userWords.has(s.toLowerCase()))
+    .map(s => ({ keyword: s, source: "generated" }))
+  return [...userAdded, ...newAI]
 }
 
-function isValidDomain(s) {
-  return s.length > 0 && s.length <= 100 && /^[a-z0-9][a-z0-9\-]*(\.[a-z0-9\-]+)+$/.test(s)
-}
+// ── Keyword chip ──────────────────────────────────────────────────────────────
 
-async function checkDomainReachable(domain) {
-  const controller = new AbortController()
-  const tid = setTimeout(() => controller.abort(), 6000)
-  try {
-    await fetch(`https://${domain}`, { mode: "no-cors", signal: controller.signal })
-    clearTimeout(tid)
-    return true
-  } catch {
-    clearTimeout(tid)
-    return false
-  }
+function KeywordChip({ kw, index, onRemove, dragRef }) {
+  const isAI = kw.source === "generated"
+  return (
+    <span
+      draggable
+      onDragStart={() => { dragRef.current = index }}
+      onDragOver={e => e.preventDefault()}
+      onDrop={() => {
+        const from = dragRef.current
+        if (from === null || from === index) return
+        onRemove(null, from, index)
+        dragRef.current = null
+      }}
+      title={isAI ? "AI-suggested · drag to reorder" : "You added · drag to reorder"}
+      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs border cursor-grab select-none
+        ${isAI
+          ? "bg-blue-900/40 text-blue-300 border-blue-800/40"
+          : "bg-slate-800 text-slate-300 border-slate-600/60"
+        }`}
+    >
+      {isAI && <span className="opacity-50 text-[9px] leading-none">✦</span>}
+      {kw.keyword}
+      <button
+        type="button"
+        onClick={() => onRemove(index, null, null)}
+        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity leading-none"
+        aria-label={`Remove ${kw.keyword}`}
+      >
+        ×
+      </button>
+    </span>
+  )
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
 export default function CreateProjectModal({ onClose, onCreate, loading }) {
-  const [name,             setName]             = useState("")
-  const [description,      setDescription]      = useState("")
-  const [keywords,         setKeywords]         = useState([])
-  const [kwInput,          setKwInput]          = useState("")
-  const [difficulty,       setDifficulty]       = useState("intermediate")
-  const [focusAreas,       setFocusAreas]       = useState([])
-  const [faInput,          setFaInput]          = useState("")
-  const [color,            setColor]            = useState("blue")
-  const [preferredSources,      setPreferredSources]      = useState([])
-  const [ignoredSources,        setIgnoredSources]        = useState([])
-  const [srcInput,              setSrcInput]              = useState("")
-  const [srcError,              setSrcError]              = useState(null)
-  const [srcChecking,           setSrcChecking]           = useState(false)
-  const [srcCheckPhase,         setSrcCheckPhase]         = useState("")  // "reachability" | "relevance"
-  const [srcWarnOnly,           setSrcWarnOnly]           = useState(false)
+  const [name,                  setName]                  = useState("")
+  const [description,           setDescription]           = useState("")
+  const [keywords,              setKeywords]              = useState([])
+  const [kwInput,               setKwInput]               = useState("")
+  const [difficulty,            setDifficulty]            = useState("intermediate")
+  const [color,                 setColor]                 = useState("blue")
   const [dailyCoreArticleCount, setDailyCoreArticleCount] = useState(4)
   const [error,                 setError]                 = useState(null)
+  const [suggestLoading,        setSuggestLoading]        = useState(false)
+  const [suggestError,          setSuggestError]          = useState(null)
+
+  const dragIdx = useRef(null)
+
+  const canGenerate = name.trim().length > 0 && description.trim().length >= 10
+
+  async function runSuggestions() {
+    setSuggestLoading(true)
+    setSuggestError(null)
+    try {
+      const result = await suggestKeywords(name.trim(), description.trim(), difficulty)
+      const suggested = result?.keywords || []
+      setKeywords(prev => mergeKeywords(prev, suggested))
+    } catch {
+      setSuggestError("AI keyword generation is unavailable right now (API connection issue). Type your own keywords in the field below and press Enter to add them.")
+    } finally {
+      setSuggestLoading(false)
+    }
+  }
 
   function addKeyword() {
     const trimmed = kwInput.trim()
-    if (trimmed && !keywords.includes(trimmed)) {
-      setKeywords(prev => [...prev, trimmed])
+    if (trimmed && !keywords.some(k => k.keyword.toLowerCase() === trimmed.toLowerCase())) {
+      setKeywords(prev => [...prev, { keyword: trimmed, source: "user" }])
     }
     setKwInput("")
   }
 
-  function addFocusArea() {
-    const trimmed = faInput.trim()
-    if (trimmed && !focusAreas.includes(trimmed)) {
-      setFocusAreas(prev => [...prev, trimmed])
+  // Handles both remove (deleteIdx set) and reorder (from/to set)
+  function handleChipAction(deleteIdx, from, to) {
+    if (deleteIdx !== null) {
+      setKeywords(prev => prev.filter((_, i) => i !== deleteIdx))
+    } else {
+      setKeywords(prev => {
+        const arr = [...prev]
+        const [moved] = arr.splice(from, 1)
+        arr.splice(to, 0, moved)
+        return arr
+      })
     }
-    setFaInput("")
-  }
-
-  async function addSource() {
-    if (srcChecking) return
-    setSrcError(null)
-    setSrcWarnOnly(false)
-    const domain = normalizeDomain(srcInput)
-    if (!domain) { setSrcInput(""); return }
-    if (!isValidDomain(domain)) {
-      setSrcError("Invalid URL — enter a domain like arxiv.org or https://sec.gov")
-      return
-    }
-    if (preferredSources.includes(domain) || ignoredSources.includes(domain)) {
-      setSrcError("Already added")
-      setSrcInput("")
-      return
-    }
-
-    // Phase 1 — reachability
-    setSrcChecking(true)
-    setSrcCheckPhase("reachability")
-    const reachable = await checkDomainReachable(domain)
-    if (!reachable) {
-      setSrcChecking(false)
-      setSrcCheckPhase("")
-      setSrcError(`Could not reach ${domain} — double-check the URL`)
-      setSrcWarnOnly(true)
-      return
-    }
-
-    // Phase 2 — relevance
-    setSrcCheckPhase("relevance")
-    const result = await checkSourceRelevance(domain, name.trim() || "this project", keywords)
-    setSrcChecking(false)
-    setSrcCheckPhase("")
-
-    if (!result.relevant) {
-      setIgnoredSources(prev => [...prev, domain])
-      setSrcInput("")
-      return
-    }
-    setPreferredSources(prev => [...prev, domain])
-    setSrcInput("")
-  }
-
-  function forceAddSource() {
-    const domain = normalizeDomain(srcInput)
-    if (domain && !preferredSources.includes(domain)) {
-      setPreferredSources(prev => [...prev, domain])
-      setIgnoredSources(prev => prev.filter(d => d !== domain))
-    }
-    setSrcInput("")
-    setSrcError(null)
-    setSrcWarnOnly(false)
-  }
-
-  function promoteIgnored(domain) {
-    setIgnoredSources(prev => prev.filter(d => d !== domain))
-    setPreferredSources(prev => [...prev, domain])
-  }
-
-  function removeKeyword(kw) { setKeywords(prev => prev.filter(k => k !== kw)) }
-  function removeFocusArea(fa) { setFocusAreas(prev => prev.filter(f => f !== fa)) }
-  function removeSource(s) { setPreferredSources(prev => prev.filter(d => d !== s)) }
-
-  function applyTemplate(tmpl) {
-    setName(tmpl.name)
-    setKeywords(tmpl.keywords)
-    setColor(tmpl.color)
-    setKwInput("")
-    if (tmpl.preferred_sources) setPreferredSources(tmpl.preferred_sources)
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!name.trim()) { setError("Project name is required."); return }
+    if (!description.trim()) { setError("Description is required."); return }
     setError(null)
     await onCreate({
       name: name.trim(),
       description,
-      keywords,
+      keywords: keywords.map(k => k.keyword),
       difficulty,
-      focus_areas: focusAreas,
       color,
-      preferred_sources: preferredSources,
-      ignored_sources: ignoredSources,
       daily_core_article_count: dailyCoreArticleCount,
     })
   }
@@ -231,83 +176,32 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
         <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[80vh]">
           <div className="px-6 py-5 space-y-5">
 
-            {/* Quick templates */}
-            <div>
-              <p className="text-xs text-slate-500 mb-2">Start from a template</p>
-              <div className="grid grid-cols-2 gap-2">
-                {SUGGESTED_PROJECTS.map(t => (
-                  <button
-                    key={t.name}
-                    type="button"
-                    onClick={() => applyTemplate(t)}
-                    className="text-left px-3 py-2 rounded-xl bg-slate-800/60 border border-slate-700/50 hover:border-slate-600 hover:bg-slate-800 transition-all"
-                  >
-                    <span className="text-xs text-slate-300 font-medium block">{t.name}</span>
-                    <span className="text-[10px] text-slate-500">{t.keywords.slice(0, 2).join(", ")}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-slate-800" />
-
-            {/* Name */}
+            {/* 1 — Project Name */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Project Name *</label>
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="e.g. AI in Manufacturing"
+                placeholder="e.g. Globalization, Machine Learning, Indian Pharma"
                 maxLength={80}
                 className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50"
               />
             </div>
 
-            {/* Description */}
+            {/* 2 — Description */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Description</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Description *</label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="What are you trying to learn or track?"
-                rows={2}
+                placeholder="Who are you and what are you trying to learn? e.g. 'I'm an economics student studying trade policy' or 'I'm a software engineer exploring enterprise AI adoption'"
+                rows={3}
                 maxLength={300}
                 className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50"
               />
             </div>
 
-            {/* Keywords */}
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Keywords</label>
-              <div className="flex gap-2 mb-2">
-                <input
-                  value={kwInput}
-                  onChange={e => setKwInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addKeyword() } }}
-                  placeholder="Add keyword, press Enter"
-                  className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={addKeyword}
-                  className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-              {keywords.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {keywords.map(kw => (
-                    <span key={kw} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-900/40 text-blue-300 text-xs border border-blue-800/40">
-                      {kw}
-                      <button type="button" onClick={() => removeKeyword(kw)} className="text-blue-400 hover:text-blue-200 ml-0.5">×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Difficulty */}
+            {/* 3 — Your Level */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Your Level</label>
               <div className="grid grid-cols-3 gap-2">
@@ -329,7 +223,89 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
               </div>
             </div>
 
-            {/* Daily Intensity */}
+            {/* 4 — Generate Keywords button */}
+            <div>
+              <button
+                type="button"
+                onClick={runSuggestions}
+                disabled={suggestLoading || !canGenerate}
+                className={`w-full px-4 py-2.5 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
+                  suggestLoading || !canGenerate
+                    ? "bg-slate-800/40 border-slate-700/40 text-slate-600 cursor-not-allowed"
+                    : "bg-slate-800 border-slate-600/70 text-slate-200 hover:bg-slate-700 hover:border-slate-500"
+                }`}
+              >
+                {suggestLoading ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Generating keywords…
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M7.657 6.247c.11-.33.576-.33.686 0l.645 1.937a2.89 2.89 0 0 0 1.829 1.828l1.936.645c.33.11.33.576 0 .686l-1.937.645a2.89 2.89 0 0 0-1.828 1.829l-.645 1.936a.361.361 0 0 1-.686 0l-.645-1.937a2.89 2.89 0 0 0-1.828-1.828l-1.937-.645a.361.361 0 0 1 0-.686l1.937-.645a2.89 2.89 0 0 0 1.828-1.828zM3.794 1.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387A1.734 1.734 0 0 0 4.593 5.69l-.387 1.162a.217.217 0 0 1-.412 0L3.407 5.69A1.734 1.734 0 0 0 2.31 4.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387A1.734 1.734 0 0 0 3.407 2.31zM10.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.156 1.156 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.156 1.156 0 0 0-.732-.732L9.1 2.137a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732z" />
+                    </svg>
+                    Generate Keywords
+                  </>
+                )}
+              </button>
+              {!canGenerate && (
+                <p className="text-[10px] text-slate-600 mt-1.5 text-center">
+                  Add a name and description first
+                </p>
+              )}
+              {suggestError && (
+                <p className="text-[10px] text-amber-400 mt-1.5">{suggestError}</p>
+              )}
+            </div>
+
+            {/* 5 — Keywords */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-slate-400">Keywords</label>
+                {keywords.some(k => k.source === "generated") && (
+                  <span className="text-[10px] text-slate-500">
+                    <span className="text-blue-400/70">✦</span> AI-suggested · drag to reorder
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={kwInput}
+                  onChange={e => setKwInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addKeyword() } }}
+                  placeholder="Or add keywords manually, press Enter"
+                  className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                />
+                <button
+                  type="button"
+                  onClick={addKeyword}
+                  className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+
+              {keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {keywords.map((kw, i) => (
+                    <KeywordChip
+                      key={`${kw.keyword}-${i}`}
+                      kw={kw}
+                      index={i}
+                      onRemove={handleChipAction}
+                      dragRef={dragIdx}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 6 — Daily Intensity */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Daily Learning Intensity</label>
               <div className="grid grid-cols-3 gap-2">
@@ -351,151 +327,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
               </div>
             </div>
 
-            {/* Focus areas */}
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Focus Areas <span className="text-slate-600 font-normal">(optional)</span></label>
-              <div className="flex gap-2 mb-2">
-                <input
-                  value={faInput}
-                  onChange={e => setFaInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addFocusArea() } }}
-                  placeholder="e.g. Predictive Maintenance"
-                  className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={addFocusArea}
-                  className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-              {focusAreas.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {focusAreas.map(fa => (
-                    <span key={fa} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs border border-slate-700/50">
-                      {fa}
-                      <button type="button" onClick={() => removeFocusArea(fa)} className="text-slate-500 hover:text-slate-300 ml-0.5">×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Preferred Sources */}
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-0.5">
-                Preferred Sources
-                <span className="text-slate-600 font-normal ml-1">(optional)</span>
-              </label>
-              <p className="text-[10px] text-slate-600 mb-2 leading-relaxed">
-                Domains added here are treated as trusted retrieval anchors — web search will be
-                biased toward them while still searching broadly.
-              </p>
-              <div className="flex gap-2 mb-1.5">
-                <input
-                  value={srcInput}
-                  onChange={e => { setSrcInput(e.target.value); setSrcError(null); setSrcWarnOnly(false) }}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSource() } }}
-                  placeholder="e.g. arxiv.org or https://sec.gov"
-                  disabled={srcChecking}
-                  className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700/60 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 disabled:opacity-50"
-                />
-                <button
-                  type="button"
-                  onClick={addSource}
-                  disabled={srcChecking}
-                  className="min-w-[64px] px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                >
-                  {srcChecking ? (
-                    <>
-                      <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                        <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      {srcCheckPhase === "relevance" ? "Validating" : "Checking"}
-                    </>
-                  ) : "Add"}
-                </button>
-              </div>
-              {srcError && (
-                <div className="mb-1.5 flex items-center gap-2">
-                  <p className="text-[11px] text-red-400">{srcError}</p>
-                  {srcWarnOnly && (
-                    <button
-                      type="button"
-                      onClick={forceAddSource}
-                      className="text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2 transition-colors flex-shrink-0"
-                    >
-                      Add anyway
-                    </button>
-                  )}
-                </div>
-              )}
-              {preferredSources.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {preferredSources.map(domain => (
-                    <span
-                      key={domain}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-900/30 text-violet-300 text-xs border border-violet-800/40"
-                    >
-                      <svg className="w-2.5 h-2.5 text-violet-500 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4-1.25a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM10.5 8a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM7.25 10.5a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Z" />
-                      </svg>
-                      {domain}
-                      <button
-                        type="button"
-                        onClick={() => removeSource(domain)}
-                        className="text-violet-400 hover:text-violet-200 ml-0.5 leading-none"
-                        aria-label={`Remove ${domain}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {ignoredSources.length > 0 && (
-                <div className="mt-2.5">
-                  <p className="text-[10px] text-slate-600 mb-1.5 flex items-center gap-1">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1ZM6.5 5.75a.75.75 0 0 0-1.5 0v.5c0 .414.336.75.75.75H6v3h-.25a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 0-1.5H8V5.75a.75.75 0 0 0-.75-.75H6.5ZM8 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
-                    </svg>
-                    Ignored — not relevant to this project
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {ignoredSources.map(domain => (
-                      <span
-                        key={domain}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800/60 text-slate-500 text-xs border border-slate-700/40 line-through"
-                      >
-                        {domain}
-                        <button
-                          type="button"
-                          onClick={() => promoteIgnored(domain)}
-                          title="Add anyway"
-                          className="text-slate-600 hover:text-slate-300 ml-0.5 no-underline leading-none transition-colors"
-                          style={{ textDecoration: "none" }}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIgnoredSources(prev => prev.filter(d => d !== domain))}
-                          className="text-slate-600 hover:text-slate-400 ml-0.5 leading-none transition-colors"
-                          aria-label={`Remove ${domain}`}
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Color */}
+            {/* 7 — Accent Color */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">Accent Color</label>
               <div className="flex gap-2">
@@ -531,7 +363,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
             </button>
             <button
               type="submit"
-              disabled={loading || !name.trim()}
+              disabled={loading || !name.trim() || !description.trim()}
               className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? "Creating…" : "Create Project"}

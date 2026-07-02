@@ -20,6 +20,12 @@ Typical token counts after expansion:
   "Fine-Tuning Large Language Models"   → {fine, tuning, large, language, models}
   Jaccard: 5 / 5 = 1.0  → duplicate  ✓
 
+Near-duplicate detection (Phase 7.3)
+--------------------------------------
+Composite score: 0.25 * title_sim + 0.60 * content_sim + 0.15 * entity_sim
+Fires at NEAR_DUP_THRESHOLD = 0.50.  Catches syndicated stories (Reuters on
+reuters.com vs yahoo.com) even when titles differ significantly.
+
 Public API
 ----------
 token_overlap(a, b)                              → float  [0, 1] Jaccard
@@ -28,6 +34,9 @@ deduplicate_articles(articles)                   → list[dict]
 find_similar_in(candidate, seen, threshold)      → str | None
 deduplicate_topics(topics, threshold)            → list[dict]
 is_fresh_summary(new_title, recent, threshold)   → bool
+duplicate_score(a, b)                            → float  [0, 1] composite
+deduplicate_ranked(articles, threshold)          → list[dict]  keeps best-scored
+deduplicate_by_story(articles, threshold)        → list[dict]  story-level, keeps highest-ranked
 """
 
 import re
@@ -43,6 +52,28 @@ TOPIC_SIM_THRESHOLD: float = 0.50
 
 # Summaries: broader — topic-level freshness check on news titles.
 SUMMARY_SIM_THRESHOLD: float = 0.40
+
+# Near-duplicate: composite title+content+entity score above which articles
+# are considered to cover the same story (e.g. Reuters vs Yahoo syndicated).
+# 0.50 calibrated so syndicated articles (same content, different headline) pass
+# while independently written articles on the same topic do not.
+NEAR_DUP_THRESHOLD: float = 0.50
+
+# Story-cluster: title token overlap above which two articles are grouped as
+# covering the same story concept (lower than NEAR_DUP_THRESHOLD because
+# we compare titles only, not full content).
+# Also groups articles that share an exact retrieval_query (same search → same story).
+STORY_CLUSTER_THRESHOLD: float = 0.35
+
+# Weights for the composite near-duplicate score.
+# Title weight is low because syndicators (Yahoo, MSN) often rewrite headlines
+# while copying body text verbatim.  Content is the authoritative signal.
+_TITLE_WEIGHT:   float = 0.25
+_CONTENT_WEIGHT: float = 0.60
+_ENTITY_WEIGHT:  float = 0.15
+
+# Maximum content tokens to use for content overlap (performance ceiling).
+_CONTENT_TOKEN_LIMIT: int = 300
 
 
 # ── Text normalisation ────────────────────────────────────────────────────────
@@ -238,3 +269,227 @@ def _normalise_url(url: str) -> str:
         return host + parsed.path.rstrip("/")
     except Exception:
         return url.lower()
+
+
+# ── Near-duplicate detection (Phase 7.3) ─────────────────────────────────────
+
+def _extract_entities(text: str) -> frozenset[str]:
+    """
+    Naive named-entity proxy: capitalized words ≥ 4 chars (after stripping
+    punctuation) that are not stop words.  Captures organizations, place names,
+    proper nouns.  Both false positives (sentence-start words) cancel out when
+    comparing overlaps between two similar texts — the ratio stays stable.
+    """
+    raw = re.findall(r'\b[A-Z][a-zA-Z]{3,}\b', text)
+    return frozenset(w.lower() for w in raw if w.lower() not in _STOP_WORDS)
+
+
+def _content_overlap(a: dict, b: dict) -> float:
+    """
+    Jaccard similarity on the first _CONTENT_TOKEN_LIMIT tokens of each
+    article's content field.  Returns 0.0 when either article has no content.
+    """
+    content_a = a.get("content") or ""
+    content_b = b.get("content") or ""
+    if not content_a or not content_b:
+        return 0.0
+    tokens_a = set(_raw_tokens(content_a)[:_CONTENT_TOKEN_LIMIT])
+    tokens_b = set(_raw_tokens(content_b)[:_CONTENT_TOKEN_LIMIT])
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+def _entity_overlap(a: dict, b: dict) -> float:
+    """Jaccard on extracted named-entity proxies from title + content."""
+    text_a = (a.get("title") or "") + " " + (a.get("content") or "")[:800]
+    text_b = (b.get("title") or "") + " " + (b.get("content") or "")[:800]
+    ents_a = _extract_entities(text_a)
+    ents_b = _extract_entities(text_b)
+    if not ents_a and not ents_b:
+        return 0.0
+    if not ents_a or not ents_b:
+        return 0.0
+    return len(ents_a & ents_b) / len(ents_a | ents_b)
+
+
+def duplicate_score(a: dict, b: dict) -> float:
+    """
+    Composite near-duplicate score in [0, 1].
+
+    Formula:  0.25 * title_sim + 0.60 * content_sim + 0.15 * entity_sim
+
+    Score ≥ NEAR_DUP_THRESHOLD (0.50) means the two articles cover the same
+    story and one should be discarded.  Use deduplicate_ranked() to act on this.
+    """
+    title_sim   = token_overlap(a.get("title", ""), b.get("title", ""))
+    content_sim = _content_overlap(a, b)
+    entity_sim  = _entity_overlap(a, b)
+    return round(
+        _TITLE_WEIGHT   * title_sim
+        + _CONTENT_WEIGHT * content_sim
+        + _ENTITY_WEIGHT  * entity_sim,
+        3,
+    )
+
+
+def deduplicate_ranked(
+    articles:  list[dict],
+    threshold: float = NEAR_DUP_THRESHOLD,
+) -> list[dict]:
+    """
+    Cluster near-duplicate articles and keep one per cluster.
+
+    Keeps the highest-scored article in each cluster (by _retrieval_score).
+    Tags the winner with `duplicate_score` (max pairwise score vs discarded
+    cluster members, so downstream code knows how strongly it dominated).
+    Merges missing metadata from discarded articles into the winner.
+
+    Articles with duplicate_score = 0.0 had no near-duplicate in the batch.
+
+    Complexity: O(n²) pairwise — acceptable for n ≤ 30 (typical filtered set).
+    """
+    n = len(articles)
+    if n <= 1:
+        for art in articles:
+            art.setdefault("duplicate_score", 0.0)
+        return list(articles)
+
+    # Union-Find for clustering
+    parent = list(range(n))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    pair_scores: dict[tuple[int, int], float] = {}
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            ds = duplicate_score(articles[i], articles[j])
+            if ds >= threshold:
+                pair_scores[(i, j)] = ds
+                ri, rj = _find(i), _find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    # Build clusters keyed by root
+    clusters: dict[int, list[int]] = {}
+    for i in range(n):
+        root = _find(i)
+        clusters.setdefault(root, []).append(i)
+
+    result: list[dict] = []
+    for members in clusters.values():
+        if len(members) == 1:
+            art = articles[members[0]]
+            art.setdefault("duplicate_score", 0.0)
+            result.append(art)
+            continue
+
+        # Keep article with highest retrieval score (pre-ranking quality proxy)
+        members.sort(
+            key=lambda i: float(articles[i].get("_retrieval_score") or 0.0),
+            reverse=True,
+        )
+        winner_idx = members[0]
+        winner     = articles[winner_idx]
+
+        # Compute max pairwise duplicate_score for winner vs discarded members
+        max_ds = 0.0
+        for j in members[1:]:
+            key = (min(winner_idx, j), max(winner_idx, j))
+            ds  = pair_scores.get(key) or duplicate_score(winner, articles[j])
+            if ds > max_ds:
+                max_ds = ds
+        winner["duplicate_score"] = round(max_ds, 3)
+
+        # Merge non-empty fields from discarded articles into winner
+        for j in members[1:]:
+            discarded = articles[j]
+            for field in ("published_date", "domain", "source_type",
+                          "retrieval_query", "author"):
+                if not winner.get(field) and discarded.get(field):
+                    winner[field] = discarded[field]
+
+        result.append(winner)
+
+    return result
+
+
+def deduplicate_by_story(
+    articles:  list[dict],
+    threshold: float = STORY_CLUSTER_THRESHOLD,
+) -> list[dict]:
+    """
+    Cluster articles by story concept and keep one per cluster.
+
+    Two articles are placed in the same cluster when:
+      (a) Both have a non-empty retrieval_query AND they share the same one, OR
+      (b) token_overlap(title_a, title_b) >= threshold.
+
+    Rule (a) is the primary signal: articles fetched by the same search query
+    are almost always covering the same story.  Rule (b) catches cross-query
+    near-duplicates at a lower bar than NEAR_DUP_THRESHOLD (title-only, not
+    full-content composite).
+
+    Keeps the article with the highest _rank_score per cluster.
+    Preserves the original rank order in the output.
+
+    Must be called AFTER rank_articles() so _rank_score is populated.
+    """
+    n = len(articles)
+    if n <= 1:
+        return list(articles)
+
+    parent = list(range(n))
+
+    def _find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        q_i = (articles[i].get("retrieval_query") or "").strip()
+        p_i = (articles[i].get("_perspective")    or "").strip()
+        for j in range(i + 1, n):
+            q_j = (articles[j].get("retrieval_query") or "").strip()
+            p_j = (articles[j].get("_perspective")    or "").strip()
+            same_query = bool(q_i and q_j and q_i == q_j)
+            if not same_query:
+                sim = token_overlap(
+                    articles[i].get("title") or "",
+                    articles[j].get("title") or "",
+                )
+                if sim < threshold:
+                    # T7 (Phase 9.3.2): also cluster same editorial angle with
+                    # moderate title overlap — prevents keeping multiple articles
+                    # covering the same story mechanism from the same angle.
+                    same_angle = bool(p_i and p_j and p_i == p_j)
+                    if not (same_angle and sim >= 0.25):
+                        continue
+            ri, rj = _find(i), _find(j)
+            if ri != rj:
+                parent[ri] = rj
+
+    clusters: dict[int, list[int]] = {}
+    for i in range(n):
+        clusters.setdefault(_find(i), []).append(i)
+
+    result: list[dict] = []
+    for members in clusters.values():
+        if len(members) == 1:
+            result.append(articles[members[0]])
+            continue
+        members.sort(
+            key=lambda idx: float(articles[idx].get("_rank_score") or 0.0),
+            reverse=True,
+        )
+        result.append(articles[members[0]])
+
+    rank_position = {id(a): pos for pos, a in enumerate(articles)}
+    result.sort(key=lambda a: rank_position.get(id(a), 9999))
+    return result

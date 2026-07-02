@@ -73,6 +73,11 @@ from .budget_degradation import BudgetDegradationEngine, DegradationReport
 
 logger = logging.getLogger(__name__)
 
+# Re-exported from model_registry to avoid callers needing two imports.
+# Applied to provider TPM limits: 87.5% is mid-point of the 85–90% safety target.
+# At 12K TPM: effective budget = int(12000 × 0.875) = 10,500 tokens.
+_PROVIDER_SAFETY_FACTOR: float = 0.875
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Assembly report
@@ -309,22 +314,31 @@ class ModelAwareAssembler:
         allocator     = BudgetAllocator(cfg)
         prompt_budget = allocator.compute_budget(expected_output_tokens)
 
-        # Apply provider-tier TPM ceiling if requested
+        # Auto-detect provider tier when caller doesn't supply one.
+        # Groq models register "on_demand" as their default; non-Groq models
+        # leave default_provider_tier=None so their full context window is used.
+        active_tier = provider_tier if provider_tier is not None else cfg.default_provider_tier
+
+        # Apply provider-tier TPM ceiling when active
         effective_budget = prompt_budget
         tier_warnings: list[str] = []
 
-        if provider_tier:
-            tier_config = cfg.tier_limits.get(provider_tier, {})
+        if active_tier:
+            tier_config = cfg.tier_limits.get(active_tier, {})
             tpm = tier_config.get("tpm")
-            if tpm is not None and tpm < effective_budget:
-                # Tier TPM cap: deduct expected output to get prompt ceiling
-                tier_prompt_cap = tpm - max(cfg.output_reserve, expected_output_tokens)
+            if tpm is not None:
+                # Provider TPM is an INPUT-token limit; apply safety factor directly.
+                # Do NOT subtract output_reserve — that would double-count it because
+                # output_reserve is already excluded from prompt_budget above.
+                tier_prompt_cap = int(tpm * _PROVIDER_SAFETY_FACTOR)
                 if tier_prompt_cap < effective_budget:
                     effective_budget = max(0, tier_prompt_cap)
+                    safety_pct = int(_PROVIDER_SAFETY_FACTOR * 100)
                     tier_warnings.append(
-                        f"Groq {provider_tier!r} tier TPM limit ({tpm:,}) is tighter than "
-                        f"context-window budget ({prompt_budget:,}) — effective budget capped "
-                        f"at {effective_budget:,} tokens"
+                        f"{cfg.provider!r} {active_tier!r} tier TPM limit ({tpm:,}) is "
+                        f"tighter than context-window budget ({prompt_budget:,}) — "
+                        f"effective budget capped at {effective_budget:,} tokens "
+                        f"({safety_pct}% safety target applied)"
                     )
 
         # ── Step 2: Analyze sections ──────────────────────────────────────────

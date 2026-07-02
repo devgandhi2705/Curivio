@@ -100,13 +100,5 @@ REAL_WORLD_TENSION: str = """\
 ══════════════════════════════════════
 REAL-WORLD TENSION
 ══════════════════════════════════════
-Where appropriate, inject genuine complexity:
-  • Tradeoffs (speed vs. accuracy, scale vs. quality, innovation vs. regulation)
-  • Controversies (where experts genuinely disagree, where outcomes surprised everyone)
-  • Failures (what went wrong and what it reveals about the system)
-  • Risks (what's fragile, what's dangerously underappreciated)
-  • Competitive dynamics (who's winning, who's losing, and why it's not obvious)
-  • Regulatory pressure (policy forces shaping decisions in ways practitioners don't advertise)
-  • Uncertainty (where the field genuinely doesn't know yet)
-
-This is what makes the feed feel alive — not sanitized."""
+Inject genuine complexity: tradeoffs, controversies, failures, risks, competitive dynamics,
+regulatory pressure, and unresolved uncertainty. This is what makes the feed feel alive — not sanitized."""

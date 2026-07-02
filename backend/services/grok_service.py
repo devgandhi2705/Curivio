@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -23,24 +23,42 @@ def _get_client() -> OpenAI:
 logger = logging.getLogger(__name__)
 
 
-def _log_pre_call_budget(
+def _preflight_check(
     operation: str,
     prompt:    str | None        = None,
     messages:  list[dict] | None = None,
 ) -> None:
     """
-    Estimate and log token budget before a Groq API call.
-    Non-fatal: any error is swallowed so it never blocks a request.
+    Active budget preflight before every Groq API call.
+
+    Evaluates against the EFFECTIVE limit (MIN(model_budget, provider_tpm_budget))
+    using the model's default_provider_tier from the registry.  For Groq free-tier
+    this is "on_demand" (12K TPM at 87.5% = 10,500 usable tokens).
+
+    Raises RuntimeError when status is OVER_LIMIT — the request would be
+    rejected by the provider.  NEAR_LIMIT surfaces a warning.
+    Estimation errors are swallowed (non-fatal) so they never block a request.
     """
     try:
-        from .token_budget import build_budget_report, log_budget_report
-        report = build_budget_report(
-            operation  = operation,
-            model_name = MODEL_NAME,
-            prompt     = prompt,
-            messages   = messages,
+        from .token_budget import (
+            estimate_total_request, evaluate, log_budget_plan, BudgetStatus,
         )
-        log_budget_report(report, logger)
+        from .model_registry import get_model_config
+        tokens       = estimate_total_request(prompt=prompt, messages=messages)
+        default_tier = get_model_config(MODEL_NAME).default_provider_tier
+        plan         = evaluate(tokens, MODEL_NAME, provider_tier=default_tier)
+        log_budget_plan(plan, logger)
+        if plan.status == BudgetStatus.OVER_LIMIT:
+            raise RuntimeError(
+                f"[{operation}] Prompt exceeds effective budget: "
+                f"{plan.current_prompt_tokens:,} tokens > "
+                f"{plan.available_input_budget:,} effective "
+                f"(model={plan.model_limit:,}, provider={plan.provider_limit or plan.model_limit:,}) "
+                f"+{plan.overflow_tokens:,} overflow. "
+                "Use ModelAwareAssembler to repair before sending."
+            )
+    except RuntimeError:
+        raise   # budget overflow — never swallow
     except Exception:
         logger.debug("[groq] Budget pre-check failed (non-fatal)", exc_info=True)
 
@@ -64,7 +82,7 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
-    _log_pre_call_budget("ask_grok", prompt=prompt)
+    _preflight_check("ask_grok", prompt=prompt)
 
     try:
         response = _get_client().chat.completions.create(**kwargs)
@@ -106,7 +124,7 @@ def ask_grok_chat(messages: list[dict]) -> str:
     """
     from .api_usage_service import log_api_call, estimate_groq_cost
 
-    _log_pre_call_budget("ask_grok_chat", messages=messages)
+    _preflight_check("ask_grok_chat", messages=messages)
 
     t0 = time.monotonic()
     try:
@@ -115,6 +133,8 @@ def ask_grok_chat(messages: list[dict]) -> str:
             messages=messages,
             temperature=0.7,
         )
+    except RateLimitError:
+        raise RuntimeError("Our AI is busy — please try again in a moment.")
     except Exception as exc:
         raise RuntimeError(
             f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."
@@ -155,7 +175,7 @@ def ask_grok_chat_stream(messages: list[dict]):
     """
     from .api_usage_service import log_api_call, estimate_groq_cost
 
-    _log_pre_call_budget("ask_grok_chat_stream", messages=messages)
+    _preflight_check("ask_grok_chat_stream", messages=messages)
 
     t0 = time.monotonic()
     try:
@@ -166,6 +186,8 @@ def ask_grok_chat_stream(messages: list[dict]):
             stream=True,
             stream_options={"include_usage": True},
         )
+    except RateLimitError:
+        raise RuntimeError("Our AI is busy — please try again in a moment.")
     except Exception as exc:
         raise RuntimeError(
             f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."

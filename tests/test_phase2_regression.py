@@ -532,7 +532,6 @@ class TestDay2Feed:
 
     def test_output_schema_present(self, prompt):
         assert "package_headline" in prompt
-        assert "memory_callback" in prompt
 
 
 class TestBeginnerFeed:

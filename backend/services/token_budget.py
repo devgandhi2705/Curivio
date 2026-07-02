@@ -1,8 +1,17 @@
 """
-Token estimation and prompt budget reporting.
+Token estimation, prompt budget reporting, and preflight evaluation.
 
 Accuracy: approximate (chars / 4 heuristic + per-message overhead).
-Purpose:  visibility and diagnostics only — never enforces or modifies prompts.
+
+BudgetReport  — diagnostics only, never enforces.
+BudgetPlan    — authoritative go/no-go status; OVER_LIMIT triggers repair or raise.
+
+Provider-aware budgeting (Phase 9.2B)
+--------------------------------------
+evaluate() accepts an optional provider_tier argument.  When provided the
+effective budget is MIN(model_context_budget, provider_tpm × safety_factor).
+Groq free-tier models auto-default to "on_demand" (12K TPM) via the registry;
+non-Groq models are unaffected (no tier limits registered).
 
 Environment flags
 -----------------
@@ -15,6 +24,7 @@ from __future__ import annotations
 import os
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +43,11 @@ _MESSAGE_OVERHEAD: int = 4
 _ASK_GROK_SYSTEM_MSG: str = (
     "You are an AI-powered personalized learning and research assistant."
 )
+
+# Measured from grok_service.ask_grok(): system message (~15 tok) + 2×message
+# overhead (4 tok each) = 23 tokens added around the assembled prompt.
+# Used as reserved_system_budget in provider-aware BudgetPlan instances.
+_FEED_SYSTEM_RESERVE: int = 23
 
 
 # ── Task 2 — Estimation ───────────────────────────────────────────────────────
@@ -240,3 +255,168 @@ def log_budget_report(
             report.utilization_pct,
             section_lines,
         )
+
+
+# ── Active budget controller ──────────────────────────────────────────────────
+
+
+class BudgetStatus(str, Enum):
+    """Authoritative go/no-go signal for a pending LLM request."""
+    SAFE       = "SAFE"        # < 85% utilization — proceed
+    NEAR_LIMIT = "NEAR_LIMIT"  # 85–99% utilization — log warning
+    OVER_LIMIT = "OVER_LIMIT"  # ≥ 100% — must repair or raise before sending
+
+
+@dataclass
+class BudgetPlan:
+    """
+    Single authoritative budget status object for one LLM request.
+
+    Existing fields (all callers must still provide these positionally):
+      model_name             — model identifier from the registry
+      context_limit          — model's full context window in tokens
+      reserved_output        — tokens reserved for model output
+      safety_margin          — safety buffer subtracted from budget
+      available_input_budget — effective budget (= effective_limit; provider-capped
+                               when evaluate() is called with a provider_tier)
+      current_prompt_tokens  — estimated tokens for the pending prompt
+      overflow_tokens        — max(0, current_prompt_tokens - available_input_budget)
+      status                 — SAFE / NEAR_LIMIT / OVER_LIMIT
+
+    Provider-aware fields (Phase 9.2B, have defaults for backward compat):
+      provider_name          — provider string from registry ("groq", "openai", …)
+      provider_tier          — active tier ("on_demand", "dev", "" if none)
+      model_limit            — context-window-only prompt budget (ignores provider)
+      provider_limit         — floor(tier_tpm × safety_factor), 0 = no tier limit
+      effective_limit        — MIN(model_limit, provider_limit or model_limit)
+      reserved_output_budget — tokens reserved for model output (= reserved_output)
+      reserved_system_budget — system message + per-message overhead (feed path ≈ 23)
+    """
+    # ── Core fields — no defaults, must be supplied ────────────────────────────
+    model_name:             str
+    context_limit:          int
+    reserved_output:        int
+    safety_margin:          int
+    available_input_budget: int
+    current_prompt_tokens:  int
+    overflow_tokens:        int
+    status:                 BudgetStatus
+    # ── Provider-aware fields — defaults preserve backward compat ─────────────
+    provider_name:          str = ""
+    provider_tier:          str = ""
+    model_limit:            int = 0   # model context budget before provider cap
+    provider_limit:         int = 0   # provider TPM safe budget (0 = no limit)
+    effective_limit:        int = 0   # = min(model_limit, provider_limit or model_limit)
+    reserved_output_budget: int = 0   # = reserved_output (explicit alias)
+    reserved_system_budget: int = 0   # system + message overhead (feed: 23 tok)
+
+
+def evaluate(
+    prompt_tokens: int,
+    model_name: str,
+    provider_tier: str | None = None,
+) -> BudgetPlan:
+    """
+    Build a BudgetPlan for a given token count and model.
+
+    Does NOT modify or truncate anything — purely evaluates whether
+    the prompt fits and returns a structured status object.
+
+    prompt_tokens  — estimated tokens for the prompt (use estimate_total_request)
+    model_name     — model identifier from the registry
+    provider_tier  — optional tier name (e.g. "on_demand").  When provided,
+                     effective budget = MIN(model_budget, tpm × safety_factor).
+                     When None, model context budget only (backward compat).
+                     Pass the model's default_provider_tier for production checks.
+    """
+    from .model_registry import get_model_config, PROVIDER_SAFETY_FACTOR
+    cfg        = get_model_config(model_name)
+    model_bud  = cfg.prompt_budget
+
+    # Resolve provider budget when a tier is specified
+    provider_bud = 0
+    active_tier  = provider_tier or ""
+    if active_tier:
+        tier_cfg = cfg.tier_limits.get(active_tier, {})
+        tpm = tier_cfg.get("tpm")
+        if tpm is not None:
+            provider_bud = int(tpm * PROVIDER_SAFETY_FACTOR)
+
+    # Effective = min(model, provider) when provider limit exists
+    if provider_bud > 0:
+        available = min(model_bud, provider_bud)
+    else:
+        available = model_bud
+
+    overflow = max(0, prompt_tokens - available)
+    util     = (prompt_tokens / available * 100) if available > 0 else 0.0
+
+    if overflow > 0:
+        status = BudgetStatus.OVER_LIMIT
+    elif util >= 85.0:
+        status = BudgetStatus.NEAR_LIMIT
+    else:
+        status = BudgetStatus.SAFE
+
+    return BudgetPlan(
+        model_name             = model_name,
+        context_limit          = cfg.context_window,
+        reserved_output        = cfg.output_reserve,
+        safety_margin          = cfg.safety_buffer,
+        available_input_budget = available,
+        current_prompt_tokens  = prompt_tokens,
+        overflow_tokens        = overflow,
+        status                 = status,
+        # Provider-aware fields (Phase 9.2B)
+        provider_name          = cfg.provider,
+        provider_tier          = active_tier,
+        model_limit            = model_bud,
+        provider_limit         = provider_bud,
+        effective_limit        = available,
+        reserved_output_budget = cfg.output_reserve,
+        reserved_system_budget = _FEED_SYSTEM_RESERVE if active_tier else 0,
+    )
+
+
+def log_budget_plan(plan: BudgetPlan, logger_inst: logging.Logger | None = None) -> None:
+    """
+    Log a BudgetPlan as a compact one-liner; warn on NEAR_LIMIT / OVER_LIMIT.
+
+    When provider_tier is set, the log includes model vs provider limits so the
+    effective ceiling is always visible.
+    """
+    _log = logger_inst or logger
+    util = (plan.current_prompt_tokens / plan.available_input_budget * 100) if plan.available_input_budget > 0 else 0.0
+
+    if plan.provider_tier:
+        # Provider-aware log: show both model and provider limits
+        _log.info(
+            "[budget] model=%-28s  provider=%s/%s  model_limit=%d  provider_limit=%d  "
+            "effective=%d  prompt=%d  util=%.1f%%  status=%s",
+            plan.model_name,
+            plan.provider_name,
+            plan.provider_tier,
+            plan.model_limit,
+            plan.provider_limit,
+            plan.effective_limit,
+            plan.current_prompt_tokens,
+            util,
+            plan.status,
+        )
+    else:
+        _log.info(
+            "[budget] model=%-30s  prompt=%6d  available=%7d  util=%5.1f%%  status=%s",
+            plan.model_name,
+            plan.current_prompt_tokens,
+            plan.available_input_budget,
+            util,
+            plan.status,
+        )
+
+    if plan.status == BudgetStatus.OVER_LIMIT:
+        _log.warning(
+            "[budget] OVER BUDGET: +%d tokens (%d > %d effective)",
+            plan.overflow_tokens, plan.current_prompt_tokens, plan.available_input_budget,
+        )
+    elif plan.status == BudgetStatus.NEAR_LIMIT:
+        _log.warning("[budget] NEAR LIMIT: %.1f%% of effective prompt budget consumed", util)
