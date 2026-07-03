@@ -429,6 +429,27 @@ CREATE INDEX IF NOT EXISTS idx_bookmarks_type
     ON bookmarks (content_type, saved_at DESC);
 """
 
+CREATE_READ_LATER_ITEMS = """
+CREATE TABLE IF NOT EXISTS read_later_items (
+    user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    article_key   TEXT NOT NULL,
+    title         TEXT NOT NULL DEFAULT '',
+    summary       TEXT DEFAULT '',
+    category      TEXT,
+    content_type  TEXT DEFAULT 'news',
+    project_id    TEXT DEFAULT '',
+    project_name  TEXT DEFAULT '',
+    insight_id    TEXT DEFAULT '',
+    queued_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, article_key)
+);
+"""
+
+CREATE_READ_LATER_ITEMS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_read_later_user
+    ON read_later_items (user_id, queued_at DESC);
+"""
+
 CREATE_PASSWORD_RESET_TOKENS = """
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -861,4 +882,6 @@ ALL_TABLES = [
     CREATE_UNPACK_CACHE,
     CREATE_SHARE_LINKS,
     CREATE_SHARE_LINKS_LOOKUP_IDX,
+    CREATE_READ_LATER_ITEMS,
+    CREATE_READ_LATER_ITEMS_IDX,
 ]

@@ -2108,6 +2108,77 @@ async def api_delete_bookmark(
     return {"ok": True}
 
 
+# ── Read Later ────────────────────────────────────────────────────────────────
+
+from .services.read_later_service import (
+    list_queue as list_read_later,
+    add_item as add_read_later_item,
+    remove_item as remove_read_later_item,
+    clear_queue as clear_read_later_queue,
+)
+
+
+class AddReadLaterItemRequest(BaseModel):
+    articleKey:   str
+    title:        str = ""
+    summary:      str = ""
+    category:     str | None = None
+    content_type: str = "news"
+    projectId:    str = ""
+    projectName:  str = ""
+    insightId:    str | int | None = None
+
+
+@app.get("/read-later")
+@limiter.limit(BOOKMARKS_RATE_LIMIT)
+async def api_list_read_later(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    return list_read_later(user_id=current_user["user_id"])
+
+
+@app.post("/read-later")
+@limiter.limit(BOOKMARKS_RATE_LIMIT)
+async def api_add_read_later(
+    request: Request,
+    data: AddReadLaterItemRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    return add_read_later_item(
+        user_id=current_user["user_id"],
+        article_key=data.articleKey,
+        title=data.title,
+        summary=data.summary,
+        category=data.category,
+        content_type=data.content_type,
+        project_id=data.projectId,
+        project_name=data.projectName,
+        insight_id=data.insightId,
+    )
+
+
+@app.delete("/read-later/{article_key}")
+@limiter.limit(BOOKMARKS_RATE_LIMIT)
+async def api_remove_read_later(
+    request: Request,
+    article_key: str,
+    current_user: dict = Depends(get_current_user),
+):
+    remove_read_later_item(current_user["user_id"], article_key)
+    return {"ok": True}
+
+
+@app.delete("/read-later")
+@limiter.limit(BOOKMARKS_RATE_LIMIT)
+async def api_clear_read_later(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    clear_read_later_queue(current_user["user_id"])
+    return {"ok": True}
+
+
 # ── Share links ───────────────────────────────────────────────────────────────
 
 class CreateShareLinkRequest(BaseModel):

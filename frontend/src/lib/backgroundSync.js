@@ -2,11 +2,7 @@
  * Silent background sync — pre-caches the user's data into IndexedDB so the
  * app is usable offline. Runs once on authenticated mount and again whenever
  * the browser regains connectivity. Never blocks the UI, never throws.
- *
- * Note: Read Later has no backend endpoint (api/queue.js is localStorage-only),
- * so it's mirrored from the local queue rather than fetched.
  */
-import { getQueue } from "../api/queue.js"
 import { articleKeyFromTitle } from "../api/feed.js"
 import {
   saveProjectsList, saveProject,
@@ -88,7 +84,8 @@ export async function runBackgroundSync(authToken) {
     // ── PRIORITY 4: Bookmarks + Read Later ─────────────────────
     const bookmarks = await safeFetch(`${API_URL}/bookmarks`)
     if (bookmarks) await saveBookmarks(bookmarks)
-    await saveReadLater(getQueue()) // local-only, no fetch needed
+    const readLater = await safeFetch(`${API_URL}/read-later`)
+    if (readLater) await saveReadLater(readLater)
 
     await sleep(SYNC_DELAY_MS)
     if (!navigator.onLine) { setSyncState("offline"); return }
