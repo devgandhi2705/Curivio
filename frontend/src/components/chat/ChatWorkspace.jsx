@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import { useContextMenu } from "../../contexts/ContextMenu.jsx"
+import { createShareLink } from "../../api/share.js"
 import ChatMessage from "./ChatMessage.jsx"
 import ChatInput from "./ChatInput.jsx"
 import { SessionListContent } from "./SessionList.jsx"
+import ShareButton from "../ShareButton.jsx"
 
 function RenameModal({ heading, initialValue, onConfirm, onClose }) {
   const [value, setValue] = useState(initialValue)
@@ -76,6 +79,7 @@ function getGreeting(name, rand) {
 }
 
 export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName, onSidebarClose, onBeforeModal }) {
+  const navigate = useNavigate()
   const [sessionId, setSessionId]     = useState(() => generateSessionId())
   const [messages, setMessages]       = useState([])
   const [sessions, setSessions]       = useState([])
@@ -99,44 +103,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   const bottomRef      = useRef(null)
   const streamAbortRef = useRef(null)
   const greetingRandRef = useRef(Math.random())  // stable random per session for varied greeting
-  // Keep a ref so popstate handler always sees the latest sessionId without re-registering
-  const sessionIdRef = useRef(sessionId)
-  useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
 
   // Cancel any in-flight stream on unmount
   useEffect(() => () => { streamAbortRef.current?.() }, [])
-
-  // Restore chat session from browser history (handles navigating back to chat view)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const sid = window.history.state?.chatSession
-    if (!sid) return
-    setSessionId(sid)
-    setMessages([])
-    setIsLoading(true)
-    fetchHistory(sid, 50)
-      .then(h => { setMessages(h.map(apiMessageToLocal)); setIsLoading(false) })
-      .catch(() => { setError("Could not load session history."); setIsLoading(false) })
-  }, [])
-
-  // Within-chat: restore previous session when browser back/forward fires while on chat
-  useEffect(() => {
-    function onPopState(e) {
-      const sid = e.state?.chatSession
-      if (!sid || sid === sessionIdRef.current) return
-      setSessionId(sid)
-      setMessages([])
-      setError(null)
-      setConversationMode(null)
-      setChatMode("normal")
-      setIsLoading(true)
-      fetchHistory(sid, 50)
-        .then(h => { setMessages(h.map(apiMessageToLocal)); setIsLoading(false) })
-        .catch(() => { setError("Could not load session history."); setIsLoading(false) })
-    }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
 
   // Load sessions list on mount
   useEffect(() => {
@@ -321,11 +290,12 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setError(null)
     setConversationMode(null)
     setChatMode("normal")
-  }, [])
+    navigate('/chat')
+  }, [navigate])
 
   const handleSelectSession = useCallback(async (session) => {
     if (session.session_id === sessionId) return
-    window.history.pushState({ view: 'chat', chatSession: session.session_id }, '')
+    navigate(`/chat/${session.session_id}`)
     setSessionId(session.session_id)
     setMessages([])
     setError(null)
@@ -351,7 +321,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     } finally {
       setIsLoading(false)
     }
-  }, [sessionId])
+  }, [sessionId, navigate])
 
   const handleClearSession = useCallback(async () => {
     if (!messages.length) return
@@ -381,8 +351,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       setSessionId(generateSessionId())
       setMessages([])
       setError(null)
+      navigate('/chat')
     }
-  }, [sessionId])
+  }, [sessionId, navigate])
 
   const handleRetry = useCallback(async (msgIndex) => {
     const userMsg = messages[msgIndex - 1]
@@ -416,6 +387,17 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         },
       },
       { label: 'New chat', onClick: handleNewChat },
+      {
+        label: 'Copy share link',
+        onClick: async () => {
+          try {
+            const { share_url } = await createShareLink('chat', sessionId)
+            await navigator.clipboard.writeText(share_url)
+          } catch {
+            // silently ignore — no toast system in this app
+          }
+        },
+      },
       { label: 'Delete chat', variant: 'danger', onClick: () => handleDeleteSession(sessionId) },
     ])
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -456,6 +438,13 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
           onConfirm={async (value) => { await handleRename(renamingSessionId ?? sessionId, value); setShowRenameModal(false) }}
           onClose={() => setShowRenameModal(false)}
         />
+      )}
+
+      {/* Share current thread — desktop only; mobile users get "Copy share link" in the overflow menu */}
+      {messages.length > 0 && (
+        <div className="hidden md:block fixed top-3.5 right-3.5 z-50">
+          <ShareButton type="chat" resourceId={sessionId} shareTitle="Check out this conversation on Curivio" />
+        </div>
       )}
 
       {/* Feed context header */}

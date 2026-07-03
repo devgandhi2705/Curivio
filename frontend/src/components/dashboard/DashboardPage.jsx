@@ -1,8 +1,12 @@
 import { useState, useEffect, useMemo } from "react"
+import { useNavigate } from "react-router-dom"
 import { listProjects } from "../../api/projects.js"
 import { getReadingStats } from "../../api/feed.js"
 import { getProjectActivity, getAllProjectsActivity } from "../../api/activity.js"
 import LearningCalendar from "../feed/LearningCalendar.jsx"
+import ShareButton from "../ShareButton.jsx"
+import NotesModule from "./NotesModule.jsx"
+import { useAuth } from "../../contexts/AuthContext.jsx"
 
 // ── Constants & helpers ───────────────────────────────────────────────────────
 
@@ -32,7 +36,7 @@ function setStoredWeeklyGoal(n) {
   try { localStorage.setItem(WEEKLY_GOAL_KEY, String(n)) } catch {}
 }
 
-function getMondayOfThisWeek() {
+export function getMondayOfThisWeek() {
   const d = new Date()
   const dow = d.getDay()
   const monday = new Date(d)
@@ -53,7 +57,7 @@ function formatLastActive(ts) {
 
 // ── Stats strip ───────────────────────────────────────────────────────────────
 
-function StatsStrip({ stats, loading }) {
+export function StatsStrip({ stats, loading }) {
   if (loading) {
     return <div className="h-[60px] rounded-2xl bg-slate-900/60 border border-slate-800/50 animate-pulse mb-5" />
   }
@@ -156,7 +160,7 @@ function GoalRing({ current, target }) {
   )
 }
 
-function WeeklyGoalCard({ current, target, onChangeTarget }) {
+export function WeeklyGoalCard({ current, target, onChangeTarget }) {
   const [editing, setEditing] = useState(false)
   const [draft,   setDraft]   = useState(String(target))
   const done = current >= target
@@ -209,7 +213,7 @@ function WeeklyGoalCard({ current, target, onChangeTarget }) {
 
 // ── 30-day consistency card ───────────────────────────────────────────────────
 
-function ConsistencyCard({ activityData }) {
+export function ConsistencyCard({ activityData }) {
   const { pct, activeDays, label, colorClass, cells } = useMemo(() => {
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - 29)
@@ -258,7 +262,7 @@ function ConsistencyCard({ activityData }) {
 
 // ── Weekday activity chart ────────────────────────────────────────────────────
 
-function WeekdayChart({ activityData }) {
+export function WeekdayChart({ activityData }) {
   const bars = useMemo(() => {
     const totals = Array(7).fill(0)
     const counts = Array(7).fill(0)
@@ -393,6 +397,7 @@ function ProjectSelector({ projects, value, onChange }) {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export default function DashboardPage({ onGoToFeed, userName }) {
+  const { user } = useAuth()
   const [stats,             setStats]             = useState(null)
   const [statsLoading,      setStatsLoading]      = useState(true)
   const [projects,          setProjects]          = useState([])
@@ -438,6 +443,11 @@ export default function DashboardPage({ onGoToFeed, userName }) {
     setStoredWeeklyGoal(n)
   }
 
+  const navigate = useNavigate()
+  function handleOpenNoteArticle(projectId, insightId, cardId) {
+    navigate(`/feed/${encodeURIComponent(projectId)}/${insightId}/${encodeURIComponent(cardId)}`)
+  }
+
   const hour      = new Date().getHours()
   const firstName = (userName || "").split(" ")[0]
   const timeStr   = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : hour < 21 ? "Good evening" : "Burning the midnight oil"
@@ -447,9 +457,16 @@ export default function DashboardPage({ onGoToFeed, userName }) {
   return (
     <div>
       {/* Greeting */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{greeting}</h1>
-        <p className="text-sm text-slate-500 mt-1">{dateStr}</p>
+      <div className="mb-6 flex items-start justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{greeting}</h1>
+          <p className="text-sm text-slate-500 mt-1">{dateStr}</p>
+        </div>
+        <ShareButton
+          type="dashboard"
+          resourceId={user?.user_id}
+          shareTitle={`${user?.name || "My"}'s learning dashboard on Curivio`}
+        />
       </div>
 
       {/* Stats strip */}
@@ -500,6 +517,19 @@ export default function DashboardPage({ onGoToFeed, userName }) {
         </div>
 
       </div>
+
+      {/* Notes module — owner-only; stats.notes is only ever present on the
+          authenticated /stats/reading response, never on the shared dashboard */}
+      {Array.isArray(stats?.notes) && (
+        <div className="mt-5">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-2">Your Notes</p>
+          <NotesModule
+            notes={stats.notes}
+            noteCount={stats.note_count}
+            onOpenArticle={handleOpenNoteArticle}
+          />
+        </div>
+      )}
     </div>
   )
 }

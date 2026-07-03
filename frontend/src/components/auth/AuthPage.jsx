@@ -1,6 +1,8 @@
 import { useState } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
 import { forgotPassword, verifyResetCode, resetPassword, sendVerifyEmail } from "../../api/auth"
+import { forkSharedChat } from "../../api/share"
 
 function EyeIcon({ open }) {
   return open ? (
@@ -45,6 +47,8 @@ function PasswordInput({ value, onChange, placeholder, required, id }) {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
 export default function AuthPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [mode, setMode]             = useState("login") // "login" | "signup" | "forgot"
   const [email, setEmail]           = useState("")
   const [emailError, setEmailError] = useState("")
@@ -228,6 +232,24 @@ export default function AuthPage() {
     }
   }
 
+  async function redirectAfterLogin() {
+    const next   = searchParams.get("next")
+    const intent = searchParams.get("intent")
+
+    if (next && next.startsWith("/share/") && intent === "fork") {
+      const token = next.slice("/share/".length).split(/[/?]/)[0]
+      try {
+        const { new_chat_id } = await forkSharedChat(token)
+        navigate(`/chat/${new_chat_id}`)
+      } catch {
+        navigate(`/share/${token}`)
+      }
+      return
+    }
+
+    navigate(next && next.startsWith("/") ? next : "/feed")
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     setLocalError("")
@@ -240,6 +262,7 @@ export default function AuthPage() {
 
     try {
       await login(email.trim(), password)
+      await redirectAfterLogin()
     } catch {
       // error shown via context
     }

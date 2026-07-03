@@ -1,11 +1,16 @@
-// Curivio service worker — app shell caching + offline article serving.
+// Curivio service worker — app shell caching + offline data serving.
 
 const SHELL_CACHE_PREFIX = 'curivio-shell-'
-const SHELL_CACHE = 'curivio-shell-v1'
+const SHELL_CACHE = 'curivio-shell-v2'
 
 const STATIC_ASSET_RE = /\.(?:js|css|woff2?|png|svg|ico)$/
+const PROJECT_DETAIL_RE = /^\/api\/projects\/([^/]+)$/
 const INSIGHTS_PATH_RE = /^\/api\/projects\/([^/]+)\/insights\/?$/
-const PROJECTS_LIST_ID = '__projects_list__'
+const CHAT_MESSAGES_RE = /^\/api\/chat\/history\/([^/]+)$/
+
+function isStaticAsset(path) {
+  return STATIC_ASSET_RE.test(path)
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -30,6 +35,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
+  const path = url.pathname
   if (url.origin !== self.location.origin) return
 
   if (event.request.mode === 'navigate') {
@@ -37,19 +43,94 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (event.request.method === 'GET' && url.pathname === '/api/projects') {
-    event.respondWith(handleProjectsListRequest(event.request))
-    return
-  }
-
-  const insightsMatch = url.pathname.match(INSIGHTS_PATH_RE)
-  if (event.request.method === 'GET' && insightsMatch) {
-    event.respondWith(handleInsightsRequest(event.request, insightsMatch[1]))
-    return
-  }
-
-  if (STATIC_ASSET_RE.test(url.pathname)) {
+  // Static assets: cache-first (unchanged)
+  if (isStaticAsset(path)) {
     event.respondWith(cacheFirst(event.request))
+    return
+  }
+
+  // API intercepts: network-first, fall back to IndexedDB when offline.
+  // Only intercept GET — never intercept POST/PUT/DELETE.
+  if (event.request.method !== 'GET') return
+
+  // Projects list
+  if (path === '/api/projects') {
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('appData', 'projectsList')
+      return row ? row.data : null
+    }))
+    return
+  }
+
+  // Package / article content for a project's days — kept as its own lookup
+  // since it's a multi-record index scan, not a single-key get.
+  const insightsMatch = path.match(INSIGHTS_PATH_RE)
+  if (insightsMatch) {
+    const projectId = decodeURIComponent(insightsMatch[1])
+    event.respondWith(idbFallback(event.request, async () => {
+      const packages = await getPackagesForProject(projectId)
+      return packages.length ? packages : null
+    }))
+    return
+  }
+
+  // Single project detail
+  const projectDetailMatch = path.match(PROJECT_DETAIL_RE)
+  if (projectDetailMatch) {
+    const id = decodeURIComponent(projectDetailMatch[1])
+    event.respondWith(idbFallback(event.request, async () => {
+      return idbGet('projects', id)
+    }))
+    return
+  }
+
+  // Dashboard stats
+  if (path === '/api/stats/reading') {
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('appData', 'dashboard')
+      return row ? row.stats : null
+    }))
+    return
+  }
+
+  // Bookmarks
+  if (path === '/api/bookmarks') {
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('appData', 'bookmarks')
+      return row ? row.data : null
+    }))
+    return
+  }
+
+  // Chat sessions list
+  if (path === '/api/chat/sessions') {
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('appData', 'chatSessionsList')
+      return row ? row.data : null
+    }))
+    return
+  }
+
+  // Chat messages for a session
+  const chatMessagesMatch = path.match(CHAT_MESSAGES_RE)
+  if (chatMessagesMatch) {
+    const sessionId = decodeURIComponent(chatMessagesMatch[1])
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('chatMessages', sessionId)
+      return row ? row.messages : null
+    }))
+    return
+  }
+
+  // Discussions ("Related Discussions" on an article) — keyed by project+article pair
+  if (path === '/api/feed-chat-links') {
+    const projectId = url.searchParams.get('project_id') || ''
+    const articleKey = url.searchParams.get('article_key') || ''
+    event.respondWith(idbFallback(event.request, async () => {
+      const row = await idbGet('discussions', `${projectId}_${articleKey}`)
+      return row ? row.discussions : null
+    }))
+    return
   }
   // Everything else (other API calls) passes through to network normally.
 })
@@ -80,81 +161,74 @@ async function navigationShellFallback(request) {
   }
 }
 
-async function handleProjectsListRequest(request) {
-  if (navigator.onLine !== false) {
-    try {
-      return await fetch(request)
-    } catch (err) {
-      // network failed — fall through to IndexedDB
-    }
-  }
+// Shared network-first / IndexedDB-fallback strategy for all data API routes.
+async function idbFallback(request, idbLookup) {
   try {
-    const list = await getSavedRecord(PROJECTS_LIST_ID)
-    if (!list) return Response.error()
-    return new Response(JSON.stringify(list), {
+    return await fetch(request)
+  } catch (err) {
+    const data = await idbLookup()
+    if (data !== null && data !== undefined) {
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({ offline: true, error: 'No cached data' }), {
+      status: 503,
       headers: { 'Content-Type': 'application/json' },
     })
-  } catch (err) {
-    return Response.error()
-  }
-}
-
-async function handleInsightsRequest(request, projectId) {
-  if (navigator.onLine !== false) {
-    try {
-      return await fetch(request)
-    } catch (err) {
-      // network failed — fall through to IndexedDB
-    }
-  }
-  try {
-    const packages = await getPackagesForProject(decodeURIComponent(projectId))
-    if (!packages.length) return Response.error()
-    return new Response(JSON.stringify(packages), {
-      headers: { 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    return Response.error()
   }
 }
 
 // ─── Minimal inline IndexedDB read (mirrors src/lib/offlineStorage.js) ─────────
 // Service workers can't import ES modules from src/, so this duplicates just
-// the read path needed to serve cached packages while offline.
+// the read path needed to serve cached data while offline.
 
 const DB_NAME = 'curivio-offline'
-const DB_VERSION = 1
 
-function openOfflineDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+// General-purpose single-key lookup. Never rejects — a miss resolves null,
+// not an error. The DB version is intentionally omitted from indexedDB.open()
+// so the SW opens whatever version currently exists, rather than forcing an
+// upgrade (schema upgrades belong to src/lib/offlineStorage.js only).
+function idbGet(storeName, key) {
+  return new Promise((resolve) => {
+    const req = indexedDB.open(DB_NAME)
+    req.onsuccess = (e) => {
+      const db = e.target.result
+      if (!db.objectStoreNames.contains(storeName)) {
+        resolve(null)
+        return
+      }
+      const tx = db.transaction(storeName, 'readonly')
+      const store = tx.objectStore(storeName)
+      const getReq = store.get(key)
+      getReq.onsuccess = () => resolve(getReq.result ?? null)
+      getReq.onerror = () => resolve(null)
+    }
+    req.onerror = () => resolve(null)
   })
 }
 
-function getSavedRecord(id) {
-  return openOfflineDB().then((db) => new Promise((resolve, reject) => {
-    if (!db.objectStoreNames.contains('articles')) { resolve(null); return }
-    const req = db.transaction('articles', 'readonly').objectStore('articles').get(id)
-    req.onsuccess = () => resolve(req.result ? req.result.payload : null)
-    req.onerror = () => reject(req.error)
-  }))
-}
-
+// Multi-record index scan for a project's cached packages — not expressible
+// as a single idbGet(store, key) lookup.
 function getPackagesForProject(projectId) {
-  return openOfflineDB().then((db) => new Promise((resolve, reject) => {
-    if (!db.objectStoreNames.contains('articles')) { resolve([]); return }
-    const store = db.transaction('articles', 'readonly').objectStore('articles')
-    const index = store.index('project_id')
-    const req = index.getAll(projectId)
-    req.onsuccess = () => {
-      const packages = (req.result || [])
-        .filter((r) => r.kind === 'package')
-        .map((r) => r.payload)
-        .sort((a, b) => (b.day_number || 0) - (a.day_number || 0))
-      resolve(packages)
+  return new Promise((resolve) => {
+    const req = indexedDB.open(DB_NAME)
+    req.onsuccess = (e) => {
+      const db = e.target.result
+      if (!db.objectStoreNames.contains('articles')) { resolve([]); return }
+      const store = db.transaction('articles', 'readonly').objectStore('articles')
+      const index = store.index('project_id')
+      const getReq = index.getAll(projectId)
+      getReq.onsuccess = () => {
+        const packages = (getReq.result || [])
+          .filter((r) => r.kind === 'package')
+          .map((r) => r.payload)
+          .sort((a, b) => (b.day_number || 0) - (a.day_number || 0))
+        resolve(packages)
+      }
+      getReq.onerror = () => resolve([])
     }
-    req.onerror = () => reject(req.error)
-  }))
+    req.onerror = () => resolve([])
+  })
 }

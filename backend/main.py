@@ -1771,9 +1771,19 @@ async def reading_stats_endpoint(
     """
     Aggregate reading stats for the current user:
     streak, total cards read, packages generated, active projects.
+
+    Notes/note_count are added here (owner-only endpoint) rather than inside
+    get_reading_stats() itself, because the public share resolver also calls
+    get_reading_stats() for shared dashboards and must never see note data.
     """
     from .services.feed_read_service import get_reading_stats
-    return get_reading_stats(user_id=current_user["user_id"])
+    from .services.card_notes_service import get_all_notes_for_user
+
+    stats = get_reading_stats(user_id=current_user["user_id"])
+    notes = get_all_notes_for_user(current_user["user_id"])
+    stats["notes"] = notes
+    stats["note_count"] = len(notes)
+    return stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2096,6 +2106,53 @@ async def api_delete_bookmark(
     if not delete_bookmark(bookmark_id):
         raise HTTPException(status_code=404, detail="Bookmark not found")
     return {"ok": True}
+
+
+# ── Share links ───────────────────────────────────────────────────────────────
+
+class CreateShareLinkRequest(BaseModel):
+    type: str
+    resource_id: str
+
+
+@app.get("/share/{token}")
+@limiter.limit(MEMORY_RATE_LIMIT)
+async def resolve_share_link_endpoint(request: Request, token: str):
+    from .services.share_service import resolve_share_link
+    result = resolve_share_link(token)
+    if result is None:
+        raise HTTPException(status_code=404, detail="This link is no longer available.")
+    return result
+
+
+@app.post("/share/create")
+@limiter.limit(MEMORY_RATE_LIMIT)
+async def create_share_link_endpoint(
+    request: Request,
+    data: CreateShareLinkRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if data.type not in ("feed", "chat", "dashboard"):
+        raise HTTPException(status_code=400, detail="type must be 'feed', 'chat', or 'dashboard'")
+    from .services.share_service import create_share_link
+    return create_share_link(
+        data.type, data.resource_id, current_user["user_id"],
+        request.url.scheme, request.url.netloc,
+    )
+
+
+@app.post("/share/chat/{token}/fork")
+@limiter.limit(MEMORY_RATE_LIMIT)
+async def fork_chat_endpoint(
+    request: Request,
+    token: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from .services.share_service import fork_chat
+    new_chat_id = fork_chat(token, current_user["user_id"])
+    if new_chat_id is None:
+        raise HTTPException(status_code=404, detail="Share link not found")
+    return {"new_chat_id": new_chat_id}
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

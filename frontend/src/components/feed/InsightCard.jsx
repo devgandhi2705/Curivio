@@ -16,6 +16,7 @@
  */
 import { useState, useEffect, useRef } from "react"
 import BookmarkButton from "../bookmarks/BookmarkButton.jsx"
+import ShareButton from "../ShareButton.jsx"
 
 const DIFF_BADGE = {
   beginner:     "text-emerald-400/60 bg-emerald-900/15 border-emerald-800/25",
@@ -550,11 +551,17 @@ export default function InsightCard({
   onDeleteNote,
   isOfflineAvailable = false,
   offlineDisabled    = false,
+  day         = null,
+  articleKey  = null,
+  readOnly    = false,
 }) {
 
   const type   = TYPE_CONFIG[card.content_type] || TYPE_CONFIG.news
 
-  const hasChatActions = onAskAbout || onDeepResearch || onExplainSimply || onToggleQueue
+  const hasChatActions = !readOnly && (onAskAbout || onDeepResearch || onExplainSimply || onToggleQueue)
+  const shareResourceId = projectId && day != null
+    ? `${projectId}/${day}${articleKey ? `/${articleKey}` : ''}`
+    : null
 
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState(note ?? "")
@@ -652,12 +659,12 @@ export default function InsightCard({
       <SourceSection sourceLinks={card.source_links} cardTitle={card.title} />
 
       {/* Bottom action bar */}
-      {(hasChatActions || onMarkRead || onMarkUnread) && (
+      {(hasChatActions || (!readOnly && (onMarkRead || onMarkUnread)) || shareResourceId) && (
         <div className="border-t border-slate-800/50 px-2.5 md:px-4 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
           <div className="flex items-center gap-1 md:gap-1.5 flex-wrap">
             {/* PRIMARY: Ask About */}
-            {onAskAbout && (
+            {!readOnly && onAskAbout && (
               <button
                 onClick={() => onAskAbout(card)}
                 disabled={offlineDisabled}
@@ -669,7 +676,7 @@ export default function InsightCard({
               </button>
             )}
             {/* PRIMARY: Explain Simply */}
-            {onExplainSimply && (
+            {!readOnly && onExplainSimply && (
               <button
                 onClick={() => onExplainSimply(card)}
                 disabled={offlineDisabled}
@@ -681,7 +688,7 @@ export default function InsightCard({
               </button>
             )}
             {/* SECONDARY: Deep Research — icon only on mobile */}
-            {onDeepResearch && (
+            {!readOnly && onDeepResearch && (
               <button
                 onClick={() => onDeepResearch(card)}
                 disabled={offlineDisabled}
@@ -693,7 +700,7 @@ export default function InsightCard({
               </button>
             )}
             {/* SECONDARY: Read Later — desktop main row only */}
-            {onToggleQueue && (
+            {!readOnly && onToggleQueue && (
               <button
                 onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
                 className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
@@ -707,7 +714,7 @@ export default function InsightCard({
               </button>
             )}
             {/* Add note — desktop main row only (ml-auto) */}
-            {(onSaveNote || onDeleteNote || note) && (
+            {!readOnly && (onSaveNote || onDeleteNote || note) && (
               <button
                 onClick={() => setNoteOpen(o => !o)}
                 className={`hidden md:inline-flex ml-auto items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
@@ -723,25 +730,37 @@ export default function InsightCard({
                 )}
               </button>
             )}
-            {/* Bookmark — always visible */}
-            <BookmarkButton
-              className={(onSaveNote || onDeleteNote || note) ? "" : "md:ml-auto"}
-              label
-              bookmarkData={{
-                title:              card.title,
-                summary:            card.summary || '',
-                content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
-                source_url:         card.source_links?.[0]?.url || '',
-                project_id:         projectId,
-                project_name:       projectName,
-                ai_generated_notes: note?.trim() || card.why_it_matters || '',
-                related_topics:     card.related_topics || [],
-                source_type:        'feed',
-                tags:               [card.category, card.content_type].filter(Boolean),
-              }}
-            />
+            {/* Bookmark — always visible, hidden in readOnly (shared) view */}
+            {!readOnly && (
+              <BookmarkButton
+                className={(onSaveNote || onDeleteNote || note) ? "" : "md:ml-auto"}
+                label
+                bookmarkData={{
+                  title:              card.title,
+                  summary:            card.summary || '',
+                  content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
+                  source_url:         card.source_links?.[0]?.url || '',
+                  project_id:         projectId,
+                  project_name:       projectName,
+                  ai_generated_notes: note?.trim() || card.why_it_matters || '',
+                  related_topics:     card.related_topics || [],
+                  source_type:        'feed',
+                  tags:               [card.category, card.content_type].filter(Boolean),
+                }}
+              />
+            )}
+            {/* Share — always visible, including in readOnly (shared) view */}
+            {shareResourceId && (
+              <ShareButton
+                type="feed"
+                resourceId={shareResourceId}
+                shareTitle={card.title || ""}
+                shareText={card.summary || ""}
+                className={readOnly || onSaveNote || onDeleteNote || note ? "" : "md:ml-auto"}
+              />
+            )}
             {/* Read / Unread — desktop main row only */}
-            {(onMarkRead || onMarkUnread) && (
+            {!readOnly && (onMarkRead || onMarkUnread) && (
               <button
                 onClick={handleReadToggle}
                 className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
@@ -757,7 +776,7 @@ export default function InsightCard({
               </button>
             )}
             {/* More toggle — mobile only, reveals tertiary actions */}
-            {(onToggleQueue || onSaveNote || onDeleteNote || note || onMarkRead || onMarkUnread) && (
+            {!readOnly && (onToggleQueue || onSaveNote || onDeleteNote || note || onMarkRead || onMarkUnread) && (
               <button
                 onClick={() => setMoreOpen(o => !o)}
                 className={`md:hidden ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${

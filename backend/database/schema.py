@@ -727,6 +727,43 @@ MIGRATE_ADD_INSIGHT_STATUS = (
     "ALTER TABLE project_insights ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
 )
 
+CREATE_SHARE_LINKS = """
+CREATE TABLE IF NOT EXISTS share_links (
+    id          TEXT      PRIMARY KEY,
+    type        TEXT      NOT NULL CHECK(type IN ('feed', 'chat', 'dashboard')),
+    resource_id TEXT      NOT NULL,
+    created_by  TEXT      NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_SHARE_LINKS_LOOKUP_IDX = """
+CREATE INDEX IF NOT EXISTS idx_share_links_lookup
+    ON share_links (type, resource_id, created_by);
+"""
+
+MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM = (
+    "ALTER TABLE chat_sessions ADD COLUMN forked_from TEXT DEFAULT NULL"
+)
+
+# Extend share_links.type CHECK to include 'dashboard'.
+# SQLite requires a full table-recreation to change a CHECK constraint.
+MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE = [
+    "PRAGMA foreign_keys=OFF",
+    """CREATE TABLE IF NOT EXISTS share_links_v2 (
+        id          TEXT      PRIMARY KEY,
+        type        TEXT      NOT NULL CHECK(type IN ('feed', 'chat', 'dashboard')),
+        resource_id TEXT      NOT NULL,
+        created_by  TEXT      NOT NULL,
+        created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
+    "INSERT OR IGNORE INTO share_links_v2 SELECT * FROM share_links",
+    "DROP TABLE IF EXISTS share_links",
+    "ALTER TABLE share_links_v2 RENAME TO share_links",
+    "CREATE INDEX IF NOT EXISTS idx_share_links_lookup ON share_links (type, resource_id, created_by)",
+    "PRAGMA foreign_keys=ON",
+]
+
 MIGRATIONS = [
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
     MIGRATE_DROP_FOCUS_AREAS,
@@ -750,6 +787,8 @@ MIGRATIONS = [
     MIGRATE_ADD_JOURNEY_SHAPE,
     MIGRATE_ADD_TOP_GAPS_JSON,
     MIGRATE_ADD_INSIGHT_STATUS,
+    MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM,
+    MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE,
 ]
 
 ALL_TABLES = [
@@ -820,4 +859,6 @@ ALL_TABLES = [
     CREATE_JOURNEY_PLANS,
     CREATE_JOURNEY_PLANS_IDX,
     CREATE_UNPACK_CACHE,
+    CREATE_SHARE_LINKS,
+    CREATE_SHARE_LINKS_LOOKUP_IDX,
 ]

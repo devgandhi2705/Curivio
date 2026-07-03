@@ -37,10 +37,11 @@ import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
 import IntentConfirmModal from "./IntentConfirmModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
+import NotesOnlyFeed from "./NotesOnlyFeed.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import { useContextMenu } from "../../contexts/ContextMenu.jsx"
-import { savePackage } from "../../lib/offlineStorage.js"
+import { savePackage, saveProjectsList } from "../../lib/offlineStorage.js"
 import { useOfflineArticles } from "../../hooks/useOfflineArticles.js"
 
 function cacheInsightsOffline(insights) {
@@ -146,12 +147,30 @@ function RenameModal({ heading, initialValue, onConfirm, onClose }) {
 
 // ── FeedSubsection — rendered inside App sidebar's Zone 3 ─────────────────────
 
+function NotesOnlyToggle({ active, onToggle }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${
+        active
+          ? "bg-blue-600/20 border-blue-500/40 text-blue-400"
+          : "bg-transparent border-slate-700/60 text-slate-500 hover:text-slate-300"
+      }`}
+      title="Show only articles with notes"
+    >
+      Notes
+    </button>
+  )
+}
+
 function FeedSubsection({
   projects,
   activeId,
   loadingList,
   listError,
   progressions,
+  showNotesOnly,
+  onToggleNotesOnly,
   onSelect,
   onNew,
   onRename,
@@ -165,13 +184,16 @@ function FeedSubsection({
         <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
           Projects
         </span>
-        <button
-          onClick={onNew}
-          className="p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
-          title="New project"
-        >
-          <PlusIcon className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <NotesOnlyToggle active={showNotesOnly} onToggle={onToggleNotesOnly} />
+          <button
+            onClick={onNew}
+            className="p-1 rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+            title="New project"
+          >
+            <PlusIcon className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Project list */}
@@ -243,6 +265,10 @@ export default function ProjectsPage({
   // Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false)
 
+  // Notes-only filter — cross-project view, activeId is left untouched so
+  // toggling off restores whatever project was previously selected.
+  const [showNotesOnly, setShowNotesOnly] = useState(false)
+
   // Modals
   const [showCreate,           setShowCreate]           = useState(false)
   const [creating,             setCreating]             = useState(false)
@@ -303,6 +329,8 @@ export default function ProjectsPage({
           loadingList={loadingList}
           listError={listError}
           progressions={progressions}
+          showNotesOnly={showNotesOnly}
+          onToggleNotesOnly={() => setShowNotesOnly(v => !v)}
           onSelect={(p) => subsectionHandlers.current.handleSelect(p)}
           onNew={() => subsectionHandlers.current.onNew()}
           onRename={(p) => subsectionHandlers.current.onRename(p)}
@@ -312,7 +340,7 @@ export default function ProjectsPage({
       )
     })
     // No cleanup — ProjectsPage is always-mounted.
-  }, [register, sortedProjects, activeId, loadingList, listError, progressions])
+  }, [register, sortedProjects, activeId, loadingList, listError, progressions, showNotesOnly])
 
   // Register contextual ⋮ actions for the feed view
   useEffect(() => {
@@ -347,7 +375,7 @@ export default function ProjectsPage({
     listProjects()
       .then(async (data) => {
         setProjects(data)
-        savePackage("__projects_list__", data, { kind: "projects-list" }).catch(() => {})
+        saveProjectsList(data).catch(() => {})
         if (data.length > 0) {
           setActiveId(data[0].project_id)
           const ids = data.map(p => p.project_id)
@@ -679,7 +707,9 @@ export default function ProjectsPage({
       </div>
 
       {/* Workspace */}
-      {!activeProject ? (
+      {showNotesOnly ? (
+        <NotesOnlyFeed />
+      ) : !activeProject ? (
         <EmptyWorkspace onNew={() => setShowCreate(true)} />
       ) : (
         <>

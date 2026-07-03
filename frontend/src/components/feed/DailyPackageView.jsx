@@ -19,6 +19,7 @@
  *   onOpenChat(sessionId)
  */
 import { useState, useEffect, useRef } from "react"
+import { useNavigate } from "react-router-dom"
 import InsightCard from "./InsightCard.jsx"
 import { articleKeyFromTitle } from "../../api/feed.js"
 import { getInsightNotes, saveCardNote, deleteCardNote } from "../../api/notes.js"
@@ -26,6 +27,7 @@ import { exportAsPdf, downloadMarkdown } from "../../utils/exportPackage.js"
 import { getQueue, addToQueue, removeFromQueue, isInQueue } from "../../api/queue.js"
 import { getJourneyPreview } from "../../api/projects.js"
 import { savePackage, deletePackage } from "../../lib/offlineStorage.js"
+import ShareButton from "../ShareButton.jsx"
 
 function formatDate(ts) {
   if (!ts) return ""
@@ -188,14 +190,23 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
   )
 }
 
-function PackageHeader({ pkg, dayLabel }) {
+function PackageHeader({ pkg, dayLabel, projectId }) {
   const contentMix = buildContentMix(pkg)
   return (
     <div className="mb-3 md:mb-7">
       {/* Headline */}
-      <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight mb-1.5 md:mb-4 break-words">
-        {pkg.package_headline}
-      </h2>
+      <div className="flex items-start justify-between gap-2 mb-1.5 md:mb-4">
+        <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight break-words">
+          {pkg.package_headline}
+        </h2>
+        {projectId && (
+          <ShareButton
+            type="feed"
+            resourceId={`${projectId}/${pkg.id}`}
+            shareTitle={pkg.package_headline || "Daily package"}
+          />
+        )}
+      </div>
 
       {/* Learning thread — left-accent style */}
       {pkg.learning_thread && (
@@ -422,6 +433,8 @@ function PackageContent({
       onToggleQueue: onToggleQueue ? (c) => onToggleQueue(ak, c) : undefined,
       isOfflineAvailable: offlineIds?.has(pkg.id) || offlineIds?.has(`${project?.project_id || ''}_${pkg.id}_${ak}`) || false,
       offlineDisabled: !isOnline,
+      day:        pkg.id,
+      articleKey: ak,
     }
   }
 
@@ -441,6 +454,7 @@ function PackageContent({
       <PackageHeader
         pkg={pkg}
         dayLabel={dayLabel}
+        projectId={project?.project_id}
       />
 
       {/* Day progress bar — core cards only (curiosity is optional) */}
@@ -614,33 +628,7 @@ export default function DailyPackageView({
   const [notesMap, setNotesMap] = useState(new Map())
   // Set<articleKey> — synced from localStorage queue
   const [queuedKeys, setQueuedKeys] = useState(() => new Set(getQueue().map(i => i.articleKey)))
-
-  // Keep a ref so popstate handler always sees the latest packages without re-registering
-  const packagesRef = useRef(packages)
-  useEffect(() => { packagesRef.current = packages }, [packages])
-
-  // Restore selected day from browser history once packages are available (handles view-switch back)
-  const historyRestoredRef = useRef(false)
-  useEffect(() => {
-    if (historyRestoredRef.current || !packages.length) return
-    historyRestoredRef.current = true
-    const day = window.history.state?.feedDay
-    if (!day) return
-    const pkg = packages.find(p => p.id === day)
-    if (pkg) setSelectedId(pkg.id)
-  }, [packages])
-
-  // Within-feed: restore correct day when browser back/forward fires while already on feed
-  useEffect(() => {
-    function onPopState(e) {
-      const day = e.state?.feedDay
-      if (!day) return
-      const pkg = packagesRef.current.find(p => p.id === day)
-      if (pkg) setSelectedId(pkg.id)
-    }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+  const navigate = useNavigate()
 
   const selected = packages.find(p => p.id === selectedId) ?? packages[0] ?? null
   const latestId = packages[0]?.id ?? null
@@ -777,7 +765,7 @@ export default function DailyPackageView({
           packages={packages}
           displayLabels={displayLabels}
           selectedId={selectedId}
-          onSelect={(id) => { setSelectedId(id); window.history.pushState({ view: 'feed', feedDay: id }, '') }}
+          onSelect={(id) => { setSelectedId(id); navigate(`/feed/${project?.project_id || ''}/${id}`) }}
         />
       </div>
       <PackageContent

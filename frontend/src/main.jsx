@@ -1,12 +1,22 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { RouterProvider } from 'react-router-dom'
 import './index.css'
-import App from './App.jsx'
+import router from './router/index.jsx'
+import { AuthProvider } from './contexts/AuthContext.jsx'
+import { SidebarSubsectionProvider } from './contexts/SidebarSubsection.jsx'
+import { ContextMenuProvider } from './contexts/ContextMenu.jsx'
 import { registerSW } from './lib/registerSW.js'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <AuthProvider>
+      <SidebarSubsectionProvider>
+        <ContextMenuProvider>
+          <RouterProvider router={router} />
+        </ContextMenuProvider>
+      </SidebarSubsectionProvider>
+    </AuthProvider>
   </StrictMode>,
 )
 

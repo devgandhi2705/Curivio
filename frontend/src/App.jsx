@@ -1,46 +1,19 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useNavigate, useLocation, Navigate, NavLink } from 'react-router-dom'
 import ChatWorkspace from './components/chat/ChatWorkspace.jsx'
 import ProjectsPage from './components/feed/ProjectsPage.jsx'
 import BookmarksPage from './components/bookmarks/BookmarksPage.jsx'
 import DashboardPage from './components/dashboard/DashboardPage.jsx'
 import GlobalSearch from './components/GlobalSearch.jsx'
-import AuthPage from './components/auth/AuthPage.jsx'
-import LandingPage from './components/landing/LandingPage.jsx'
-import { AuthProvider, useAuth } from './contexts/AuthContext.jsx'
-import { SidebarSubsectionProvider, useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
-import { ContextMenuProvider, useContextMenu } from './contexts/ContextMenu.jsx'
+import { useAuth } from './contexts/AuthContext.jsx'
+import { useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
+import { useContextMenu } from './contexts/ContextMenu.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
 import { useNetworkStatus } from './hooks/useNetworkStatus.js'
 import UnpackListener from './components/unpack/UnpackListener.jsx'
-
-function AuthLoadingScreen() {
-  return (
-    <div className="min-h-screen min-h-dvh bg-slate-950 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-5">
-        <div className="relative w-12 h-12 flex-shrink-0">
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50 animate-pulse" />
-          <div className="absolute inset-0 rounded-2xl flex items-center justify-center">
-            <svg style={{ width: '22px', height: '22px' }} viewBox="0 0 20 20" fill="none">
-              <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
-              <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
-              <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
-              <path d="M10 4 L10 2.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-              <path d="M13.5 5.5 L14.6 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-              <path d="M6.5 5.5 L5.4 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-              <path d="M14.5 8 L16 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-              <path d="M5.5 8 L4 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-            </svg>
-          </div>
-        </div>
-        <div className="flex gap-1.5">
-          <span className="w-1.5 h-1.5 bg-slate-700 rounded-full animate-bounce [animation-delay:-0.3s]" />
-          <span className="w-1.5 h-1.5 bg-slate-700 rounded-full animate-bounce [animation-delay:-0.15s]" />
-          <span className="w-1.5 h-1.5 bg-slate-700 rounded-full animate-bounce" />
-        </div>
-      </div>
-    </div>
-  )
-}
+import SyncStatus from './components/SyncStatus.jsx'
+import { runBackgroundSync } from './lib/backgroundSync.js'
+import { getToken } from './api/auth.js'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -103,11 +76,11 @@ const ZONE3_PLACEHOLDER = {
 }
 
 const NAV_ITEMS = [
-  { id: 'feed',      label: 'Feed',      icon: FeedIcon      },
-  { id: 'chat',      label: 'Chat',      icon: ChatIcon      },
-  { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
-  { id: 'bookmarks', label: 'Bookmarks', icon: BookmarksIcon },
-  { id: 'readlater', label: 'Read Later', icon: ClockIcon    },
+  { id: 'feed',      to: '/feed',       label: 'Feed',       icon: FeedIcon      },
+  { id: 'chat',      to: '/chat',       label: 'Chat',       icon: ChatIcon      },
+  { id: 'dashboard', to: '/dashboard',  label: 'Dashboard',  icon: DashboardIcon },
+  { id: 'bookmarks', to: '/bookmarks',  label: 'Bookmarks',  icon: BookmarksIcon },
+  { id: 'readlater', to: '/read-later', label: 'Read Later', icon: ClockIcon     },
 ]
 
 function PanelLeftIcon({ collapsed }) {
@@ -649,15 +622,16 @@ function LogoMark() {
   )
 }
 
-function NavItem({ item, active, collapsed, onClick, badge }) {
+function NavItem({ item, collapsed, onClick, badge }) {
   const Icon = item.icon
   return (
     <div className="relative group">
-      <button
+      <NavLink
+        to={item.to}
         onClick={onClick}
-        className={[
+        className={({ isActive }) => [
           'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
-          active
+          isActive
             ? 'bg-white/[0.07] text-white'
             : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
           collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
@@ -670,7 +644,7 @@ function NavItem({ item, active, collapsed, onClick, badge }) {
             {badge}
           </span>
         )}
-      </button>
+      </NavLink>
       {/* Tooltip — desktop collapsed mode only */}
       <span className={[
         'pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-[70]',
@@ -686,11 +660,12 @@ function NavItem({ item, active, collapsed, onClick, badge }) {
 }
 
 function Sidebar({
-  view, navigateTo, onSearchOpen,
+  view, onSearchOpen,
   queue, onQueueItemClick,
   showSettings, onSettingsToggle, settingsRef, user,
   collapsed, setCollapsed, open, setOpen,
 }) {
+  const navigate = useNavigate()
   const { subsections } = useSidebarSubsection()
   const { actionsByView } = useContextMenu()
   const [sidebarQuery, setSidebarQuery] = useState('')
@@ -767,7 +742,7 @@ function Sidebar({
         <div className={`flex items-center h-12 flex-shrink-0 px-3 ${collapsed ? 'md:px-1' : ''}`}>
           {/* Logo — navigates to landing ONLY, never controls sidebar state */}
           <button
-            onClick={() => { navigateTo('landing'); setOpen(false) }}
+            onClick={() => { navigate('/'); setOpen(false) }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
           >
             <LogoMark />
@@ -803,9 +778,8 @@ function Sidebar({
             <NavItem
               key={item.id}
               item={item}
-              active={view === item.id}
               collapsed={collapsed}
-              onClick={() => { navigateTo(item.id); setOpen(false) }}
+              onClick={() => setOpen(false)}
               badge={item.id === 'readlater' ? queue.length : 0}
             />
           ))}
@@ -933,6 +907,7 @@ function Sidebar({
               <span className={`flex-1 text-left truncate ${collapsed ? 'md:hidden' : ''}`}>
                 {user?.name || 'Settings'}
               </span>
+              <SyncStatus />
               <GearIcon className={`w-3.5 h-3.5 text-slate-600 flex-shrink-0 ${collapsed ? 'md:hidden' : ''}`} />
             </button>
             {showSettings && (
@@ -1076,35 +1051,42 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
 
 // ── App root ──────────────────────────────────────────────────────────────────
 
-export default function App() {
-  return (
-    <AuthProvider>
-      <SidebarSubsectionProvider>
-        <ContextMenuProvider>
-          <AppContent />
-        </ContextMenuProvider>
-      </SidebarSubsectionProvider>
-    </AuthProvider>
-  )
-}
-
-function AppContent() {
-  const { isAuthenticated, authChecked, user } = useAuth()
+export default function AppLayout() {
+  const { user } = useAuth()
   const { actionsByView } = useContextMenu()
   const { isOnline } = useNetworkStatus()
-  const [view, setView] = useState('feed')
-  const [showAuth, setShowAuth] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const pathname = location.pathname
+
+  const isKnownSection = pathname.startsWith('/feed') || pathname.startsWith('/chat')
+    || pathname.startsWith('/dashboard') || pathname.startsWith('/bookmarks') || pathname.startsWith('/read-later')
+
+  const view = pathname.startsWith('/chat')       ? 'chat'
+    : pathname.startsWith('/dashboard')  ? 'dashboard'
+    : pathname.startsWith('/bookmarks')  ? 'bookmarks'
+    : pathname.startsWith('/read-later') ? 'readlater'
+    : 'feed'
+
+  // Deep-link targets — derived from the URL instead of App-level state.
+  let targetProjectId = null, targetInsightId = null, targetArticleKey = null
+  if (pathname.startsWith('/feed/')) {
+    const parts = pathname.slice('/feed/'.length).split('/').filter(Boolean)
+    targetProjectId  = parts[0] ? decodeURIComponent(parts[0]) : null
+    targetInsightId  = parts[1] ? Number(parts[1]) : null
+    targetArticleKey = parts[2] ? decodeURIComponent(parts[2]) : null
+  }
+  let targetSessionId = null
+  if (pathname.startsWith('/chat/')) {
+    targetSessionId = decodeURIComponent(pathname.slice('/chat/'.length).split('/')[0] || '') || null
+  }
+  const targetSessionTitle = location.state?.sessionTitle ?? null
 
   const [feedContext, setFeedContext] = useState(null)
-  const [targetSessionId,    setTargetSessionId]    = useState(null)
-  const [targetSessionTitle, setTargetSessionTitle] = useState(null)
-  const [showSearch,         setShowSearch]         = useState(false)
-  const [targetProjectId,    setTargetProjectId]    = useState(null)
-  const [queue,              setQueue]              = useState(() => getQueue())
+  const [showSearch,  setShowSearch]  = useState(false)
+  const [queue,        setQueue]      = useState(() => getQueue())
   const [showSettings, setShowSettings] = useState(false)
   const settingsRef = useRef(null)
-  const [targetInsightId,  setTargetInsightId]  = useState(null)
-  const [targetArticleKey, setTargetArticleKey] = useState(null)
   const [showOverflow, setShowOverflow] = useState(false)
   const overflowRef = useRef(null)
   const [showDesktopOverflow, setShowDesktopOverflow] = useState(false)
@@ -1133,6 +1115,26 @@ function AppContent() {
     function onQueueChange() { setQueue(getQueue()) }
     window.addEventListener("queuechange", onQueueChange)
     return () => window.removeEventListener("queuechange", onQueueChange)
+  }, [])
+
+  // Background sync: pre-cache the user's data for offline use. Delayed so it
+  // never competes with the app's first paint.
+  useEffect(() => {
+    const token = getToken()
+    if (token && navigator.onLine) {
+      const t = setTimeout(() => runBackgroundSync(token), 2000)
+      return () => clearTimeout(t)
+    }
+  }, [])
+
+  // Re-sync whenever connectivity returns.
+  useEffect(() => {
+    function handleOnline() {
+      const token = getToken()
+      if (token) runBackgroundSync(token)
+    }
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
   }, [])
 
   useEffect(() => {
@@ -1167,31 +1169,6 @@ function AppContent() {
   useEffect(() => { setShowDesktopOverflow(false) }, [view])
 
   useEffect(() => {
-    window.history.replaceState({ view: 'feed' }, '')
-  }, [])
-
-  useEffect(() => {
-    function onPopState(e) {
-      if (!e.state) return
-      const s = e.state
-      if (s.view) setView(s.view)
-      if ('feedContext'         in s) setFeedContext(s.feedContext)
-      if ('targetSessionId'    in s) setTargetSessionId(s.targetSessionId)
-      if ('targetSessionTitle' in s) setTargetSessionTitle(s.targetSessionTitle)
-      if ('targetProjectId'    in s) setTargetProjectId(s.targetProjectId)
-      if ('targetInsightId'    in s) setTargetInsightId(s.targetInsightId)
-      if ('targetArticleKey'   in s) setTargetArticleKey(s.targetArticleKey)
-    }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
-
-  const navigateTo = useCallback((newView, extra = {}) => {
-    window.history.pushState({ view: newView, ...extra }, '')
-    setView(newView)
-  }, [])
-
-  useEffect(() => {
     const handler = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
@@ -1203,10 +1180,8 @@ function AppContent() {
   }, [])
 
   const handleOpenChat = useCallback((sessionId, title = null) => {
-    setTargetSessionId(sessionId)
-    setTargetSessionTitle(title)
-    navigateTo('chat', { targetSessionId: sessionId, targetSessionTitle: title })
-  }, [navigateTo])
+    navigate(`/chat/${encodeURIComponent(sessionId)}`, { state: { sessionTitle: title } })
+  }, [navigate])
 
   const handleOpenInChat = useCallback((card, action, projectMeta = {}) => {
     const ctx = {
@@ -1226,72 +1201,40 @@ function AppContent() {
       domain:           projectMeta.domain || "default",
     }
     setFeedContext(ctx)
-    navigateTo('chat', { feedContext: ctx })
-  }, [navigateTo])
+    navigate('/chat')
+  }, [navigate])
 
   const handleOpenQueueItem = useCallback((item) => {
     const pid  = item.projectId  || null
     const iid  = item.insightId  || null
     const akey = item.articleKey || null
-    setTargetProjectId(pid)
-    setTargetInsightId(iid)
-    setTargetArticleKey(akey)
     setSidebarOpen(false)
-    navigateTo('feed', { targetProjectId: pid, targetInsightId: iid, targetArticleKey: akey })
-  }, [navigateTo])
+    if (pid && iid) {
+      navigate(`/feed/${encodeURIComponent(pid)}/${iid}${akey ? `/${encodeURIComponent(akey)}` : ''}`)
+    } else if (pid) {
+      navigate(`/feed/${encodeURIComponent(pid)}`)
+    } else {
+      navigate('/feed')
+    }
+  }, [navigate])
 
-  const handleClearQueueTarget = useCallback(() => {
-    setTargetInsightId(null)
-    setTargetArticleKey(null)
-  }, [])
+  // No-op: targetInsightId/targetArticleKey are derived from the URL, so they
+  // only change when the route changes — nothing to clear between renders.
+  const handleClearQueueTarget = useCallback(() => {}, [])
 
   const handleSearchNavigate = useCallback(({ type, projectId, sessionId, sessionTitle }) => {
     if (type === 'feed') {
-      if (projectId) setTargetProjectId(projectId)
-      navigateTo('feed', { targetProjectId: projectId || null })
+      navigate(projectId ? `/feed/${encodeURIComponent(projectId)}` : '/feed')
     } else if (type === 'bookmarks') {
-      navigateTo('bookmarks')
+      navigate('/bookmarks')
     } else if (type === 'chat') {
       handleOpenChat(sessionId, sessionTitle)
     }
-  }, [navigateTo, handleOpenChat])
+  }, [navigate, handleOpenChat])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  if (!authChecked) return <AuthLoadingScreen />
-
-  if (!isAuthenticated) {
-    if (showAuth) {
-      return (
-        <div className="relative min-h-screen min-h-dvh bg-slate-950">
-          <button
-            onClick={() => setShowAuth(false)}
-            className="absolute top-4 left-4 z-50 flex items-center gap-1.5 px-3 py-1.5 text-[13px] text-slate-400 hover:text-slate-200 bg-slate-900/80 border border-slate-800 rounded-xl backdrop-blur-sm transition-all"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-              <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
-            </svg>
-            Back
-          </button>
-          <AuthPage />
-        </div>
-      )
-    }
-    return <LandingPage onShowAuth={() => setShowAuth(true)} />
-  }
-
-  // Authenticated landing view — full-screen, no sidebar
-  if (view === 'landing') {
-    return (
-      <div className="bg-slate-950 text-slate-100" style={{ minHeight: '100dvh' }}>
-        <LandingPage
-          isAuthenticated
-          onEnterApp={() => navigateTo('feed')}
-          onShowAuth={() => navigateTo('feed')}
-        />
-      </div>
-    )
-  }
+  if (!isKnownSection) return <Navigate to="/feed" replace />
 
   return (
     <div
@@ -1300,7 +1243,6 @@ function AppContent() {
     >
       <Sidebar
         view={view}
-        navigateTo={navigateTo}
         onSearchOpen={() => setShowSearch(true)}
         queue={queue}
         onQueueItemClick={handleOpenQueueItem}
@@ -1432,7 +1374,7 @@ function AppContent() {
             onClearFeedContext={() => setFeedContext(null)}
             targetSessionId={targetSessionId}
             targetSessionTitle={targetSessionTitle}
-            onClearTargetSession={() => { setTargetSessionId(null); setTargetSessionTitle(null) }}
+            onClearTargetSession={() => {}}
             userName={user?.name}
             onSidebarClose={handleSidebarClose}
             onBeforeModal={handleBeforeModal}
@@ -1467,7 +1409,7 @@ function AppContent() {
           </div>
 
           {view === 'dashboard' && (
-            <DashboardPage onGoToFeed={() => setView('feed')} userName={user?.name} />
+            <DashboardPage onGoToFeed={() => navigate('/feed')} userName={user?.name} />
           )}
 
           {view === 'bookmarks' && (

@@ -160,6 +160,8 @@ export async function getReadingStats() {
       active_projects:   0,
       total_packages:    0,
       total_days_active: 0,
+      notes:             [],
+      note_count:        0,
     }
   }
   try {
