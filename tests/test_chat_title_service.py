@@ -277,8 +277,16 @@ class TestAutoTitleIntegration:
     """Verify title extraction wires into chat_stream correctly."""
 
     def _collect_events(self, message, history, grok_chunks):
+        # chat_stream() calls chat_agent.ask_chat_stream() (not
+        # grok_service.ask_grok_chat_stream, retired from this path in an
+        # earlier phase) — it yields {"type": "text", "text": ...} event dicts,
+        # not plain string chunks.
         import json
         from backend.services.chat_service import chat_stream
+
+        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False):
+            for chunk in grok_chunks:
+                yield {"type": "text", "text": chunk}
 
         with patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
              patch("backend.services.chat_service._load_history_messages", return_value=history), \
@@ -288,18 +296,11 @@ class TestAutoTitleIntegration:
              patch("backend.services.action_router_service.route", return_value=None), \
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
-             patch("backend.services.grok_service.ask_grok_chat_stream",
-                   return_value=grok_chunks), \
+             patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
                                  "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
-             patch("backend.services.chat_title_service.save_session_title"), \
-             patch("backend.services.chat_modes_service._fetch_web_context",
-                   return_value={"mode": "web_search", "query_type": "default",
-                                 "subjects": [], "web_search_results": []}), \
-             patch("backend.services.chat_modes_service._fetch_deep_research_context",
-                   return_value={"mode": "deep_research", "query_type": "default",
-                                 "deep_research_result": None}):
+             patch("backend.services.chat_title_service.save_session_title"):
             return [
                 json.loads(line.strip())
                 for line in chat_stream("s1", message)

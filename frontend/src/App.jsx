@@ -4,6 +4,7 @@ import ChatWorkspace from './components/chat/ChatWorkspace.jsx'
 import ProjectsPage from './components/feed/ProjectsPage.jsx'
 import BookmarksPage from './components/bookmarks/BookmarksPage.jsx'
 import DashboardPage from './components/dashboard/DashboardPage.jsx'
+import AdminPage from './components/admin/AdminPage.jsx'
 import GlobalSearch from './components/GlobalSearch.jsx'
 import { useAuth } from './contexts/AuthContext.jsx'
 import { useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
@@ -14,6 +15,7 @@ import UnpackListener from './components/unpack/UnpackListener.jsx'
 import SyncStatus from './components/SyncStatus.jsx'
 import { runBackgroundSync } from './lib/backgroundSync.js'
 import { getToken } from './api/auth.js'
+import { checkIsAdmin } from './api/admin.js'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,14 @@ function BookmarksIcon({ className }) {
   )
 }
 
+function ShieldIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M9.661 2.237a.531.531 0 0 1 .678 0 11.947 11.947 0 0 0 7.078 2.749.5.5 0 0 1 .479.425c.069.52.104 1.05.104 1.59 0 5.162-3.26 9.563-7.834 11.256a.48.48 0 0 1-.332 0C5.26 16.564 2 12.163 2 7c0-.54.035-1.07.104-1.589a.5.5 0 0 1 .48-.425 11.947 11.947 0 0 0 7.077-2.75Zm4.196 5.954a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
 const ZONE3_PLACEHOLDER = {
   feed:      'Filter projects…',
   chat:      'Filter conversations…',
@@ -81,6 +91,8 @@ const NAV_ITEMS = [
   { id: 'dashboard', to: '/dashboard',  label: 'Dashboard',  icon: DashboardIcon },
   { id: 'bookmarks', to: '/bookmarks',  label: 'Bookmarks',  icon: BookmarksIcon },
   { id: 'readlater', to: '/read-later', label: 'Read Later', icon: ClockIcon     },
+  // Hidden unless Sidebar receives isAdmin=true — see AppLayout's checkIsAdmin() probe.
+  { id: 'admin',     to: '/admin',      label: 'Admin',      icon: ShieldIcon    },
 ]
 
 function PanelLeftIcon({ collapsed }) {
@@ -664,6 +676,7 @@ function Sidebar({
   queue, onQueueItemClick,
   showSettings, onSettingsToggle, settingsRef, user,
   collapsed, setCollapsed, open, setOpen,
+  isAdmin,
 }) {
   const navigate = useNavigate()
   const { subsections } = useSidebarSubsection()
@@ -774,7 +787,7 @@ function Sidebar({
 
         {/* Zone 2: Primary nav — never scrolls */}
         <nav className={`flex-shrink-0 py-2 space-y-0.5 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
-          {NAV_ITEMS.map(item => (
+          {NAV_ITEMS.filter(item => item.id !== 'admin' || isAdmin).map(item => (
             <NavItem
               key={item.id}
               item={item}
@@ -1061,9 +1074,11 @@ export default function AppLayout() {
 
   const isKnownSection = pathname.startsWith('/feed') || pathname.startsWith('/chat')
     || pathname.startsWith('/dashboard') || pathname.startsWith('/bookmarks') || pathname.startsWith('/read-later')
+    || pathname.startsWith('/admin')
 
   const view = pathname.startsWith('/chat')       ? 'chat'
     : pathname.startsWith('/dashboard')  ? 'dashboard'
+    : pathname.startsWith('/admin')      ? 'admin'
     : pathname.startsWith('/bookmarks')  ? 'bookmarks'
     : pathname.startsWith('/read-later') ? 'readlater'
     : 'feed'
@@ -1085,6 +1100,9 @@ export default function AppLayout() {
   const [feedContext, setFeedContext] = useState(null)
   const [showSearch,  setShowSearch]  = useState(false)
   const [queue,        setQueue]      = useState(() => getQueue())
+  // Nav-visibility only — real enforcement is the backend's get_current_admin_user().
+  // Probes a real admin endpoint rather than shipping ADMIN_EMAILS in the client bundle.
+  const [isAdmin, setIsAdmin] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const settingsRef = useRef(null)
   const [showOverflow, setShowOverflow] = useState(false)
@@ -1109,6 +1127,13 @@ export default function AppLayout() {
   useEffect(() => {
     setQueueUser(user?.user_id || null)
     setQueue(getQueue())
+  }, [user?.user_id])
+
+  useEffect(() => {
+    if (!user) { setIsAdmin(false); return }
+    let cancelled = false
+    checkIsAdmin().then(v => { if (!cancelled) setIsAdmin(v) })
+    return () => { cancelled = true }
   }, [user?.user_id])
 
   useEffect(() => {
@@ -1254,6 +1279,7 @@ export default function AppLayout() {
         setCollapsed={setSidebarCollapsed}
         open={sidebarOpen}
         setOpen={setSidebarOpen}
+        isAdmin={isAdmin}
       />
 
       {/* Floating mobile sidebar trigger — only visible when sidebar is closed on mobile */}
@@ -1387,8 +1413,9 @@ export default function AppLayout() {
           view === 'chat' ? 'hidden' : '',
         ].join(' ')}>
           <div className={[
-            'max-w-5xl mx-auto w-full',
-            view === 'feed' || view === 'dashboard' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
+            view === 'admin' ? 'max-w-[1600px]' : 'max-w-5xl',
+            'mx-auto w-full',
+            view === 'feed' || view === 'dashboard' || view === 'admin' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
           ].join(' ')}>
 
           {/* Feed — always mounted so generating state survives view switches */}
@@ -1411,6 +1438,8 @@ export default function AppLayout() {
           {view === 'dashboard' && (
             <DashboardPage onGoToFeed={() => navigate('/feed')} userName={user?.name} />
           )}
+
+          {view === 'admin' && <AdminPage />}
 
           {view === 'bookmarks' && (
             <BookmarksPage onOpenChat={handleOpenChat} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />

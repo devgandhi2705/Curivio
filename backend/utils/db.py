@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import sqlite_vec
+
 logger = logging.getLogger(__name__)
 
 from ..database.schema import ALL_TABLES, MIGRATIONS
@@ -57,6 +59,11 @@ def init_db() -> None:
                 raise
 
 
+def build_set_clause(keys) -> str:
+    """Join column names into a 'col = ?' clause for use in an UPDATE ... SET statement."""
+    return ", ".join(f"{k} = ?" for k in keys)
+
+
 @contextmanager
 def get_connection():
     """Yield a sqlite3 connection that auto-commits on success and rolls back on error."""
@@ -64,6 +71,9 @@ def get_connection():
     conn.row_factory = sqlite3.Row          # rows accessible as dicts
     conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.enable_load_extension(True)        # extensions load per-connection, not globally
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
     try:
         yield conn
         conn.commit()

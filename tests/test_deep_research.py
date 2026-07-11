@@ -272,11 +272,16 @@ class TestFetchArticles:
 
 class TestRankArticles:
     def test_calls_rank_articles_with_correct_args(self):
+        # Chat-4.2: min_domains=4 now passed (was a no-op default of 0 before —
+        # matches project_service.py's real feed-mode "core content" value).
         articles = [_fake_article()]
         with patch("backend.services.source_ranker.rank_articles",
                    return_value=articles) as mock_rank:
             _rank_research_articles(articles, "my topic", top_n=6)
-        mock_rank.assert_called_once_with(articles, query="my topic", top_n=6, min_score=0.1)
+        mock_rank.assert_called_once_with(
+            articles, query="my topic", top_n=6, min_score=0.1,
+            domain="default", mode="deep_research", min_domains=4,
+        )
 
     def test_empty_input_returns_empty(self):
         with patch("backend.services.source_ranker.rank_articles", return_value=[]):

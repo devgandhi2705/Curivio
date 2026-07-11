@@ -6,7 +6,7 @@ and persistent storage of the conversation in chat_messages.
 
 Public API
 ----------
-chat(session_id, message, topic_hint=None) -> dict
+chat_stream(session_id, message, topic_hint=None) -> Iterator[str]
 get_history(session_id, limit=20) -> list[dict]
 clear_history(session_id) -> int
 list_sessions(limit=20) -> list[dict]
@@ -37,346 +37,26 @@ _FEED_ACTION_TO_MODE: dict[str, str] = {
 }
 
 
-def chat(
-    session_id:   str,
-    message:      str,
-    topic_hint:   str | None = None,
-    chat_mode:    str        = "normal",
-    feed_context: dict | None = None,
-) -> dict:
-    """
-    Process one conversational turn and return the assistant's response.
-
-    Steps
-    -----
-    1. Detect topic hint from message if not supplied.
-    2. Fetch conversation history for this session.
-    3. Build memory-injected context (user profile + research + session memory
-       + conversation memory + exploration breadth + preference snapshot).
-    4. Build OpenAI-format messages list.
-    5. Call Groq.
-    6. Persist both user message and assistant response.
-    7. Detect and dispatch a research action if the message contains one.
-    8. Generate follow-up recommendations from stored expansion data.
-    9. Return structured response dict.
-
-    Return shape
-    ------------
-    {
-      "session_id":    str,
-      "message_id":    int,       # row ID of the assistant message
-      "response":      str,
-      "topic_hint":    str | None,
-      "action":        str | None, # detected action key, e.g. "show_repos"
-      "recommendations": {
-        "based_on_topic":  str | None,
-        "source":          "stored" | "empty",
-        "next_topics":     [{"topic": str, "reason": str}],
-        "prerequisites":   [{"topic": str, "reason": str}],
-        "advanced_topics": [{"topic": str, "reason": str}],
-      },
-      "context_used": {
-        "has_deep_research":   bool,
-        "has_learning_path":   bool,
-        "has_topic_expansion": bool,
-        "has_github_repos":    bool,
-        "interests_count":     int,
-        "history_turns":       int,
-      },
-      "created_at": str,
-    }
-    """
-    session_id = session_id.strip()
-    message    = message.strip()
-    if not session_id:
-        raise ValueError("session_id must not be empty")
-    if not message:
-        raise ValueError("message must not be empty")
-
-    # ── Feed context: enrich + override topic and mode before intent detection ─
-    if feed_context:
-        _enrich_feed_context(feed_context)
-        if topic_hint is None:
-            topic_hint = feed_context.get("insight_title") or _detect_topic_hint(message)
-        if chat_mode == "normal":
-            chat_mode = _FEED_ACTION_TO_MODE.get(
-                feed_context.get("action", "ask_about"), "normal"
-            )
-    elif topic_hint is None:
-        topic_hint = _detect_topic_hint(message)
-
-    # ── Layman mode: restore from session if request didn't override ─────────
-    if chat_mode == "normal":
-        try:
-            from .chat_title_service import get_session_conversation_mode
-            if get_session_conversation_mode(session_id) == "layman":
-                chat_mode = "layman"
-        except Exception:
-            pass
-
-    # Auto-upgrade mode based on conversational research intent
-    # (only fires when the user has left the mode on "normal" and no feed context)
-    from .chat_intent_service import detect_intent
-    intent      = detect_intent(message)
-    auto_mode   = False
-    query_type  = "default"
-    subjects: list[str] = []
-    # format_intent drives response structure regardless of mode-switching
-    _format_intent = intent.get("format_intent", "default")
-
-    if not feed_context and chat_mode == "normal" and intent["intent"] != "normal":
-        chat_mode  = intent["recommended_mode"]
-        auto_mode  = True
-        query_type = intent["query_type"]
-        subjects   = intent["subjects"]
-        if intent["topic"] and not topic_hint:
-            topic_hint = intent["topic"]
-
-    # Load history
-    history = _load_history_messages(session_id, limit=50)
-    history_turns = len(history) // 2
-
-    # Build memory-injected context
-    context = inject_memory(session_id, topic_hint)
-
-    # Inject format intent and semantic profile so the prompt builder can apply
-    # single-intent directives or blended composed directives as appropriate.
-    context["format_intent"]  = _format_intent
-    context["intent_profile"] = intent.get("intent_profile", {})
-    context["current_message"] = message
-
-    # ── Inject layman mode flag into context for system prompt ────────────────
-    if chat_mode == "layman":
-        context["layman_mode_context"] = {
-            "active":    True,
-            "mechanism": (feed_context or {}).get("mechanism", ""),
-        }
-
-    # Classify domain — prefer feed_context domain when available
-    from .domain_classifier_service import get_domain_context as _get_domain
-    context["domain_context"] = _get_domain(
-        feed_context.get("domain") or topic_hint or message
-        if feed_context else topic_hint or message
-    )
-
-    # Detect and dispatch research action (non-blocking; enriches context)
-    from .action_router_service import route as route_action
-    action_result = route_action(message, topic_hint, context)
-    if action_result:
-        context["action_result"] = action_result
-
-    # Depth detection — calibrates response verbosity before prompt assembly
-    from .chat_prompt_service import detect_depth
-    context["response_depth"] = detect_depth(message, chat_mode)
-
-    # Mode-specific retrieval
-    # ask_about / explain_simply / layman: skip retrieval — context already provided
-    from .chat_modes_service import prepare_mode_context, build_mode_system_note, build_feed_context_note
-    skip_retrieval = (
-        (feed_context and feed_context.get("action") in ("ask_about", "explain_simply"))
-        or chat_mode == "layman"
-    )
-    if skip_retrieval:
-        mode_context = {}
-    else:
-        mode_context = prepare_mode_context(
-            chat_mode, message, topic_hint,
-            query_type      = query_type,
-            subjects        = subjects,
-            intent_profile  = context.get("intent_profile", {}),
-            domain          = context.get("domain_context", {}).get("domain", ""),
-            feed_context    = feed_context,
-        )
-
-    # ── Phase 4.6: Shared learning context ───────────────────────────────────
-    # Inject project-level knowledge graph state so every mode knows what the
-    # user has already learned — not just this conversation, but across sessions.
-    _project_id_for_slc = (feed_context or {}).get("project_id", "") if feed_context else ""
-    if _project_id_for_slc:
-        try:
-            from .shared_learning_context import get_shared_prompt_block
-            _slc_block = get_shared_prompt_block(_project_id_for_slc, mode=chat_mode)
-            if _slc_block:
-                context["shared_learning_context"] = _slc_block
-        except Exception:
-            logger.debug("[chat_service] shared_learning_context unavailable (non-fatal)")
-
-    # Build messages for Groq
-    messages_payload = build_messages(history, message, context, mode=chat_mode)
-
-    # Inject feed context note first (background knowledge)
-    if feed_context:
-        feed_note = build_feed_context_note(feed_context)
-        messages_payload = _inject_mode_note(messages_payload, feed_note)
-
-    # Inject mode/retrieval note on top (live data, when present)
-    mode_note = build_mode_system_note(mode_context)
-    if mode_note:
-        messages_payload = _inject_mode_note(messages_payload, mode_note)
-
-    # Inject title extraction note for first message of new sessions
-    _is_new = len(history) == 0
-    if _is_new:
-        from .chat_title_service import make_title_system_note
-        messages_payload = _inject_mode_note(messages_payload, make_title_system_note())
-
-    # ── Token budget instrumentation (diagnostics only, non-fatal) ───────────
-    try:
-        from .token_budget import estimate_tokens, estimate_messages, BudgetReport, log_budget_report
-        from .model_registry import get_model_config
-        from ..config import GROQ_MODEL as _MODEL_C
-        _cfg_c      = get_model_config(_MODEL_C)
-        _sys_tok    = sum(estimate_tokens(m.get("content","")) for m in messages_payload if m.get("role") == "system")
-        _hist_tok   = sum(estimate_tokens(m.get("content","")) for m in messages_payload[:-1] if m.get("role") in ("user","assistant"))
-        _cur_tok    = estimate_tokens(messages_payload[-1].get("content","")) if messages_payload else 0
-        _total_c    = estimate_messages(messages_payload)
-        _remain_c   = _cfg_c.prompt_budget - _total_c
-        log_budget_report(BudgetReport(
-            operation        = "chat/sync",
-            model_name       = _MODEL_C,
-            context_window   = _cfg_c.context_window,
-            safe_budget      = _cfg_c.prompt_budget,
-            output_reserve   = _cfg_c.output_budget,
-            prompt_tokens    = _total_c,
-            remaining_budget = _remain_c,
-            utilization_pct  = (_total_c / _cfg_c.prompt_budget * 100) if _cfg_c.prompt_budget > 0 else 0.0,
-            sections         = {
-                "system_prompt":   _sys_tok,
-                "history":         _hist_tok,
-                "current_message": _cur_tok,
-            },
-            warnings = [
-                f"OVER SAFE BUDGET: {_total_c:,} > {_cfg_c.prompt_budget:,}"
-            ] if _remain_c < 0 else [],
-        ), logger)
-    except Exception:
-        logger.debug("[chat_service] budget instrumentation failed (non-fatal)", exc_info=True)
-
-    # Call AI
-    from .grok_service import ask_grok_chat
-    raw_response = ask_grok_chat(messages_payload)
-
-    # Extract and strip [TITLE: ...] prefix for new sessions
-    if _is_new:
-        from .chat_title_service import (
-            extract_title, strip_title_prefix, save_session_title, generate_fallback_title,
-        )
-        _title = extract_title(raw_response)
-        response_text = strip_title_prefix(raw_response)
-        if not _title:
-            _title = generate_fallback_title(message, topic_hint)
-        if _title:
-            save_session_title(session_id, _title)
-    else:
-        response_text = raw_response
-
-    # Persist conversation
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    _save_message(session_id, "user",      message,       topic_hint, now)
-    msg_id = _save_message(session_id, "assistant", response_text, topic_hint, now)
-
-    # Persist layman conversation mode so subsequent turns stay simplified
-    if chat_mode == "layman":
-        try:
-            from .chat_title_service import set_session_conversation_mode
-            set_session_conversation_mode(session_id, "layman")
-        except Exception:
-            logger.exception("chat_service: layman mode persistence failed (non-fatal)")
-
-    research = context.get("research", {})
-    profile  = context.get("user_profile", {})
-    conv_mem = context.get("conversation_memory", {})
-    breadth  = context.get("exploration_breadth", {})
-    learner  = context.get("learner_profile", {})
-
-    # Follow-up recommendations (non-blocking; falls back to empty on error)
-    from .follow_up_service import get_recommendations
-    recommendations = get_recommendations(
-        topic           = topic_hint or "",
-        explored_topics = breadth.get("all_topics", []),
-        learner_level   = learner.get("inferred_level", "intermediate"),
-    )
-
-    # Record continuity data for future sessions (non-blocking; errors are silent)
-    if topic_hint:
-        try:
-            from .continuity_service import record_concepts, record_recommendations
-            concepts = _extract_concepts_from_context(context)
-            record_concepts(topic_hint, concepts, session_id)
-            record_recommendations(session_id, topic_hint, recommendations)
-        except Exception:
-            logger.exception("chat_service: continuity recording failed (non-fatal)")
-
-    # Update conversation knowledge state (non-blocking; enables compound reasoning)
-    try:
-        from .conversation_state_service import update_state as _update_ks
-        _update_ks(
-            session_id          = session_id,
-            user_message        = message,
-            response_text       = response_text,
-            topic_hint          = topic_hint,
-            structured_response = _parse_structured_response(response_text),
-            domain              = context.get("domain_context", {}).get("domain"),
-        )
-    except Exception:
-        logger.exception("chat_service: knowledge state update failed (non-fatal)")
-
-    # Enrich recommendations with thread-aware, category-specific follow-ups
-    try:
-        from .conversation_state_service import get_state as _get_ks, enrich_with_thread_followups
-        recommendations = enrich_with_thread_followups(
-            recommendations,
-            _get_ks(session_id),
-            intent_profile = context.get("intent_profile", {}),
-            domain         = context.get("domain_context", {}).get("domain", ""),
-        )
-    except Exception:
-        pass
-
-    try:
-        from .tension_engine import score_tension as _score_tension
-        tension_scores = _score_tension(response_text)
-    except Exception:
-        tension_scores = {}
-
-    return {
-        "session_id":         session_id,
-        "message_id":         msg_id,
-        "response":           response_text,
-        "topic_hint":         topic_hint,
-        "chat_mode":          chat_mode,
-        "auto_mode":          auto_mode,
-        "action":             action_result.get("action") if action_result else None,
-        "recommendations":    recommendations,
-        "structured_response": _parse_structured_response(response_text),
-        "tension_scores":     tension_scores,
-        "context_used": {
-            "has_deep_research":    research.get("has_deep_research",    False),
-            "has_learning_path":    research.get("has_learning_path",    False),
-            "has_topic_expansion":  research.get("has_topic_expansion",  False),
-            "has_github_repos":     research.get("has_github_repos",     False),
-            "interests_count":      len(profile.get("top_interests", [])),
-            "history_turns":        history_turns,
-            "topics_in_session":    len(conv_mem.get("topics_discussed", [])),
-            "total_topics_explored": breadth.get("total_explored", 0),
-        },
-        "created_at": now,
-    }
-
-
 def chat_stream(
     session_id:   str,
     message:      str,
     topic_hint:   str | None  = None,
     chat_mode:    str         = "normal",
     feed_context: dict | None = None,
+    user_id:      str | None  = None,
+    attachments:  list[dict] | None = None,
+    extended_thinking: bool  = False,
 ):
     """
     Sync generator — yields NDJSON lines for a single conversational turn.
 
     Line types
     ----------
-    {"t": "chunk", "v": "<text>"}          — AI text arriving incrementally
+    {"t": "chunk",    "v": "<text>"}       — AI text arriving incrementally
+    {"t": "thinking", "v": "<text>"}       — Gemini reasoning arriving incrementally (Chat-6)
+    {"t": "thinking_gap", "v": "<text>"}   — one-shot note: reasoning ran but can't stream (Chat-6 followup)
+    {"t": "code", "v": "<source>", "language": "python"}       — executed code (Chat-7)
+    {"t": "code_output", "v": "<stdout>", "success": true}     — its execution result (Chat-7)
     {"t": "done",  <full metadata>}        — final metadata after stream ends
     {"t": "error", "message": "<reason>"}  — unrecoverable error; stream stops
 
@@ -387,14 +67,14 @@ def chat_stream(
     if not session_id:
         yield json.dumps({"t": "error", "message": "session_id must not be empty"}) + "\n"
         return
-    if not message:
+    if not message and not attachments:
         yield json.dumps({"t": "error", "message": "message must not be empty"}) + "\n"
         return
 
     # ── Context preparation ───────────────────────────────────────────────────
-    auto_mode   = False
-    query_type  = "default"
-    subjects: list[str] = []
+    # auto_mode is resolved after the model call now (Chat-4.1): True only when
+    # chat_mode was "normal" and the model chose to call a tool on its own.
+    auto_mode = False
 
     try:
         # Feed context: enrich + override topic and mode before intent detection
@@ -418,18 +98,14 @@ def chat_stream(
             except Exception:
                 pass
 
-        # Auto-upgrade mode from intent when user left it on "normal" and no feed context
+        # Chat-4.1: regex mode auto-upgrade retired (the model decides via real
+        # tools now, see resolve_tools_and_hint below); detect_intent() still
+        # runs for format_intent/intent_profile, which drive response structure
+        # independently of mode/retrieval routing.
         from .chat_intent_service import detect_intent as _detect_intent
         intent = _detect_intent(message)
         # format_intent drives response structure regardless of mode-switching
         _format_intent = intent.get("format_intent", "default")
-        if not feed_context and chat_mode == "normal" and intent["intent"] != "normal":
-            chat_mode  = intent["recommended_mode"]
-            auto_mode  = True
-            query_type = intent["query_type"]
-            subjects   = intent["subjects"]
-            if intent["topic"] and not topic_hint:
-                topic_hint = intent["topic"]
 
         history       = _load_history_messages(session_id, limit=50)
         history_turns = len(history) // 2
@@ -475,8 +151,32 @@ def chat_stream(
             except Exception:
                 pass
 
+        # Chat-3: semantic long-term memory recall (additive third layer,
+        # alongside conversation_memory/knowledge_state) — hard-scoped to
+        # user_id, never crosses users. Non-fatal on any error.
+        if user_id:
+            try:
+                from .vector_memory_service import search as _vec_search, format_for_prompt as _vec_fmt
+                _vec_hits = _vec_search(user_id, topic_hint or message)
+                _vec_block = _vec_fmt(_vec_hits)
+                if _vec_block:
+                    context["vector_memory"] = _vec_block
+            except Exception:
+                logger.debug("[chat_service] vector_memory recall failed (non-fatal)")
+
+        # Chat-3: Feed-entry persistent anchor — resolved from feed_chat_links,
+        # independent of feed_context/shared_learning_context. Present on every
+        # turn of a Feed-linked session, not just the first.
+        try:
+            from .feed_entry_anchor_service import get_anchor_for_session
+            _anchor = get_anchor_for_session(session_id)
+            if _anchor:
+                context["feed_entry_anchor"] = _anchor
+        except Exception:
+            logger.debug("[chat_service] feed_entry_anchor failed (non-fatal)")
+
         from .chat_prompt_service import build_messages as _build
-        messages_payload = _build(history, message, context, mode=chat_mode)
+        messages_payload = _build(history, message, context, mode=chat_mode, attachments=attachments)
 
         # Inject feed context note first (background knowledge)
         if feed_context:
@@ -489,50 +189,15 @@ def chat_stream(
         yield json.dumps({"t": "error", "message": "Failed to prepare context"}) + "\n"
         return
 
-    # ── Mode-specific retrieval ───────────────────────────────────────────────
-    from .chat_modes_service import (
-        prepare_mode_context,
-        build_mode_system_note,
-        stream_status_event,
-        stream_research_progress,
-    )
-
-    # ask_about / explain_simply / layman: skip retrieval — context already provided
-    skip_retrieval = (
-        (feed_context and feed_context.get("action") in ("ask_about", "explain_simply"))
-        or chat_mode == "layman"
-    )
-    mode_context: dict = {}
-
-    try:
-        if skip_retrieval:
-            pass  # no retrieval, mode_context stays empty
-        elif chat_mode == "deep_research":
-            for event_type, event_val in stream_research_progress(
-                message, topic_hint, query_type=query_type, feed_context=feed_context,
-            ):
-                if event_type == "status":
-                    yield json.dumps({"t": "status", "v": event_val}) + "\n"
-                elif event_type == "result":
-                    mode_context = event_val
-        else:
-            status = stream_status_event(chat_mode)
-            if status:
-                yield status
-            mode_context = prepare_mode_context(
-                chat_mode, message, topic_hint,
-                query_type     = query_type,
-                subjects       = subjects,
-                intent_profile = context.get("intent_profile", {}),
-                domain         = context.get("domain_context", {}).get("domain", ""),
-                feed_context   = feed_context,
-            )
-
-        mode_note = build_mode_system_note(mode_context)
-        if mode_note:
-            messages_payload = _inject_mode_note(messages_payload, mode_note)
-    except Exception:
-        logger.exception("chat_stream: mode context preparation failed (non-fatal)")
+    # ── Tool policy (Chat-4.1) ────────────────────────────────────────────────
+    # Retired backend pre-fetch (prepare_mode_context/stream_research_progress,
+    # still used unchanged by the sync chat() path above). chat_mode now only
+    # decides tool availability + an optional bias hint — web_search/deep_research
+    # are real tools the model calls itself; layman gets tools=None structurally.
+    from ..llm.chat_agent import resolve_tools_and_hint
+    tools_enabled, mode_hint = resolve_tools_and_hint(chat_mode)
+    if mode_hint:
+        messages_payload = _inject_mode_note(messages_payload, mode_hint)
 
     is_new_session = len(history) == 0
 
@@ -545,7 +210,7 @@ def chat_stream(
     try:
         from .token_budget import estimate_tokens, estimate_messages, BudgetReport, log_budget_report
         from .model_registry import get_model_config
-        from ..config import GROQ_MODEL as _MODEL_CS
+        from ..config import GEMINI_MODEL as _MODEL_CS
         _cfg_cs   = get_model_config(_MODEL_CS)
         _sys_cs   = sum(estimate_tokens(m.get("content","")) for m in messages_payload if m.get("role") == "system")
         _hist_cs  = sum(estimate_tokens(m.get("content","")) for m in messages_payload[:-1] if m.get("role") in ("user","assistant"))
@@ -574,18 +239,58 @@ def chat_stream(
         logger.debug("[chat_service] stream budget instrumentation failed (non-fatal)", exc_info=True)
 
     # ── Stream AI response ────────────────────────────────────────────────────
-    # Emit a status event before blocking on Groq so HF Spaces proxies don't
-    # close the connection during the cold-start delay before the first chunk.
+    # Emit a status event before blocking on the model so HF Spaces proxies
+    # don't close the connection during the cold-start delay before the first chunk.
     yield json.dumps({"t": "status", "v": "Generating response…"}) + "\n"
 
     from .chat_title_service import stream_extract_state, advance_stream_state
     title_state     = stream_extract_state() if is_new_session else None
     collected:       list[str]  = []
     extracted_title: str | None = None
+    sources:         list[dict] = []
+    tool_used:       str | None = None
+    _TOOL_STATUS_LABELS = {
+        "web_search":    "Searching the web…",
+        "deep_research": "Running deep research…",
+    }
 
     try:
-        from .grok_service import ask_grok_chat_stream
-        for chunk in ask_grok_chat_stream(messages_payload):
+        from ..llm.chat_agent import ask_chat_stream
+        _call_metadata: dict = {"call_type": "chat_turn"}
+        if user_id:
+            _call_metadata["user_id"] = user_id
+        for event in ask_chat_stream(
+            messages_payload, metadata=_call_metadata, tools_enabled=tools_enabled,
+            has_attachments=bool(attachments), extended_thinking=extended_thinking,
+        ):
+            if event["type"] == "tool_start":
+                label = _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…")
+                yield json.dumps({"t": "status", "v": label}) + "\n"
+                continue
+            if event["type"] == "tool_end":
+                tool_used = event["tool"]
+                sources.extend(event.get("sources", []))
+                continue
+            if event["type"] == "thinking":
+                # Bypasses title extraction — that parser only ever needs to see
+                # visible answer text (see ask_chat_stream's module docstring).
+                yield json.dumps({"t": "thinking", "v": event["text"]}) + "\n"
+                continue
+            if event["type"] == "thinking_gap":
+                # One-shot honest note when the Gemini 3+ leg answers — see
+                # chat_agent._THINKING_GAP_TEXT for why thinking never arrives here.
+                yield json.dumps({"t": "thinking_gap", "v": event["text"]}) + "\n"
+                continue
+            if event["type"] == "code":
+                # Bypasses title extraction and collected/response_text, same as
+                # thinking — this is the model's executed source, not its answer.
+                yield json.dumps({"t": "code", "v": event["text"], "language": event.get("language", "python")}) + "\n"
+                continue
+            if event["type"] == "code_output":
+                yield json.dumps({"t": "code_output", "v": event["text"], "success": event.get("success", True)}) + "\n"
+                continue
+
+            chunk = event["text"]
             if title_state is not None:
                 result = advance_stream_state(title_state, chunk)
                 if result["title"] and not extracted_title:
@@ -610,29 +315,16 @@ def chat_stream(
     except Exception:
         tension_scores = {}
 
-    # ── Extract sources to include in done event ─────────────────────────────
-    sources: list[dict] = []
-    try:
-        if mode_context.get("mode") == "web_search":
-            sources = [
-                {"title": a.get("title", "").strip(), "url": a.get("url", "")}
-                for a in mode_context.get("web_search_results", [])
-                if a.get("url")
-            ]
-        elif mode_context.get("mode") == "deep_research":
-            sources = [
-                {"title": a.get("title", "").strip(), "url": a.get("url", "")}
-                for a in mode_context.get("articles", [])
-                if a.get("url")
-            ]
-    except Exception:
-        pass
+    # Chat-4.1: sources/chat_mode/auto_mode reflect which tool the model
+    # actually called this turn, not which mode was pre-selected.
+    resolved_mode = tool_used or chat_mode
+    auto_mode     = (chat_mode == "normal") and (tool_used is not None)
 
     # ── Persist messages ──────────────────────────────────────────────────────
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     user_msg_id = 0
     try:
-        user_msg_id = _save_message(session_id, "user",      message,       topic_hint, now)
+        user_msg_id = _save_message(session_id, "user",      message,       topic_hint, now, attachments=attachments)
         msg_id      = _save_message(session_id, "assistant", response_text, topic_hint, now)
     except Exception:
         logger.exception("chat_stream: message persistence failed")
@@ -694,7 +386,7 @@ def chat_stream(
 
     # Update conversation knowledge state (non-blocking; enables compound reasoning)
     try:
-        from .conversation_state_service import update_state as _update_ks
+        from .conversation_state_service import update_state as _update_ks, get_state as _get_ks
         _update_ks(
             session_id          = session_id,
             user_message        = message,
@@ -703,6 +395,14 @@ def chat_stream(
             structured_response = _parse_structured_response(response_text),
             domain              = context.get("domain_context", {}).get("domain"),
         )
+        # Chat-3: embed the just-updated state for semantic recall — same
+        # trigger point conversation_knowledge_state itself updates on.
+        if user_id:
+            try:
+                from .vector_memory_service import record_entry as _vec_record
+                _vec_record(user_id, session_id, _get_ks(session_id))
+            except Exception:
+                logger.debug("[chat_stream] vector_memory record failed (non-fatal)")
     except Exception:
         logger.exception("chat_stream: knowledge state update failed (non-fatal)")
 
@@ -725,7 +425,7 @@ def chat_stream(
         "topic_hint":          topic_hint,
         "title":               extracted_title,
         "sources":             sources,
-        "chat_mode":           chat_mode,
+        "chat_mode":           resolved_mode,
         "auto_mode":           auto_mode,
         "action":              action_result.get("action") if action_result else None,
         "recommendations":     recommendations,
@@ -749,12 +449,14 @@ def get_history(session_id: str, limit: int = 20) -> list[dict]:
     """
     Return the most recent *limit* messages for *session_id*, oldest first.
 
-    Each entry: {id, session_id, role, content, topic_hint, created_at}
+    Each entry: {id, session_id, role, content, topic_hint, created_at, attachments}
+    `attachments` is the raw stored list (uri/mime_type/filename/size_bytes/expires_at)
+    — the frontend decides how to render an expired one, this layer doesn't filter it.
     """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, session_id, role, content, topic_hint, created_at
+            SELECT id, session_id, role, content, topic_hint, created_at, attachments
             FROM   chat_messages
             WHERE  session_id = ?
             ORDER BY created_at DESC, id DESC
@@ -765,12 +467,13 @@ def get_history(session_id: str, limit: int = 20) -> list[dict]:
 
     return [
         {
-            "id":         r["id"],
-            "session_id": r["session_id"],
-            "role":       r["role"],
-            "content":    r["content"],
-            "topic_hint": r["topic_hint"],
-            "created_at": r["created_at"],
+            "id":          r["id"],
+            "session_id":  r["session_id"],
+            "role":        r["role"],
+            "content":     r["content"],
+            "topic_hint":  r["topic_hint"],
+            "created_at":  r["created_at"],
+            "attachments": json.loads(r["attachments"]) if r["attachments"] else None,
         }
         for r in reversed(rows)
     ]
@@ -916,22 +619,33 @@ def _save_message(
     content: str,
     topic_hint: str | None,
     created_at: str,
+    attachments: list[dict] | None = None,
 ) -> int:
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO chat_messages (session_id, role, content, topic_hint, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, role, content, topic_hint, created_at),
+            "INSERT INTO chat_messages (session_id, role, content, topic_hint, created_at, attachments) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, role, content, topic_hint, created_at,
+             json.dumps(attachments) if attachments else None),
         )
         return cur.lastrowid
 
 
 def _load_history_messages(session_id: str, limit: int = 50) -> list[dict]:
-    """Return up to *limit* messages as OpenAI-format dicts (role + content)."""
+    """
+    Return up to *limit* messages as OpenAI-format dicts (role + content).
+
+    A message with live (non-expired) attachments gets a list-of-parts content
+    (text + Gemini "media" file_uri parts) instead of a plain string, so the
+    model can still see an image/PDF attached on an earlier turn. Expired
+    attachments are silently dropped — the file_uri is dead on Google's side
+    (verified live: cross-key access already 403s, and Google deletes the file
+    server-side after 48h), so re-sending it would just fail the whole turn.
+    """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT role, content
+            SELECT role, content, attachments
             FROM   chat_messages
             WHERE  session_id = ?
             ORDER BY created_at DESC, id DESC
@@ -940,7 +654,28 @@ def _load_history_messages(session_id: str, limit: int = 50) -> list[dict]:
             (session_id, limit),
         ).fetchall()
 
-    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    now = datetime.now(timezone.utc)
+    messages = []
+    for r in reversed(rows):
+        attachments = json.loads(r["attachments"]) if r["attachments"] else None
+        live = [a for a in attachments if _attachment_is_live(a, now)] if attachments else []
+        if not live:
+            messages.append({"role": r["role"], "content": r["content"]})
+            continue
+        parts = [{"type": "text", "text": r["content"]}] if r["content"] else []
+        parts += [{"type": "media", "file_uri": a["uri"], "mime_type": a["mime_type"]} for a in live]
+        messages.append({"role": r["role"], "content": parts})
+    return messages
+
+
+def _attachment_is_live(attachment: dict, now: datetime) -> bool:
+    expires_at = attachment.get("expires_at")
+    if not expires_at:
+        return True
+    try:
+        return datetime.fromisoformat(expires_at.replace("Z", "+00:00")) > now
+    except ValueError:
+        return True
 
 
 def _detect_topic_hint(message: str) -> str | None:

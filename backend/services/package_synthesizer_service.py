@@ -13,7 +13,6 @@ Public surface:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -93,14 +92,12 @@ def synthesize_package(
     difficulty:         str,
     day_number:         int,
     knowledge_state: dict | None = None,
+    project_id:      str | None = None,
 ) -> PackageSynthesisResult:
     """
     Generate package_headline, learning_thread, and action_item from completed cards.
     Called after all writer batches complete. Does not modify cards.
-    Token counts are tracked internally by ask_grok via log_api_call.
     """
-    from .grok_service import ask_grok
-
     t_start = time.monotonic()
 
     prompt = _build_synthesis_prompt(
@@ -115,12 +112,18 @@ def synthesize_package(
         _prompt_tok = -1
 
     from .writer_provider_router import route_writer_call
-    text, _synth_provider = route_writer_call(
-        prompt,
-        lambda: ask_grok(prompt, json_mode=True),
-        json_mode=True,
+    from ..llm import call_and_parse_json
+    # Synthesis prompt is small (card summaries only, no raw articles) — the
+    # same prompt is safe for both providers, no separate compression needed.
+    raw, _synth_provider = call_and_parse_json(
+        lambda: route_writer_call(
+            prompt, prompt,
+            call_type="feed_synthesis",
+            json_mode=True,
+            metadata={"project_id": project_id, "day_ref": day_number} if project_id else None,
+        ),
+        call_type="feed_synthesis",
     )
-    raw  = json.loads(text)
 
     headline        = (raw.get("package_headline") or "").strip()
     learning_thread = (raw.get("learning_thread")  or "").strip()

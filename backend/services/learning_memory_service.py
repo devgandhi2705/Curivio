@@ -414,7 +414,7 @@ def _db_load(project_id: str) -> dict:
 
 
 def _db_save(project_id: str, memory: dict) -> None:
-    from ..utils.db import get_connection
+    from ..utils.db import get_connection, build_set_clause
     now = _now()
 
     serialised: dict = {}
@@ -431,7 +431,7 @@ def _db_save(project_id: str, memory: dict) -> None:
         ).fetchone()
 
         if exists:
-            set_clause = ", ".join(f"{k} = ?" for k in serialised)
+            set_clause = build_set_clause(serialised)
             conn.execute(
                 f"UPDATE project_learning_memory SET {set_clause}, updated_at = ? WHERE project_id = ?",
                 [*serialised.values(), now, project_id],

@@ -14,7 +14,6 @@ Public surface:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -33,6 +32,10 @@ class BatchGenerationResult:
     source_ids_used:     list[str]
     error:               str | None = None
     provider:            str        = "groq"   # "gemini" | "groq"
+    # Feed-4.2: Source-ID -> {"url", "images"} for this batch's primary sources —
+    # what the Gemini prompt actually offered the writer. Used by
+    # source_grounding_service.ground_package() to validate image/source_id blocks.
+    citable_sources:     dict       = field(default_factory=dict)
 
 
 @dataclass
@@ -148,12 +151,12 @@ def generate_batch(
     cross_batch_context:    str | None = None,
     curiosity_anchor:       str | None = None,
     raw_batch_articles:     list[dict] | None = None,
+    project_id:             str | None = None,
 ) -> BatchGenerationResult:
     """Execute one writer LLM call for a single BatchPlan. Returns cards only."""
     from ..prompts.project_insight_prompt import build_batch_prompt
     from ..prompts.model_aware_assembler import ModelAwareAssembler
     from ..config import GROQ_MODEL as _ACTIVE_MODEL
-    from .grok_service import ask_grok
     from .writer_provider_router import route_writer_call, format_articles_full
 
     t_start = time.monotonic()
@@ -183,11 +186,17 @@ def generate_batch(
         composer, _ACTIVE_MODEL, expected_output_tokens=1200,
     )
 
-    # Build full Gemini prompt (no compression, no budget cap) when raw articles available
+    # Build full Gemini prompt (no compression, no budget cap) when raw articles available.
+    # include_full_content=True: Feed-4.2 — raw_batch_articles is already scoped to this
+    # batch's primary sources only (see run_generation_orchestrator's batch_articles),
+    # so full_content/images attach at exactly that granularity, never to supporting sources.
+    _citable_sources: dict = {}
     if raw_batch_articles is not None:
         _batch_tag   = f"B{batch_plan.batch_id}-"
         _batch_type  = "CURIOSITY" if _is_curiosity else "CORE"
-        _full_core   = format_articles_full(raw_batch_articles, f"{_batch_tag}{_batch_type}")
+        _full_core, _citable_sources = format_articles_full(
+            raw_batch_articles, f"{_batch_tag}{_batch_type}", include_full_content=True,
+        )
         _full_comp   = build_batch_prompt(
             context, batch_plan=batch_plan,
             core_article_text=_full_core,
@@ -208,12 +217,29 @@ def generate_batch(
         batch_plan.batch_id, len(_gemini_prompt) // 4, assembly.final_tokens,
     )
 
-    text, _batch_provider = route_writer_call(
-        _gemini_prompt,
-        lambda: ask_grok(prompt, json_mode=True),
-        json_mode=True,
+    from ..llm import call_and_parse_json
+    raw, _batch_provider = call_and_parse_json(
+        lambda: route_writer_call(
+            _gemini_prompt,
+            prompt,
+            call_type="feed_writer_batch",
+            json_mode=True,
+            metadata={"project_id": project_id, "day_ref": context.day_number} if project_id else None,
+        ),
+        call_type="feed_writer_batch",
     )
-    raw  = json.loads(text)
+
+    # Source-ID labels + URLs are identical in the Groq prompt (same articles,
+    # same tag/index scheme via ArticleCompressor) — only full_content/images
+    # are Gemini-only. So source_id attribution stays valid either way, but if
+    # this batch fell back to Groq, strip the images list: Groq's compressed
+    # prompt never showed any image URLs, so an image block can't legitimately
+    # cite one.
+    if _batch_provider != "gemini":
+        _citable_sources = {
+            sid: {"url": v["url"], "images": []}
+            for sid, v in _citable_sources.items()
+        }
 
     insights           = raw.get("insights")           or []
     curiosity_insights = raw.get("curiosity_insights") or []
@@ -252,6 +278,7 @@ def generate_batch(
         generation_time_ms = (time.monotonic() - t_start) * 1000,
         source_ids_used    = source_ids,
         provider           = _batch_provider,
+        citable_sources    = _citable_sources,
     )
 
 
@@ -317,6 +344,11 @@ def run_generation_orchestrator(
     merges results, and returns a raw package dict identical in structure to the
     single-call output so all downstream code (grounding, storage, metrics) is
     unchanged.
+
+    Feed-4.2: the returned dict carries one extra private key, "_citable_sources"
+    (union of every batch's Source-ID -> {"url", "images"} map) — the sole real
+    caller (project_service.py) pops it off immediately; it's not part of the
+    package schema and must never reach storage or the frontend.
     """
     from ..prompts.project_insight_prompt import PromptContext
     from ..prompts.article_compressor import ArticleCompressor
@@ -450,6 +482,7 @@ def run_generation_orchestrator(
                 cross_batch_context=_cross_batch,
                 curiosity_anchor=_curiosity_anchor,
                 raw_batch_articles=batch_articles,
+                project_id=project_id,
             )
             results.append(result)
             _update_generation_context(gen_ctx, result)
@@ -506,6 +539,7 @@ def run_generation_orchestrator(
         difficulty      = difficulty,
         day_number      = day_number,
         knowledge_state = knowledge_state,
+        project_id      = project_id,
     )
     raw["package_headline"] = synthesis.package_headline
     raw["learning_thread"]  = synthesis.learning_thread
@@ -544,4 +578,14 @@ def run_generation_orchestrator(
 
     elapsed = (time.monotonic() - t0) * 1000
     _log_orchestrator_summary(batch_plans, results, elapsed)
+
+    # Feed-4.2: smuggled onto the dict (not a return-signature change) — this
+    # function has an established `-> dict` contract with a wide existing test
+    # suite (tests/test_generation_orchestrator.py and others) that unpacks its
+    # result as a plain dict. project_service.py pops this key off immediately.
+    citable_sources: dict = {}
+    for r in results:
+        citable_sources.update(r.citable_sources)
+    raw["_citable_sources"] = citable_sources
+
     return raw

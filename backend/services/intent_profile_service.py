@@ -49,6 +49,7 @@ def generate_intent_profile(
     description: str,
     keywords:    list[str],
     difficulty:  str,
+    project_id:  str | None = None,
 ) -> dict:
     """Call the LLM to extract a structured intent profile from project details."""
     kw_str = ", ".join(keywords) if keywords else "(none provided)"
@@ -140,16 +141,18 @@ Return ONLY valid JSON matching this schema:
 {_SCHEMA_EXAMPLE}"""
 
     try:
-        from .grok_service import ask_grok
-        text    = ask_grok(prompt, json_mode=True)
+        from ..llm import get_chat_model, extract_text
+        _meta = {"call_type": "feed_persona", "project_id": project_id}
+        model = get_chat_model(json_mode=True)
+        text  = extract_text(model.invoke(prompt, config={"metadata": _meta}))
         try:
             profile = _extract_json(text)
         except (json.JSONDecodeError, ValueError):
             logger.warning("[intent_profile] project=%r JSON parse failed — retrying once", name)
-            text    = ask_grok(
+            text    = extract_text(model.invoke(
                 prompt + "\n\nIMPORTANT: Return ONLY valid JSON, no other text.",
-                json_mode=True,
-            )
+                config={"metadata": _meta},
+            ))
             profile = _extract_json(text)
 
         lens = profile.get("search_lens") or ""
@@ -249,6 +252,7 @@ def backfill_intent_profiles() -> dict:
                 description=row["description"] or "",
                 keywords=keywords,
                 difficulty=row["difficulty"] or "intermediate",
+                project_id=project_id,
             )
 
             with get_connection() as conn:
@@ -376,10 +380,11 @@ Example:
 """
 
     try:
-        from .grok_service import ask_grok
+        from ..llm import get_chat_model, extract_text
         import json as _json
         import re as _re
-        text = ask_grok(prompt, json_mode=True)
+        model = get_chat_model(json_mode=True)
+        text  = extract_text(model.invoke(prompt, config={"metadata": {"call_type": "feed_persona_keywords"}}))
         m = _re.search(r"\[.*?\]", text, _re.DOTALL)
         if m:
             keywords = _json.loads(m.group(0))

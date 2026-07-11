@@ -1,4 +1,4 @@
-from backend.utils.db import get_connection as get_db
+from backend.utils.db import get_connection
 
 
 def _row_to_item(row) -> dict:
@@ -16,7 +16,7 @@ def _row_to_item(row) -> dict:
 
 
 def list_queue(user_id: str) -> list[dict]:
-    with get_db() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM read_later_items WHERE user_id=? ORDER BY queued_at DESC",
             (user_id,),
@@ -35,7 +35,7 @@ def add_item(
     project_name: str = "",
     insight_id=None,
 ) -> dict:
-    with get_db() as conn:
+    with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO read_later_items
@@ -58,7 +58,7 @@ def add_item(
 
 
 def remove_item(user_id: str, article_key: str) -> bool:
-    with get_db() as conn:
+    with get_connection() as conn:
         cur = conn.execute(
             "DELETE FROM read_later_items WHERE user_id=? AND article_key=?",
             (user_id, article_key),
@@ -67,5 +67,5 @@ def remove_item(user_id: str, article_key: str) -> bool:
 
 
 def clear_queue(user_id: str) -> None:
-    with get_db() as conn:
+    with get_connection() as conn:
         conn.execute("DELETE FROM read_later_items WHERE user_id=?", (user_id,))

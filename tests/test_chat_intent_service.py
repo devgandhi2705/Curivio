@@ -309,12 +309,22 @@ class TestDetectIntentReturnShape:
 # Auto-mode integration in chat_service (mocked pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@pytest.mark.integration
 class TestAutoModeIntegration:
     """
-    Verify that chat_service.chat_stream auto-upgrades the mode when the user
-    sends a research-intent message while on mode="normal".
-
-    All external services are mocked so no real API calls are made.
+    Chat-4.1: the regex mode-override this class originally tested is retired
+    (chat_stream no longer reassigns chat_mode from detect_intent()) — the
+    model decides via real tools now. The three "auto-upgrades" tests that
+    asserted a deterministic regex-driven chat_mode/auto_mode outcome were
+    removed; that guarantee no longer exists (tool use is a live model
+    decision). Deterministic coverage of chat_stream's chat_mode/auto_mode/
+    sources translation logic (given a tool WAS or WASN'T called) now lives in
+    tests/test_chat_mode_mapping.py::TestStreamReflectsActualToolUse, which
+    mocks chat_agent.ask_chat_stream directly instead of relying on live model
+    behavior. The tests kept here still hold because they don't depend on
+    regex mode-routing: explicit non-normal chat_mode is never overridden
+    (auto_mode is only ever True when chat_mode was "normal"), and the
+    pre-stream status event fires unconditionally regardless of tool use.
     """
 
     def _run_stream(self, message, chat_mode="normal"):
@@ -337,14 +347,6 @@ class TestAutoModeIntegration:
              patch("backend.services.follow_up_service.get_recommendations", return_value={
                  "based_on_topic": None, "source": "empty",
                  "next_topics": [], "prerequisites": [], "advanced_topics": [],
-             }), \
-             patch("backend.services.chat_modes_service._fetch_web_context", return_value={
-                 "mode": "web_search", "query_type": "comparison",
-                 "subjects": ["A", "B"], "web_search_results": [],
-             }), \
-             patch("backend.services.chat_modes_service._fetch_deep_research_context", return_value={
-                 "mode": "deep_research", "query_type": "research",
-                 "deep_research_result": None,
              }):
             from backend.services.chat_service import chat_stream
             events = []
@@ -353,24 +355,6 @@ class TestAutoModeIntegration:
                 if line:
                     events.append(json.loads(line))
             return events
-
-    def test_compare_message_auto_upgrades_to_web_search(self):
-        events = self._run_stream("Compare Python vs JavaScript")
-        done = next(e for e in events if e["t"] == "done")
-        assert done["chat_mode"] == "web_search"
-        assert done["auto_mode"] is True
-
-    def test_research_message_auto_upgrades_to_deep_research(self):
-        events = self._run_stream("Research transformer architecture")
-        done = next(e for e in events if e["t"] == "done")
-        assert done["chat_mode"] == "deep_research"
-        assert done["auto_mode"] is True
-
-    def test_analyze_message_auto_upgrades_to_deep_research(self):
-        events = self._run_stream("Analyze semiconductor supply chains")
-        done = next(e for e in events if e["t"] == "done")
-        assert done["chat_mode"] == "deep_research"
-        assert done["auto_mode"] is True
 
     def test_normal_message_stays_normal(self):
         events = self._run_stream("What is attention?")

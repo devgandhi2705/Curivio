@@ -239,6 +239,7 @@ def build_messages(
     user_message: str,
     context:      dict,
     mode:         str = "normal",
+    attachments:  list[dict] | None = None,
 ) -> list[dict]:
     """
     Build the full OpenAI-format messages list for the Groq API call.
@@ -246,6 +247,12 @@ def build_messages(
     - Prepends the mode-aware system prompt.
     - Truncates history to the most recent MAX_HISTORY_TURNS turns.
     - Appends the new user message.
+
+    `attachments` (Chat-5): list of {uri, mime_type, ...} from
+    model_provider.upload_attachment(). When present, the final user message's
+    content becomes a list of parts (text + Gemini "media" file_uri parts)
+    instead of a plain string — verified live against the real SDK's content-
+    block format (langchain_google_genai).
     """
     system_prompt = build_system_prompt(context, mode=mode)
 
@@ -254,7 +261,12 @@ def build_messages(
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(truncated_history)
-    messages.append({"role": "user", "content": user_message})
+    if attachments:
+        parts = [{"type": "text", "text": user_message}] if user_message else []
+        parts += [{"type": "media", "file_uri": a["uri"], "mime_type": a["mime_type"]} for a in attachments]
+        messages.append({"role": "user", "content": parts})
+    else:
+        messages.append({"role": "user", "content": user_message})
     return messages
 
 
@@ -326,6 +338,18 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
         context.get("conversation_knowledge", {})
     ),                   priority=2, required=False, source_pack="dynamic")
 
+    # Chat-3: semantic long-term memory recall — additive third layer alongside
+    # conversation_memory/knowledge_state (regex-based, session/exact-topic scoped).
+    # Pre-formatted by vector_memory_service.format_for_prompt(); "" when no hits.
+    composer.add_section("vector_memory", context.get("vector_memory", ""),
+                         priority=2, required=False, source_pack="dynamic")
+
+    # Chat-3: Feed-entry persistent anchor — resolved from feed_chat_links,
+    # independent of shared_learning_context. Present every turn of a
+    # Feed-linked session, pre-formatted by feed_entry_anchor_service.
+    composer.add_section("feed_entry_anchor", context.get("feed_entry_anchor", ""),
+                         priority=2, required=False, source_pack="dynamic")
+
     # Cognitive tension directive — forces intellectual friction over flat informational phrasing.
     # Skipped in layman mode (directive conflicts with ELI5 framing) and for trivial messages.
     if mode != "layman":
@@ -383,6 +407,13 @@ def _build_structured_prompt(context: dict) -> str:
     composer.add_section("conversation_memory", _build_conversation_memory_section(context.get("conversation_memory", {})),
                          priority=2, required=False, source_pack="dynamic")
     composer.add_section("knowledge_state",     _build_knowledge_state_section(context.get("conversation_knowledge", {})),
+                         priority=2, required=False, source_pack="dynamic")
+    # Chat-3: semantic long-term memory recall + Feed-entry persistent anchor
+    # (see _build_natural_prompt for full rationale — same sections, same
+    # context keys, mirrored here for structured modes).
+    composer.add_section("vector_memory",       context.get("vector_memory", ""),
+                         priority=2, required=False, source_pack="dynamic")
+    composer.add_section("feed_entry_anchor",   context.get("feed_entry_anchor", ""),
                          priority=2, required=False, source_pack="dynamic")
     composer.add_section("exploration_breadth", _build_exploration_breadth_section(context.get("exploration_breadth", {})),
                          priority=3, required=False, source_pack="dynamic")
@@ -465,6 +496,9 @@ Guidelines:
 _STRUCTURED_FORMAT_DIRECTIVE = """\
 OUTPUT FORMAT — MANDATORY:
 You MUST respond with ONLY a valid JSON object. No text before or after the JSON. No markdown code fences.
+If this turn calls for using one of your tools (e.g. a mode hint says to prefer one, or the question
+needs live data you don't have), call it first — this JSON-only rule applies to your final answer after
+any tool results return, not to the tool call itself.
 
 Schema (all fields required; use [] for unused arrays):
 {

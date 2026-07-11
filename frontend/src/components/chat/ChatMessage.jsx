@@ -380,6 +380,58 @@ function EditIcon() {
   )
 }
 
+function FileChipIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+    </svg>
+  )
+}
+
+function isAttachmentExpired(attachment) {
+  if (!attachment.expires_at) return false
+  return new Date(attachment.expires_at).getTime() < Date.now()
+}
+
+// A sent message's attachments render as chips. Images from the same session
+// still carry a client-side previewUrl (blob:) and show a real thumbnail;
+// history reloads only have server metadata (uri/mime_type/filename) — Gemini's
+// file URI needs our API key to fetch, so it can't be hotlinked as an <img
+// src>, and it 48h-expires anyway — so history chips show a generic file icon
+// instead, and an "Expired" badge once past expires_at.
+function MessageAttachments({ attachments }) {
+  if (!attachments?.length) return null
+  return (
+    <div className="flex flex-wrap gap-1.5 justify-end mb-1.5">
+      {attachments.map((a, i) => {
+        const expired = isAttachmentExpired(a)
+        const isImage = a.mime_type?.startsWith("image/")
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-lg border text-[11px] ${
+              expired
+                ? "bg-slate-900/40 border-slate-800 opacity-60"
+                : "bg-white/[0.04] border-white/[0.08]"
+            }`}
+            title={expired ? `${a.filename} — attachment expired (Gemini removes files 48h after upload)` : a.filename}
+          >
+            {isImage && a.previewUrl ? (
+              <img src={a.previewUrl} alt="" className="w-6 h-6 rounded-md object-cover flex-shrink-0" />
+            ) : (
+              <span className="text-slate-500 flex-shrink-0"><FileChipIcon /></span>
+            )}
+            <span className="max-w-[100px] truncate text-slate-400">{a.filename}</span>
+            {expired && <span className="text-amber-500/80 text-[10px] flex-shrink-0">expired</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
   function handleCopy() {
@@ -448,6 +500,105 @@ function SourcesPanel({ sources }) {
   )
 }
 
+function ThinkingIcon() {
+  return (
+    <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 20V14M12 20V8M18 20V4" />
+    </svg>
+  )
+}
+
+// Collapsible reasoning panel above the answer (Chat-6) — same collapse
+// pattern as SourcesPanel. Defaults open while this message is still the
+// live streaming placeholder (so reasoning is visible as it arrives) and
+// defaults closed once the turn finishes and swaps in a new message id.
+function ThinkingPanel({ thinking, streaming }) {
+  const [open, setOpen] = useState(!!streaming)
+  if (!thinking) return null
+
+  return (
+    <div className="mb-3 border border-slate-700/50 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-800/50 hover:bg-slate-800/80 transition-colors text-left"
+      >
+        <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+          <ThinkingIcon />
+          {streaming ? "Thinking…" : "Thought process"}
+        </span>
+        <svg
+          className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20" fill="currentColor"
+        >
+          <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="px-4 py-3 bg-slate-900/30 text-xs text-slate-400 leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+          {thinking}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CodeIcon() {
+  return (
+    <svg className="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+    </svg>
+  )
+}
+
+// Real executed code + its real output — distinct from ThinkingPanel (Gemini's
+// reasoning, never actually run) and from a ```fenced code block in the prose
+// (the model's own restatement). One block per code_execution call this turn;
+// `output` is null until the matching code_execution_result chunk arrives.
+function CodeExecutionPanel({ blocks }) {
+  if (!blocks?.length) return null
+  return (
+    <div className="mb-3 space-y-2.5">
+      {blocks.map((b, i) => (
+        <div key={i} className="border border-emerald-800/40 rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2 bg-emerald-950/30 border-b border-emerald-800/30">
+            <CodeIcon />
+            <span className="text-xs font-medium text-emerald-300/90">Executed {b.language || "python"}</span>
+          </div>
+          <pre className="px-4 py-3 bg-slate-900 overflow-x-scroll-touch">
+            <code className="text-[13px] font-mono text-slate-200 leading-[1.68] whitespace-pre">{b.code}</code>
+          </pre>
+          {b.output !== null && (
+            <div className={`px-4 py-3 border-t ${b.success === false ? "bg-red-950/20 border-red-900/30" : "bg-slate-950/60 border-slate-800/60"}`}>
+              <div className={`text-[10.5px] font-semibold uppercase tracking-widest mb-1.5 ${b.success === false ? "text-red-400/80" : "text-slate-500"}`}>
+                {b.success === false ? "Error" : "Output"}
+              </div>
+              <code className="text-[13px] font-mono text-slate-300 leading-[1.68] whitespace-pre-wrap block">{b.output}</code>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Honest one-line note for turns where reasoning ran but Gemini's streaming
+// API never surfaces it (a confirmed upstream limitation on some model
+// tiers, not a bug here — see chat_agent._THINKING_GAP_TEXT). Shown in place
+// of ThinkingPanel instead of leaving a silent gap that looks broken —
+// static, not collapsible, nothing to expand into.
+function ThinkingGapNote({ text }) {
+  if (!text) return null
+  return (
+    <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/40 text-xs text-slate-500 italic">
+      <ThinkingIcon />
+      <span>{text}</span>
+    </div>
+  )
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 export default function ChatMessage({ message, msgIndex, sessionId, isLastAssistant, onRetry, onEdit }) {
@@ -480,6 +631,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
     return (
       <div className="flex justify-end group/msg">
         <div className="flex flex-col items-end gap-1 max-w-[85%] sm:max-w-[70%]">
+          <MessageAttachments attachments={message.attachments} />
           {editing ? (
             <div className="w-full">
               <textarea
@@ -505,11 +657,11 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
                 </button>
               </div>
             </div>
-          ) : (
+          ) : message.content ? (
             <div className="bg-violet-600/20 border border-violet-500/30 rounded-2xl rounded-tr-sm px-4 py-3 text-[14px] text-slate-100 leading-[1.68] prose-wrap">
               {message.content}
             </div>
-          )}
+          ) : null}
           {!editing && (
             <div className="flex items-center gap-0.5">
               <CopyButton text={message.content} />
@@ -545,7 +697,10 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
         {!message.streaming && message.action && <ActionBadge action={message.action} />}
 
         <div className={!message.streaming && message.action ? "mt-2" : ""}>
-          {message.streaming ? (
+          <ThinkingPanel thinking={message.thinking} streaming={message.streaming} />
+          {!message.thinking && <ThinkingGapNote text={message.thinkingGap} />}
+          <CodeExecutionPanel blocks={message.codeBlocks} />
+          {message.streaming && !message.content && !message.thinking && !message.codeBlocks?.length ? (
             <StreamingSkeleton />
           ) : srObject ? (
             <StructuredResponseRenderer sr={srObject} />

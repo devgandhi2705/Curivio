@@ -117,55 +117,6 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
     return response.choices[0].message.content
 
 
-def ask_grok_chat(messages: list[dict]) -> str:
-    """
-    Send a full OpenAI-format messages list to Groq and return the reply text.
-    Unlike ask_grok, the caller is responsible for the system message and history.
-    """
-    from .api_usage_service import log_api_call, estimate_groq_cost
-
-    _preflight_check("ask_grok_chat", messages=messages)
-
-    t0 = time.monotonic()
-    try:
-        response = _get_client().chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.7,
-        )
-    except RateLimitError:
-        raise RuntimeError("Our AI is busy — please try again in a moment.")
-    except Exception as exc:
-        raise RuntimeError(
-            f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."
-        ) from exc
-
-    duration_ms   = int((time.monotonic() - t0) * 1000)
-    usage         = getattr(response, "usage", None)
-    input_tokens  = usage.prompt_tokens     if usage else None
-    output_tokens = usage.completion_tokens if usage else None
-    cost          = estimate_groq_cost(input_tokens or 0, output_tokens or 0)
-
-    log_api_call(
-        service="groq",
-        operation="chat_conversation",
-        model=MODEL_NAME,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        duration_ms=duration_ms,
-        cache_hit=False,
-        query_hint=(messages[-1].get("content", "") if messages else "")[:120],
-        estimated_cost_usd=cost,
-    )
-
-    logger.info(
-        "[groq_chat] %dms | in=%s out=%s | cost=$%.6f",
-        duration_ms, input_tokens, output_tokens, cost,
-    )
-
-    return response.choices[0].message.content
-
-
 def ask_grok_chat_stream(messages: list[dict]):
     """
     Streaming version of ask_grok_chat.

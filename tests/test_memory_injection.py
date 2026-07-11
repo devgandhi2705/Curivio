@@ -489,6 +489,8 @@ class TestExplorationBreadthPrompt:
         assert "connect" in section.lower() or "studied" in section.lower()
 
     def test_full_prompt_includes_breadth_section(self):
+        # exploration_breadth only renders in structured modes — "normal" (the
+        # default) is deliberately minimal, see build_system_prompt's docstring.
         context = {
             "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
                              "top_interests": [], "suppressed_topics": []},
@@ -501,7 +503,7 @@ class TestExplorationBreadthPrompt:
             },
             "preference_snapshot": {},
         }
-        prompt = build_system_prompt(context)
+        prompt = build_system_prompt(context, mode="deep_research")
         assert "LoRA" in prompt
 
 
@@ -562,6 +564,8 @@ class TestPreferenceSnapshotPrompt:
         assert "focused" in section.lower() or "practical" in section.lower()
 
     def test_full_prompt_includes_pref_section(self):
+        # preference_snapshot only renders in structured modes — "normal" (the
+        # default) is deliberately minimal, see build_system_prompt's docstring.
         context = {
             "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
                              "top_interests": [], "suppressed_topics": []},
@@ -574,129 +578,7 @@ class TestPreferenceSnapshotPrompt:
                 "engagement_level": "high",
             },
         }
-        prompt = build_system_prompt(context)
+        prompt = build_system_prompt(context, mode="deep_research")
         assert "RAG Pipelines" in prompt
         assert "intermediate" in prompt
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 8. TestChatUsesInjectMemory
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestChatUsesInjectMemory:
-
-    @pytest.fixture
-    def mem_db_chat(self, monkeypatch):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        for stmt in ALL_TABLES:
-            conn.execute(stmt)
-        conn.commit()
-
-        @contextmanager
-        def _get_conn():
-            try:
-                yield conn
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-
-        monkeypatch.setattr("backend.services.chat_service.get_connection", _get_conn)
-        return conn
-
-    def _full_context(self):
-        return {
-            "user_profile": {"learning_stage": "intermediate", "difficulty_preference": None,
-                             "top_interests": ["RAG"], "suppressed_topics": []},
-            "research": {"topic": "RAG", "has_deep_research": True, "has_learning_path": False,
-                         "has_topic_expansion": False, "has_github_repos": False,
-                         "deep_research": None, "learning_path": None,
-                         "topic_expansion": None, "github_repos": None},
-            "session": {"topic": "RAG", "times_explored": 1, "has_deep_research": True,
-                        "has_learning_path": False, "has_topic_expansion": False,
-                        "has_github_repos": False, "last_activity_at": "2025-01-01",
-                        "recommended_next": []},
-            "conversation_memory": {"message_count": 0, "session_turns": 0,
-                                    "topics_discussed": [], "last_user_messages": []},
-            "exploration_breadth": {"total_explored": 1, "all_topics": ["RAG"],
-                                    "recently_explored": ["RAG"], "deep_dived_topics": ["RAG"]},
-            "preference_snapshot": {"liked_topics": ["RAG"], "disliked_topics": [],
-                                    "difficulty_preference": "intermediate",
-                                    "engagement_level": "high"},
-        }
-
-    def test_chat_calls_inject_memory_not_build_full_context(self, mem_db_chat):
-        from backend.services.chat_service import chat as chat_fn
-
-        inject_called  = {}
-        full_ctx_called = {}
-
-        def mock_inject(session_id, topic_hint=None):
-            inject_called["called"] = True
-            inject_called["session_id"] = session_id
-            return self._full_context()
-
-        def mock_build_full(topic_hint=None):
-            full_ctx_called["called"] = True
-            return self._full_context()
-
-        with (
-            patch("backend.services.chat_service.inject_memory", side_effect=mock_inject),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="answer"),
-            patch("backend.services.chat_context_service.build_full_context", side_effect=mock_build_full),
-        ):
-            chat_fn("session-x", "hello")
-
-        assert inject_called.get("called") is True
-        assert not full_ctx_called.get("called")
-
-    def test_chat_passes_session_id_to_inject(self, mem_db_chat):
-        from backend.services.chat_service import chat as chat_fn
-        captured = {}
-
-        def mock_inject(session_id, topic_hint=None):
-            captured["session_id"] = session_id
-            return self._full_context()
-
-        with (
-            patch("backend.services.chat_service.inject_memory", side_effect=mock_inject),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="ok"),
-        ):
-            chat_fn("my-unique-session", "question")
-
-        assert captured["session_id"] == "my-unique-session"
-
-    def test_context_used_includes_memory_fields(self, mem_db_chat):
-        from backend.services.chat_service import chat as chat_fn
-
-        ctx = self._full_context()
-        ctx["conversation_memory"] = {
-            "message_count": 4, "session_turns": 2,
-            "topics_discussed": ["RAG", "LoRA"],
-            "last_user_messages": [],
-        }
-        ctx["exploration_breadth"] = {"total_explored": 7, "all_topics": [], "recently_explored": [], "deep_dived_topics": []}
-
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=ctx),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="ok"),
-        ):
-            result = chat_fn("s1", "question")
-
-        cu = result["context_used"]
-        assert cu["topics_in_session"] == 2
-        assert cu["total_topics_explored"] == 7
-
-    def test_chat_result_still_correct_shape(self, mem_db_chat):
-        from backend.services.chat_service import chat as chat_fn
-
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=self._full_context()),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="my answer"),
-        ):
-            result = chat_fn("s2", "any question")
-
-        assert result["response"] == "my answer"
-        assert result["session_id"] == "s2"
-        assert "context_used" in result

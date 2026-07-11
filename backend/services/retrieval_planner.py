@@ -35,6 +35,8 @@ def plan(
     keywords:        list[str],
     project_name:    str = "",
     today_plan:      dict | None = None,
+    project_id:      str | None = None,
+    day_ref:         int | None = None,
 ) -> dict:
     """
     Produce goal-driven search queries from the learner's context.
@@ -42,7 +44,7 @@ def plan(
     Validates and repairs composition before returning.
     """
     try:
-        result = _llm_plan(intent_profile, knowledge_state, keywords, project_name, today_plan)
+        result = _llm_plan(intent_profile, knowledge_state, keywords, project_name, today_plan, project_id, day_ref)
     except Exception as e:
         logger.warning("[retrieval_planner] LLM planning failed (%s) — using keyword fallback", e)
         result = _keyword_fallback(intent_profile, keywords, project_name)
@@ -57,6 +59,8 @@ def _llm_plan(
     keywords:        list[str],
     project_name:    str,
     today_plan:      dict | None = None,
+    project_id:      str | None = None,
+    day_ref:         int | None = None,
 ) -> dict:
     context = _build_context(intent_profile, knowledge_state, keywords, project_name, today_plan)
     _shape  = _detect_shape(today_plan)
@@ -116,8 +120,11 @@ Return ONLY valid JSON:
   "serendipity_queries": ["query 1"]
 }}"""
 
-    from .grok_service import ask_grok
-    raw  = ask_grok(prompt, json_mode=True)
+    from ..llm import get_chat_model, extract_text
+    model = get_chat_model(json_mode=True)
+    raw   = extract_text(model.invoke(prompt, config={"metadata": {
+        "call_type": "feed_retrieval_planner", "project_id": project_id, "day_ref": day_ref,
+    }}))
     data = _parse_json(raw)
 
     return {

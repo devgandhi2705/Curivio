@@ -354,10 +354,18 @@ class TestExploredFiltering:
 
 class TestBuildItems:
     def test_build_items_returns_correct_shape(self):
-        from backend.services.follow_up_service import _build_items
-        items = _build_items(["RAG Pipelines", "FAISS"], "Related to {topic}.", "Vector Databases")
+        # 2nd param is a category key into _REASON_TEMPLATES (a rotation of
+        # several phrasings, for variety across calls), not a literal format
+        # string — assert structurally rather than against one exact rotation index.
+        from backend.services.follow_up_service import _build_items, _REASON_TEMPLATES
+        items = _build_items(["RAG Pipelines", "FAISS"], "next", "Vector Databases")
         assert len(items) == 2
-        assert items[0] == {"topic": "RAG Pipelines", "reason": "Related to Vector Databases."}
+        assert items[0]["topic"] == "RAG Pipelines"
+        assert "RAG Pipelines" in items[0]["reason"]
+        assert "Vector Databases" in items[0]["reason"]
+        assert items[0]["reason"] in {
+            t.format(topic="Vector Databases", item="RAG Pipelines") for t in _REASON_TEMPLATES["next"]
+        }
 
     def test_build_items_empty_list(self):
         from backend.services.follow_up_service import _build_items
@@ -395,156 +403,6 @@ class TestBuildItems:
         assert next_l >= 3
         assert prereq_l >= 1
         assert adv_l >= 2
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestChatServiceRecommends
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestChatServiceRecommends:
-    """chat() returns a recommendations key with correct structure."""
-
-    def _make_context(self):
-        return {
-            "user_profile":       {"top_interests": []},
-            "research":           {},
-            "session":            {},
-            "conversation_memory": {"message_count": 0, "session_turns": 0,
-                                    "topics_discussed": [], "last_user_messages": []},
-            "exploration_breadth": {"total_explored": 0, "all_topics": [],
-                                    "recently_explored": [], "deep_dived_topics": []},
-            "preference_snapshot": {},
-            "learner_profile":    {"inferred_level": "intermediate", "directive": ""},
-        }
-
-    def test_recommendations_key_present(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = self._make_context()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Hello"), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None):
-            result = chat("sess-1", "What is machine learning?")
-        assert "recommendations" in result
-
-    def test_recommendations_has_expected_keys(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = self._make_context()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Hi"), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None):
-            result = chat("sess-2", "Tell me about transformers")
-        rec = result["recommendations"]
-        assert "source" in rec
-        assert "next_topics" in rec
-        assert "prerequisites" in rec
-        assert "advanced_topics" in rec
-
-    def test_recommendations_populated_when_expansion_exists(self, patch_db):
-        _insert_expansion(patch_db, "Transformers", _make_expansion(
-            topic="Transformers",
-            prerequisites=["Attention Mechanism"],
-            related=["BERT", "GPT"],
-            advanced=["Mixture of Experts"],
-        ))
-        from backend.services.chat_service import chat
-        ctx = self._make_context()
-        ctx["learner_profile"]["inferred_level"] = "intermediate"
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Transformers are..."):
-            result = chat("sess-3", "Explain transformers", topic_hint="Transformers")
-        rec = result["recommendations"]
-        assert rec["source"] == "stored"
-        assert len(rec["next_topics"]) > 0
-
-    def test_chat_error_in_recommendations_does_not_fail_chat(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = self._make_context()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Response"), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion",
-                   side_effect=RuntimeError("oops")):
-            result = chat("sess-4", "What is RAG?")
-        # chat() must succeed even when recommendations fail
-        assert result["response"] == "Response"
-        assert result["recommendations"]["source"] == "empty"
-
-    def test_explored_topics_from_context_passed_to_recommendations(self, patch_db):
-        _insert_expansion(patch_db, "RAG", _make_expansion(
-            topic="RAG",
-            related=["Pinecone", "FAISS"],
-        ))
-        from backend.services.chat_service import chat
-        ctx = self._make_context()
-        ctx["exploration_breadth"]["all_topics"] = ["Pinecone"]
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="RAG is..."):
-            result = chat("sess-5", "Explain RAG", topic_hint="RAG")
-        next_topics = [i["topic"] for i in result["recommendations"]["next_topics"]]
-        assert "Pinecone" not in next_topics
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestChatEndpointRecommends
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestChatEndpointRecommends:
-    """POST /chat endpoint returns recommendations in the JSON response."""
-
-    def _chat_result(self, recommendations_source="empty"):
-        return {
-            "session_id":  "sess-ep",
-            "message_id":  1,
-            "response":    "Great question!",
-            "topic_hint":  "Machine Learning",
-            "recommendations": {
-                "based_on_topic":  "Machine Learning",
-                "source":          recommendations_source,
-                "next_topics":     [{"topic": "Deep Learning", "reason": "Next step."}],
-                "prerequisites":   [],
-                "advanced_topics": [],
-            },
-            "context_used": {
-                "has_deep_research":   False,
-                "has_learning_path":   False,
-                "has_topic_expansion": False,
-                "has_github_repos":    False,
-                "interests_count":     0,
-                "history_turns":       0,
-                "topics_in_session":   0,
-                "total_topics_explored": 0,
-            },
-            "created_at": "2026-01-01 00:00:00",
-        }
-
-    def test_recommendations_field_in_response(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        with patch("backend.main.chat_with_ai", return_value=self._chat_result()):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "What is ML?"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "recommendations" in data
-
-    def test_recommendations_next_topics_serialised(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        with patch("backend.main.chat_with_ai", return_value=self._chat_result("stored")):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "What is ML?"})
-        rec = resp.json()["recommendations"]
-        assert rec["source"] == "stored"
-        assert rec["next_topics"][0]["topic"] == "Deep Learning"
-
-    def test_null_recommendations_accepted(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        result = self._chat_result()
-        result["recommendations"] = None
-        with patch("backend.main.chat_with_ai", return_value=result):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "What is ML?"})
-        assert resp.status_code == 200
 
 
 # ─────────────────────────────────────────────────────────────────────────────

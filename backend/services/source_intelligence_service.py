@@ -125,6 +125,7 @@ _SOURCE_STRENGTH: dict[str, float] = {
     "educational":     0.65,
     "news":            0.58,
     "company_blog":    0.48,
+    "social_media":    0.20,
 }
 _DEFAULT_SOURCE_STRENGTH: float = 0.40
 

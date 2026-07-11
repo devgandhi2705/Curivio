@@ -171,12 +171,12 @@ def _parse_row(d: dict) -> dict:
 
 
 def _save(project_id: str, **fields) -> dict:
-    from ..utils.db import get_connection
+    from ..utils.db import get_connection, build_set_clause
     fields["updated_at"] = _now()
     for lf in ("explored_concepts", "completed_topics", "suggested_next_topics"):
         if lf in fields and isinstance(fields[lf], list):
             fields[lf] = json.dumps(fields[lf])
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause = build_set_clause(fields)
     with get_connection() as conn:
         conn.execute(
             f"UPDATE project_progression SET {set_clause} WHERE project_id = ?",

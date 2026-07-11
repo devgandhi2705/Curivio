@@ -279,7 +279,7 @@ def execute_plan(plan: RetrievalPlan) -> list[dict]:
     if _MOCK_RETRIEVAL:
         return _mock_execute(plan)
 
-    from .tavily_service import search_strategy, extract_strategy, crawl_strategy
+    from .tinyfish_service import search as tinyfish_search, fetch_as_articles
 
     seen: set[str]  = set()
     results: list[dict] = []
@@ -296,12 +296,7 @@ def execute_plan(plan: RetrievalPlan) -> list[dict]:
         if op == "search":
             for query in plan.search_queries:
                 try:
-                    _merge(search_strategy(
-                        query,
-                        domain        = plan.domain_key,
-                        mode          = plan.mode,
-                        extra_domains = plan.preferred_domains or None,
-                    ))
+                    _merge(tinyfish_search(query))
                 except Exception as exc:
                     logger.warning(
                         "[retrieval_router] search failed for %r: %s", query[:60], exc
@@ -309,13 +304,13 @@ def execute_plan(plan: RetrievalPlan) -> list[dict]:
 
         elif op == "extract" and plan.extract_urls:
             try:
-                query_hint = plan.search_queries[0] if plan.search_queries else None
-                _merge(extract_strategy(plan.extract_urls, query_hint=query_hint))
+                _merge(fetch_as_articles(plan.extract_urls))
             except Exception as exc:
                 logger.warning("[retrieval_router] extract failed: %s", exc)
 
         elif op == "crawl" and plan.crawl_url:
             try:
+                from .tavily_service import crawl_strategy  # deep_research-only; never reached by feed mode
                 query_hint = plan.search_queries[0] if plan.search_queries else None
                 _merge(crawl_strategy(
                     plan.crawl_url,

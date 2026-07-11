@@ -1,14 +1,8 @@
 {
   "mcpServers": {
-    "code-review-graph": {
-      "command": "C:\\Users\\Dev Gandhi\\Desktop\\ai-learning-agent\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "code_review_graph",
-        "serve"
-      ],
-      "cwd": "C:\\Users\\Dev Gandhi\\Desktop\\ai-learning-agent",
-      "type": "stdio"
+    "21st": {
+      "type": "http",
+      "url": "https://21st.dev/api/mcp"
     }
   }
 }

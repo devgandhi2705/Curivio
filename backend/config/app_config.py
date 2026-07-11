@@ -15,6 +15,15 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_UNPACK_MODEL   = "openai/gpt-oss-120b"
 GEMINI_UNPACK_MODEL = "models/gemini-2.5-flash-lite"
 
+# ── LangChain provider layer (backend/llm/) ─────────────────────────────────────
+# Additive, parallel to the existing hand-rolled Groq/Gemini call sites above —
+# not read by grok_service.py / journey_planner_service.py / writer_provider_router.py.
+GEMINI_MODEL          = os.getenv("GEMINI_MODEL", "models/gemini-2.5-flash")
+GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-3.1-flash-lite")
+# Same model as GROQ_MODEL today; decoupled so this leg can change independently.
+GROQ_FALLBACK_MODEL   = os.getenv("GROQ_FALLBACK_MODEL", GROQ_MODEL)
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
+
 # ── Rate limits ───────────────────────────────────────────────────────────────
 # Format: "count/period"  — period: second, minute, hour, day
 GENERATE_FEED_RATE_LIMIT  = "5/minute"
@@ -27,6 +36,13 @@ INSIGHT_GEN_RATE          = "5/minute"
 BOOKMARKS_RATE_LIMIT      = "60/minute"
 TRIGGER_ALL_PROJECTS_RATE = "2/minute"
 UNPACK_RATE_LIMIT         = "30/minute"
+CHAT_UPLOAD_RATE_LIMIT    = "10/minute"
+# Credential/code-guessing endpoints (login, code verification) — same tier as
+# GENERATE_FEED/INSIGHT_GEN, the app's existing strictest bucket.
+AUTH_STRICT_RATE_LIMIT    = "5/minute"
+# Initiate-only auth endpoints (register, forgot-password, send-verify-email) —
+# bounded against spam/enumeration without blocking normal use.
+AUTH_LOOSE_RATE_LIMIT     = "10/minute"
 
 # ── Cache TTLs (hours) ────────────────────────────────────────────────────────
 FEED_CACHE_TTL_HOURS       = 24
@@ -50,6 +66,8 @@ GITHUB_MIN_STARS = 50
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 AUTH_TOKEN_EXPIRE_DAYS = 30
+# Comma-separated allowlist of admin emails. Same shape as CORS_ORIGINS below.
+ADMIN_EMAILS = os.getenv("ADMIN_EMAILS", "")
 
 # ── Feature flags ────────────────────────────────────────────────────────────
 # Phase 9.3.4C: replace single LLM call with N writer calls + merge.

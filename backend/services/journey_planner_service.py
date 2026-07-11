@@ -10,17 +10,15 @@ batch automatically when none covers the requested day.
 Public API
 ----------
 plan_journey(project_id, intent_profile, keywords, covered_concepts,
-             day_start, provider)                                       -> dict
+             day_start)                                                -> dict
 save_journey_plan(project_id, batch, description_hash)                 -> None
-get_today_plan(project_id, day_number, intent_profile, keywords,
-               provider)                                               -> dict
+get_today_plan(project_id, day_number, intent_profile, keywords)       -> dict
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -29,60 +27,18 @@ _MIN_DAYS = 7
 _MAX_DAYS = 20
 
 _GEMINI_PRIMARY  = "models/gemini-2.5-flash"
-_GEMINI_FALLBACK = "models/gemini-3.1-flash-lite"
 # gemini-3.5-flash disqualified: reproducible response-corruption bug (extra trailing brace)
 # observed on fixed_sequence prompts during Phase 2a evaluation — do not reinstate without re-eval.
-_GEMINI_API_URL  = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-_gemini_client = None
 
 
-def _get_gemini_client():
-    global _gemini_client
-    if _gemini_client is None:
-        from openai import OpenAI
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is not set")
-        _gemini_client = OpenAI(api_key=api_key, base_url=_GEMINI_API_URL, timeout=120.0)
-    return _gemini_client
-
-
-def _is_quota_error(exc: Exception) -> bool:
-    msg = str(exc)
-    return "429" in msg or "RESOURCE_EXHAUSTED" in msg
-
-
-def _ask_gemini(prompt: str) -> str:
-    try:
-        resp = _get_gemini_client().chat.completions.create(
-            model=_GEMINI_PRIMARY,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
-        logger.info("[journey_planner] gemini tier=primary model=%s", _GEMINI_PRIMARY)
-        return resp.choices[0].message.content
-    except Exception as primary_exc:
-        if not _is_quota_error(primary_exc):
-            raise
-        logger.warning(
-            "[journey_planner] primary quota/rate error — escalating to tier-2 (%s): %s",
-            _GEMINI_FALLBACK, primary_exc,
-        )
-    resp = _get_gemini_client().chat.completions.create(
-        model=_GEMINI_FALLBACK,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-    )
-    logger.info("[journey_planner] gemini tier=fallback model=%s", _GEMINI_FALLBACK)
-    return resp.choices[0].message.content
-
-
-def _call_llm(prompt: str, provider: str) -> str:
-    if provider == "gemini":
-        return _ask_gemini(prompt)
-    from .grok_service import ask_grok
-    return ask_grok(prompt, json_mode=True)
+def _call_llm(prompt: str, project_id: str, day_ref: int) -> str:
+    """Gemini-primary / Groq-fallback via the shared backend/llm factory."""
+    from ..llm import get_chat_model, extract_text
+    model = get_chat_model(model=_GEMINI_PRIMARY, json_mode=True)
+    resp  = model.invoke(prompt, config={"metadata": {
+        "call_type": "feed_journey_planner", "project_id": project_id, "day_ref": day_ref,
+    }})
+    return extract_text(resp)
 
 
 def _hash(text: str) -> str:
@@ -245,7 +201,6 @@ def plan_journey(
     keywords:         list[str],
     covered_concepts: list[str] | None = None,
     day_start:        int = 1,
-    provider:         str = "groq",
     description_hash: str = "",
 ) -> dict:
     """Call the LLM to plan a journey batch. Retries once on JSON parse failure.
@@ -281,14 +236,14 @@ def plan_journey(
 
     prompt = _build_prompt(intent_profile, keywords, covered_concepts, day_start, locked_shape=locked_shape)
     try:
-        text = _call_llm(prompt, provider)
+        text = _call_llm(prompt, project_id, day_start)
         try:
             batch = _extract_json(text)
         except (json.JSONDecodeError, ValueError):
             logger.warning("[journey_planner] project=%r JSON parse failed — retrying once", project_id)
             text  = _call_llm(
                 prompt + "\n\nIMPORTANT: Return ONLY valid JSON, no other text.",
-                provider,
+                project_id, day_start,
             )
             batch = _extract_json(text)
 
@@ -349,7 +304,6 @@ def get_today_plan(
     day_number:     int,
     intent_profile: dict | None      = None,
     keywords:       list[str] | None = None,
-    provider:       str              = "groq",
 ) -> dict:
     """Return the plan entry for day_number.
 
@@ -378,13 +332,18 @@ def get_today_plan(
             )
             return _generic_entry(day_number)
 
-        # Find where next batch should start (max day_end across all batches + 1, or 1)
+        # Find where next batch should start (max day_end across all batches + 1, or 1).
+        # If day_number is far beyond that natural next day, jump day_start forward so
+        # the new batch can still reach it in one shot, leaving the skipped days as a
+        # legitimate gap — the lazy-regen trigger above (day outside any batch range)
+        # plans them on demand if ever requested.
         with get_connection() as conn:
             latest = conn.execute(
                 "SELECT MAX(day_end) AS max_end FROM journey_plans WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
-        day_start = (latest["max_end"] + 1) if (latest and latest["max_end"] is not None) else day_number
+        natural_start = (latest["max_end"] + 1) if (latest and latest["max_end"] is not None) else day_number
+        day_start = max(natural_start, day_number - _MAX_DAYS + 1)
 
         # Pull covered concepts from learning memory (non-fatal if absent)
         covered_concepts: list[str] | None = None
@@ -405,16 +364,29 @@ def get_today_plan(
             intent_profile.get("_meta", {}).get("description_hash", "")
             or _hash(intent_profile.get("intent_summary", ""))
         )
-        batch     = plan_journey(
+        # Plan a single batch covering day_number. If the LLM returns a shorter
+        # day_count than _MAX_DAYS, day_start may still land short of day_number —
+        # retry once with day_start = day_number exactly, which always covers it
+        # (day_count >= _MIN_DAYS >= 1). Bounded at 2 calls, not one per skipped batch.
+        batch = plan_journey(
             project_id, intent_profile, keywords or [],
             covered_concepts=covered_concepts,
             day_start=day_start,
-            provider=provider,
             description_hash=desc_hash,
         )
         save_journey_plan(project_id, batch, desc_hash)
-
         row = _fetch_batch(day_number)
+
+        if row is None and day_start != day_number:
+            batch = plan_journey(
+                project_id, intent_profile, keywords or [],
+                covered_concepts=covered_concepts,
+                day_start=day_number,
+                description_hash=desc_hash,
+            )
+            save_journey_plan(project_id, batch, desc_hash)
+            row = _fetch_batch(day_number)
+
         if row is None:
             logger.warning(
                 "[journey_planner] day %d still outside batch after planning for %r",

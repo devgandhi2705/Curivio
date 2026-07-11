@@ -44,7 +44,13 @@ def build_user_profile_context() -> dict:
 
     try:
         top_interests    = [t["topic"] for t in get_top_user_interests(limit=5)]
-        suppressed       = [t["topic"] for t in get_suppressed_topics()]
+        # get_suppressed_topics() already returns list[str] (topic names extracted
+        # internally) — unlike get_top_user_interests()'s list[dict]. Re-indexing
+        # with ["topic"] here raised on every turn with any suppressed topic
+        # (TypeError: string indices must be integers), which the except below
+        # silently caught and collapsed the WHOLE profile to defaults — including
+        # top_interests, which does reach the system prompt.
+        suppressed       = get_suppressed_topics()
         difficulty_pref  = get_overall_difficulty_preference()
         stage            = get_learning_stage()
     except Exception:

@@ -2,7 +2,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from backend.utils.db import get_connection as get_db
+from backend.utils.db import get_connection
 
 
 def _now() -> str:
@@ -46,7 +46,7 @@ def _row_to_bookmark(row) -> dict:
 # ── Collections ───────────────────────────────────────────────────────────────
 
 def list_collections(user_id: str | None = None) -> list[dict]:
-    with get_db() as conn:
+    with get_connection() as conn:
         if user_id:
             rows = conn.execute("""
                 SELECT bc.*, COUNT(b.bookmark_id) as bookmark_count
@@ -70,7 +70,7 @@ def list_collections(user_id: str | None = None) -> list[dict]:
 def create_collection(name: str, description: str = "", color: str = "blue", user_id: str | None = None) -> dict:
     cid = str(uuid.uuid4())
     now = _now()
-    with get_db() as conn:
+    with get_connection() as conn:
         conn.execute(
             "INSERT INTO bookmark_collections (collection_id, name, description, color, created_at, updated_at, user_id) VALUES (?,?,?,?,?,?,?)",
             (cid, name.strip(), description.strip(), color, now, now, user_id),
@@ -88,7 +88,7 @@ def create_collection(name: str, description: str = "", color: str = "blue", use
 
 def update_collection(collection_id: str, name: Optional[str] = None, description: Optional[str] = None, color: Optional[str] = None) -> Optional[dict]:
     now = _now()
-    with get_db() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT * FROM bookmark_collections WHERE collection_id=?", (collection_id,)).fetchone()
         if not row:
             return None
@@ -112,7 +112,7 @@ def update_collection(collection_id: str, name: Optional[str] = None, descriptio
 
 
 def delete_collection(collection_id: str) -> bool:
-    with get_db() as conn:
+    with get_connection() as conn:
         cur = conn.execute("DELETE FROM bookmark_collections WHERE collection_id=?", (collection_id,))
     return cur.rowcount > 0
 
@@ -146,7 +146,7 @@ def list_bookmarks(
         params += [term, term, term]
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
-    with get_db() as conn:
+    with get_connection() as conn:
         rows = conn.execute(f"""
             SELECT b.*, bc.name as collection_name, bc.color as collection_color
             FROM bookmarks b
@@ -181,7 +181,7 @@ def create_bookmark(
     deep_research_reference:  str = "",
     content_snapshot:         str = "",
 ) -> Optional[dict]:
-    with get_db() as conn:
+    with get_connection() as conn:
         col_exists = conn.execute("SELECT 1 FROM bookmark_collections WHERE collection_id=?", (collection_id,)).fetchone()
         if not col_exists:
             return None
@@ -196,7 +196,7 @@ def create_bookmark(
 
     bid = str(uuid.uuid4())
     now = _now()
-    with get_db() as conn:
+    with get_connection() as conn:
         conn.execute("""
             INSERT INTO bookmarks (
                 bookmark_id, collection_id, title, summary, content_type,
@@ -218,7 +218,7 @@ def create_bookmark(
 
 
 def get_bookmark(bookmark_id: str) -> Optional[dict]:
-    with get_db() as conn:
+    with get_connection() as conn:
         row = conn.execute("""
             SELECT b.*, bc.name as collection_name, bc.color as collection_color
             FROM bookmarks b
@@ -239,7 +239,7 @@ def update_bookmark(
     ai_generated_notes:    Optional[str]  = None,
     collection_id:         Optional[str]  = None,
 ) -> Optional[dict]:
-    with get_db() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT * FROM bookmarks WHERE bookmark_id=?", (bookmark_id,)).fetchone()
         if not row:
             return None
@@ -254,6 +254,6 @@ def update_bookmark(
 
 
 def delete_bookmark(bookmark_id: str) -> bool:
-    with get_db() as conn:
+    with get_connection() as conn:
         cur = conn.execute("DELETE FROM bookmarks WHERE bookmark_id=?", (bookmark_id,))
     return cur.rowcount > 0

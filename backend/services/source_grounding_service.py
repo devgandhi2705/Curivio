@@ -62,6 +62,27 @@ def _norm(url: str) -> str:
     return (url or "").rstrip("/").lower()
 
 
+def _normalize_action_item(value):
+    """
+    Coerce a card-level action_item to a plain string.
+
+    Not a documented per-card field (only the package-level action_item is
+    schema'd) — the writer occasionally attaches one to individual cards
+    anyway (echoing ACTION_DESIGN's type/description framing meant for the
+    package-level field), sometimes as a {"type", "description"} dict.
+    Returns the value unchanged if already a string.
+    """
+    if isinstance(value, str) or value is None:
+        return value
+    if isinstance(value, dict):
+        t = (value.get("type") or "").strip()
+        d = (value.get("description") or "").strip()
+        if t and d:
+            return f"{t}: {d}"
+        return t or d or str(value)
+    return str(value)
+
+
 def _repair_url(
     invalid_title:  str,
     allowed_titles: dict[str, str],   # normalised_url → original title
@@ -90,11 +111,12 @@ def _repair_url(
 # ── Core enforcement ──────────────────────────────────────────────────────────
 
 def ground_package(
-    raw_package:    dict,
-    allowed_urls:   frozenset[str],
-    allowed_titles: dict[str, str],   # normalised_url → title
-    project_id:     str,
-    day_number:     int,
+    raw_package:     dict,
+    allowed_urls:    frozenset[str],
+    allowed_titles:  dict[str, str],   # normalised_url → title
+    project_id:      str,
+    day_number:      int,
+    citable_sources: dict[str, dict] | None = None,
 ) -> tuple[dict, list[Violation]]:
     """
     Validate and repair source citations in a generated package in-place.
@@ -103,11 +125,16 @@ def ground_package(
     flat `source_links` list containing only verified real URLs.
 
     Args:
-        raw_package:    Parsed LLM JSON dict with "insights" and "curiosity_insights".
-        allowed_urls:   Normalised URLs from the retrieval system (frozenset).
-        allowed_titles: Mapping of normalised URL → article title (for repair).
-        project_id:     Used in violation log entries.
-        day_number:     Used in violation log entries.
+        raw_package:     Parsed LLM JSON dict with "insights" and "curiosity_insights".
+        allowed_urls:    Normalised URLs from the retrieval system (frozenset).
+        allowed_titles:  Mapping of normalised URL → article title (for repair).
+        project_id:      Used in violation log entries.
+        day_number:      Used in violation log entries.
+        citable_sources: Feed-4.2 — Source-ID -> {"url", "images"} for whatever
+                         this generation actually offered the writer (empty/None
+                         when full_content wasn't wired in, e.g. package mode or
+                         a Groq-answered batch). Used to validate per-block
+                         "image" content and optional "source_id" fields.
 
     Returns:
         (raw_package, violations)
@@ -115,6 +142,12 @@ def ground_package(
     Raises:
         RuntimeError: when all core insight cards are stripped of valid sources.
     """
+    citable_sources = citable_sources or {}
+    _valid_source_ids = frozenset(citable_sources.keys())
+    _valid_image_urls = frozenset(
+        img for v in citable_sources.values() for img in (v.get("images") or [])
+    )
+
     violations: list[Violation]   = []
     used_primary: set[str]        = set()
 
@@ -221,6 +254,55 @@ def ground_package(
         card["source_links"] = ([primary] if primary else []) + secondary
         card.pop("primary_source",     None)
         card.pop("supporting_sources", None)
+
+        _validate_blocks(card, card_id)
+
+        if "action_item" in card and not isinstance(card["action_item"], str):
+            _before = card["action_item"]
+            card["action_item"] = _normalize_action_item(_before)
+            _violation_logger.warning(
+                "[grounding] project=%s day=%d card=%s | NORMALIZED action_item %r -> %r",
+                project_id, day_number, card_id, _before, card["action_item"],
+            )
+
+    def _validate_blocks(card: dict, card_id: str) -> None:
+        """
+        Feed-4.2 — validate per-block "image" content and optional "source_id".
+
+        image blocks: content must be a URL this card's source(s) actually
+        offered (citable_sources); otherwise the block is dropped outright —
+        an image block's entire payload IS the URL, there's nothing to "strip"
+        and keep.
+        source_id: must reference a real Source-ID from this generation;
+        otherwise only the field is stripped — the block's content stands on
+        its own regardless of whether the attribution survives.
+        """
+        blocks = card.get("blocks") or []
+        if not blocks:
+            return
+
+        kept: list[dict] = []
+        for block in blocks:
+            if block.get("type") == "image":
+                url = block.get("content") or ""
+                if url not in _valid_image_urls:
+                    _violation_logger.warning(
+                        "[grounding] project=%s day=%d card=%s | DROPPED image block — "
+                        "URL not offered to writer: %r",
+                        project_id, day_number, card_id, url,
+                    )
+                    continue
+
+            if "source_id" in block and block["source_id"] not in _valid_source_ids:
+                _violation_logger.warning(
+                    "[grounding] project=%s day=%d card=%s | STRIPPED invalid source_id %r",
+                    project_id, day_number, card_id, block["source_id"],
+                )
+                block = {k: v for k, v in block.items() if k != "source_id"}
+
+            kept.append(block)
+
+        card["blocks"] = kept
 
     # ── Process all cards ─────────────────────────────────────────────────────
     for card in raw_package.get("insights", []):

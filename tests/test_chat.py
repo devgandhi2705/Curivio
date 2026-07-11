@@ -7,21 +7,20 @@ Test classes
                                  build_session_context, build_full_context
 2.  TestChatPromptService      — build_system_prompt, build_messages, truncation
 3.  TestChatServiceStorage     — get_history, clear_history, list_sessions
-4.  TestChatServiceOrchestrate — chat() end-to-end with mocked AI
-5.  TestChatServiceEdgeCases   — empty session_id/message, missing topic_hint detection
-6.  TestTopicHintDetection     — _detect_topic_hint with mocked DB
-7.  TestChatEndpoints          — POST /chat, GET history, DELETE history, GET sessions
-8.  TestChatEndpointValidation — 422 on blank fields
-9.  TestGrokChatFunction       — ask_grok_chat unit test with mocked OpenAI client
-10. TestChatIntegration        — full round-trip (gated -m integration)
+4.  TestChatServiceEdgeCases   — _load_history_messages / _save_message directly
+5.  TestTopicHintDetection     — _detect_topic_hint with mocked DB
+6.  TestChatEndpoints          — GET history, DELETE history, GET sessions
 
 Patching rules
 --------------
 - Service tests patch backend.services.chat_service.get_connection and related
   service functions directly.
-- Endpoint tests patch backend.main.chat_with_ai / get_chat_history / etc. so
-  TestClient's thread is isolated from the DB.
-- ask_grok_chat is always patched in unit tests; only the integration test calls Groq.
+- Endpoint tests patch backend.main.get_chat_history / etc. so TestClient's
+  thread is isolated from the DB.
+
+chat()/chat_with_ai (sync /chat, POST /chat, ask_grok_chat) retired — see
+their removal notes in chat_service.py / grok_service.py / main.py. Tests
+that existed purely to exercise that path were removed with it.
 """
 
 from __future__ import annotations
@@ -43,7 +42,6 @@ from backend.services.chat_service import (
     _detect_topic_hint,
     _load_history_messages,
     _save_message,
-    chat as chat_with_ai,
     clear_history,
     get_history,
     list_sessions,
@@ -84,6 +82,11 @@ def mem_db(monkeypatch):
             raise
 
     monkeypatch.setattr("backend.services.chat_service.get_connection", _get_conn)
+    # list_sessions() delegates to chat_title_service.list_sessions_with_titles(),
+    # which does a fresh `from ..utils.db import get_connection` at call time —
+    # patching chat_service's own already-bound name doesn't reach it, so the
+    # true source (backend.utils.db.get_connection) needs patching too.
+    monkeypatch.setattr("backend.utils.db.get_connection", _get_conn)
     return conn
 
 
@@ -105,18 +108,33 @@ class TestChatContextService:
 
     def test_build_user_profile_context_returns_expected_keys(self):
         with (
-            patch("backend.services.chat_context_service.build_user_profile_context") as mock_fn,
+            patch("backend.services.recommendation_service.get_top_user_interests",
+                  return_value=[{"topic": "RAG Pipelines"}]),
+            patch("backend.services.recommendation_service.get_suppressed_topics", return_value=[]),
+            patch("backend.services.recommendation_service.get_overall_difficulty_preference", return_value="intermediate"),
+            patch("backend.services.recommendation_service.get_learning_stage", return_value="intermediate"),
         ):
-            mock_fn.return_value = {
-                "learning_stage": "intermediate",
-                "difficulty_preference": "intermediate",
-                "top_interests": ["RAG Pipelines"],
-                "suppressed_topics": [],
-            }
-            result = mock_fn()
-        assert "learning_stage" in result
-        assert "top_interests" in result
-        assert "suppressed_topics" in result
+            result = build_user_profile_context()
+        assert result["learning_stage"] == "intermediate"
+        assert result["top_interests"] == ["RAG Pipelines"]
+        assert result["suppressed_topics"] == []
+
+    def test_build_user_profile_context_suppressed_topics_are_strings(self):
+        # get_suppressed_topics() returns list[str] (topic names already
+        # extracted), unlike get_top_user_interests()'s list[dict] — a real
+        # suppressed topic used to raise TypeError here and silently wipe the
+        # whole profile (top_interests included) via the except-all below.
+        with (
+            patch("backend.services.recommendation_service.get_top_user_interests",
+                  return_value=[{"topic": "RAG Pipelines"}]),
+            patch("backend.services.recommendation_service.get_suppressed_topics",
+                  return_value=["Crypto Trading"]),
+            patch("backend.services.recommendation_service.get_overall_difficulty_preference", return_value=None),
+            patch("backend.services.recommendation_service.get_learning_stage", return_value="beginner"),
+        ):
+            result = build_user_profile_context()
+        assert result["suppressed_topics"] == ["Crypto Trading"]
+        assert result["top_interests"] == ["RAG Pipelines"]  # profile must not collapse to defaults
 
     def test_build_user_profile_context_graceful_on_error(self):
         with (
@@ -261,11 +279,14 @@ class TestChatPromptService:
         assert "RAG Pipelines" in prompt
 
     def test_build_system_prompt_includes_research_summary(self):
+        # research/session dumps only render in structured modes (web_search/
+        # deep_research/...) — "normal" (the default) is deliberately minimal,
+        # see build_system_prompt's docstring.
         ctx = self._empty_context()
         ctx["research"]["topic"] = "RAG Pipelines"
         ctx["research"]["has_deep_research"] = True
         ctx["research"]["deep_research"] = {"summary": "RAG is about retrieval augmented generation"}
-        prompt = build_system_prompt(ctx)
+        prompt = build_system_prompt(ctx, mode="deep_research")
         assert "RAG" in prompt
 
     def test_build_system_prompt_includes_session_memory(self):
@@ -280,7 +301,7 @@ class TestChatPromptService:
             "last_activity_at": "2025-01-01",
             "recommended_next": [],
         }
-        prompt = build_system_prompt(ctx)
+        prompt = build_system_prompt(ctx, mode="deep_research")
         assert "LoRA" in prompt
         assert "2" in prompt  # times_explored
 
@@ -373,12 +394,16 @@ class TestChatServiceStorage:
         assert list_sessions() == []
 
     def test_list_sessions_returns_summary(self, mem_db):
+        # message_count counts user turns, not raw rows (1 user + 1 assistant
+        # = 1 turn) — confirmed intentional: the frontend independently computes
+        # the same thing via Math.floor(history.length / 2) and a +1-per-turn
+        # increment (ChatWorkspace.jsx), matching this SQL's user-only COUNT.
         _insert_message(mem_db, "s1", "user",      "hi",    topic_hint="RAG", created_at="2025-01-01 10:00:00")
         _insert_message(mem_db, "s1", "assistant", "hello",                   created_at="2025-01-01 10:01:00")
         result = list_sessions()
         assert len(result) == 1
         assert result[0]["session_id"] == "s1"
-        assert result[0]["message_count"] == 2
+        assert result[0]["message_count"] == 1
 
     def test_list_sessions_ordered_by_last_active(self, mem_db):
         _insert_message(mem_db, "older", "user", "old", created_at="2025-01-01 10:00:00")
@@ -394,144 +419,10 @@ class TestChatServiceStorage:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. ChatServiceOrchestrate
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestChatServiceOrchestrate:
-
-    def _mock_context(self):
-        return {
-            "user_profile": {
-                "learning_stage": "intermediate",
-                "difficulty_preference": "intermediate",
-                "top_interests": ["RAG Pipelines"],
-                "suppressed_topics": [],
-            },
-            "research": {
-                "topic": "RAG Pipelines",
-                "has_deep_research": True,
-                "has_learning_path": False,
-                "has_topic_expansion": False,
-                "has_github_repos": False,
-                "deep_research": {"summary": "RAG overview"},
-                "learning_path": None,
-                "topic_expansion": None,
-                "github_repos": None,
-            },
-            "session": {
-                "topic": "RAG Pipelines",
-                "times_explored": 2,
-                "has_deep_research": True,
-                "has_learning_path": False,
-                "has_topic_expansion": False,
-                "has_github_repos": False,
-                "last_activity_at": "2025-01-01",
-                "recommended_next": ["learning_path"],
-            },
-            "conversation_memory": {
-                "message_count": 0, "session_turns": 0,
-                "topics_discussed": [], "last_user_messages": [],
-            },
-            "exploration_breadth": {
-                "total_explored": 1, "all_topics": ["RAG Pipelines"],
-                "recently_explored": ["RAG Pipelines"], "deep_dived_topics": [],
-            },
-            "preference_snapshot": {
-                "liked_topics": [], "disliked_topics": [],
-                "difficulty_preference": None, "engagement_level": "new",
-            },
-        }
-
-    def test_chat_returns_expected_shape(self, mem_db):
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=self._mock_context()),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="Great question!"),
-            patch("backend.services.chat_service._detect_topic_hint", return_value="RAG Pipelines"),
-        ):
-            result = chat_with_ai("session-1", "What is RAG?")
-        assert result["session_id"] == "session-1"
-        assert result["response"] == "Great question!"
-        assert isinstance(result["message_id"], int)
-        assert "context_used" in result
-        assert "created_at" in result
-
-    def test_chat_persists_both_messages(self, mem_db):
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=self._mock_context()),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="Sure!"),
-            patch("backend.services.chat_service._detect_topic_hint", return_value=None),
-        ):
-            chat_with_ai("session-2", "Tell me about embeddings")
-        stored = get_history("session-2")
-        assert len(stored) == 2
-        assert stored[0]["role"] == "user"
-        assert stored[1]["role"] == "assistant"
-
-    def test_chat_context_used_reflects_research(self, mem_db):
-        ctx = self._mock_context()
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=ctx),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="Yes"),
-            patch("backend.services.chat_service._detect_topic_hint", return_value=None),
-        ):
-            result = chat_with_ai("session-3", "any question")
-        cu = result["context_used"]
-        assert cu["has_deep_research"] is True
-        assert cu["has_learning_path"] is False
-        assert cu["interests_count"] == 1
-
-    def test_chat_history_turns_count(self, mem_db):
-        # Insert 4 existing messages (2 turns)
-        _insert_message(mem_db, "s4", "user",      "q1", created_at="2025-01-01 09:00:00")
-        _insert_message(mem_db, "s4", "assistant", "a1", created_at="2025-01-01 09:01:00")
-        _insert_message(mem_db, "s4", "user",      "q2", created_at="2025-01-01 09:02:00")
-        _insert_message(mem_db, "s4", "assistant", "a2", created_at="2025-01-01 09:03:00")
-        with (
-            patch("backend.services.chat_service.inject_memory", return_value=self._mock_context()),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="new reply"),
-            patch("backend.services.chat_service._detect_topic_hint", return_value=None),
-        ):
-            result = chat_with_ai("s4", "q3")
-        assert result["context_used"]["history_turns"] == 2
-
-    def test_chat_uses_provided_topic_hint(self, mem_db):
-        captured = {}
-        def mock_inject(session_id, topic_hint=None):
-            captured["topic"] = topic_hint
-            return self._mock_context()
-
-        with (
-            patch("backend.services.chat_service.inject_memory", side_effect=mock_inject),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="ok"),
-        ):
-            result = chat_with_ai("s5", "explain this", topic_hint="LoRA")
-        assert captured["topic"] == "LoRA"
-        assert result["topic_hint"] == "LoRA"
-
-    def test_chat_auto_detects_topic_when_not_provided(self, mem_db):
-        with (
-            patch("backend.services.chat_service._detect_topic_hint", return_value="RAG Pipelines") as mock_detect,
-            patch("backend.services.chat_service.inject_memory", return_value=self._mock_context()),
-            patch("backend.services.grok_service.ask_grok_chat", return_value="answer"),
-        ):
-            result = chat_with_ai("s6", "question about RAG")
-        mock_detect.assert_called_once_with("question about RAG")
-        assert result["topic_hint"] == "RAG Pipelines"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. ChatServiceEdgeCases
+# 4. ChatServiceEdgeCases
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestChatServiceEdgeCases:
-
-    def test_empty_session_id_raises(self, mem_db):
-        with pytest.raises(ValueError, match="session_id"):
-            chat_with_ai("  ", "message")
-
-    def test_empty_message_raises(self, mem_db):
-        with pytest.raises(ValueError, match="message"):
-            chat_with_ai("session-x", "   ")
 
     def test_load_history_messages_returns_openai_format(self, mem_db):
         _insert_message(mem_db, "s1", "user",      "hello", created_at="2025-01-01 10:00:00")
@@ -545,28 +436,9 @@ class TestChatServiceEdgeCases:
         assert isinstance(row_id, int)
         assert row_id > 0
 
-    def test_multiple_chats_accumulate_history(self, mem_db):
-        ctx = {
-            "user_profile": {"learning_stage": "beginner", "difficulty_preference": None, "top_interests": [], "suppressed_topics": []},
-            "research": {"topic": None, "has_deep_research": False, "has_learning_path": False, "has_topic_expansion": False, "has_github_repos": False, "deep_research": None, "learning_path": None, "topic_expansion": None, "github_repos": None},
-            "session": {"topic": None, "times_explored": 0, "has_deep_research": False, "has_learning_path": False, "has_topic_expansion": False, "has_github_repos": False, "last_activity_at": None, "recommended_next": []},
-            "conversation_memory": {"message_count": 0, "session_turns": 0, "topics_discussed": [], "last_user_messages": []},
-            "exploration_breadth": {"total_explored": 0, "all_topics": [], "recently_explored": [], "deep_dived_topics": []},
-            "preference_snapshot": {"liked_topics": [], "disliked_topics": [], "difficulty_preference": None, "engagement_level": "new"},
-        }
-        for i in range(3):
-            with (
-                patch("backend.services.chat_service.inject_memory", return_value=ctx),
-                patch("backend.services.grok_service.ask_grok_chat", return_value=f"answer {i}"),
-                patch("backend.services.chat_service._detect_topic_hint", return_value=None),
-            ):
-                chat_with_ai("multi", f"question {i}")
-        history = get_history("multi")
-        assert len(history) == 6  # 3 user + 3 assistant
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. TopicHintDetection
+# 5. TopicHintDetection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestTopicHintDetection:
@@ -608,57 +480,25 @@ class TestTopicHintDetection:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 7. ChatEndpoints
+# 6. ChatEndpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestChatEndpoints:
 
     @pytest.fixture
     def client(self):
+        # These endpoints require Depends(get_current_user) (real, intentional —
+        # part of the multi-user auth system). The service layer below it is
+        # already fully mocked per-test, so a dependency override is the
+        # DB-independent way to authenticate here, rather than minting a real
+        # JWT against a real user row.
         from fastapi.testclient import TestClient
-        from backend.main import app
-        return TestClient(app, raise_server_exceptions=False)
-
-    def _mock_chat_result(self):
-        return {
-            "session_id": "test-session",
-            "message_id": 42,
-            "response": "That's a great question about RAG!",
-            "topic_hint": "RAG Pipelines",
-            "context_used": {
-                "has_deep_research": True,
-                "has_learning_path": False,
-                "has_topic_expansion": False,
-                "has_github_repos": False,
-                "interests_count": 2,
-                "history_turns": 0,
-            },
-            "created_at": "2025-01-01 10:00:00",
-        }
-
-    def test_post_chat_returns_200(self, client):
-        with patch("backend.main.chat_with_ai", return_value=self._mock_chat_result()):
-            resp = client.post("/chat", json={"session_id": "test-session", "message": "What is RAG?"})
-        assert resp.status_code == 200
-
-    def test_post_chat_response_shape(self, client):
-        with patch("backend.main.chat_with_ai", return_value=self._mock_chat_result()):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "hello"})
-        body = resp.json()
-        assert "session_id" in body
-        assert "response" in body
-        assert "context_used" in body
-        assert "message_id" in body
-
-    def test_post_chat_passes_topic_hint(self, client):
-        captured = {}
-        def mock_chat(**kwargs):
-            captured.update(kwargs)
-            return self._mock_chat_result()
-
-        with patch("backend.main.chat_with_ai", side_effect=mock_chat):
-            client.post("/chat", json={"session_id": "s1", "message": "hello", "topic_hint": "LoRA"})
-        assert captured.get("topic_hint") == "LoRA"
+        from backend.main import app, get_current_user
+        app.dependency_overrides[get_current_user] = lambda: {"user_id": "test-user", "email": "test@example.com"}
+        try:
+            yield TestClient(app, raise_server_exceptions=False)
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
 
     def test_get_chat_history_returns_200(self, client):
         with patch("backend.main.get_chat_history", return_value=[
@@ -696,165 +536,3 @@ class TestChatEndpoints:
         assert resp.status_code == 200
         assert resp.json() == []
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 8. ChatEndpointValidation
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestChatEndpointValidation:
-
-    @pytest.fixture
-    def client(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        return TestClient(app, raise_server_exceptions=False)
-
-    def test_blank_session_id_returns_422(self, client):
-        resp = client.post("/chat", json={"session_id": "  ", "message": "hello"})
-        assert resp.status_code == 422
-
-    def test_blank_message_returns_422(self, client):
-        resp = client.post("/chat", json={"session_id": "s1", "message": "  "})
-        assert resp.status_code == 422
-
-    def test_missing_session_id_returns_422(self, client):
-        resp = client.post("/chat", json={"message": "hello"})
-        assert resp.status_code == 422
-
-    def test_missing_message_returns_422(self, client):
-        resp = client.post("/chat", json={"session_id": "s1"})
-        assert resp.status_code == 422
-
-    def test_topic_hint_is_optional(self, client):
-        mock_result = {
-            "session_id": "s1", "message_id": 1, "response": "ok", "topic_hint": None,
-            "context_used": {"has_deep_research": False, "has_learning_path": False,
-                             "has_topic_expansion": False, "has_github_repos": False,
-                             "interests_count": 0, "history_turns": 0},
-            "created_at": "2025-01-01 10:00:00",
-        }
-        with patch("backend.main.chat_with_ai", return_value=mock_result):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "hello"})
-        assert resp.status_code == 200
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9. GrokChatFunction
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestGrokChatFunction:
-
-    def test_ask_grok_chat_returns_string(self):
-        from backend.services.grok_service import ask_grok_chat
-
-        mock_choice = MagicMock()
-        mock_choice.message.content = "Here is my response."
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_response.usage.prompt_tokens     = 100
-        mock_response.usage.completion_tokens = 50
-
-        with (
-            patch("backend.services.grok_service.client") as mock_client,
-            patch("backend.services.api_usage_service.log_api_call"),
-            patch("backend.services.api_usage_service.estimate_groq_cost", return_value=0.0),
-        ):
-            mock_client.chat.completions.create.return_value = mock_response
-            result = ask_grok_chat([
-                {"role": "system", "content": "You are helpful"},
-                {"role": "user", "content": "Hello"},
-            ])
-        assert result == "Here is my response."
-
-    def test_ask_grok_chat_passes_messages_directly(self):
-        from backend.services.grok_service import ask_grok_chat
-
-        messages_sent = []
-
-        def mock_create(model, messages, temperature):
-            messages_sent.extend(messages)
-            mock_choice = MagicMock()
-            mock_choice.message.content = "done"
-            resp = MagicMock()
-            resp.choices = [mock_choice]
-            resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
-            return resp
-
-        with (
-            patch("backend.services.grok_service.client") as mock_client,
-            patch("backend.services.api_usage_service.log_api_call"),
-            patch("backend.services.api_usage_service.estimate_groq_cost", return_value=0.0),
-        ):
-            mock_client.chat.completions.create.side_effect = mock_create
-            ask_grok_chat([
-                {"role": "system", "content": "sys"},
-                {"role": "user", "content": "usr"},
-            ])
-        assert messages_sent[0]["role"] == "system"
-        assert messages_sent[1]["role"] == "usr" or messages_sent[1]["content"] == "usr"
-
-    def test_ask_grok_chat_raises_on_api_error(self):
-        from backend.services.grok_service import ask_grok_chat
-
-        with (
-            patch("backend.services.grok_service.client") as mock_client,
-            patch("backend.services.api_usage_service.log_api_call"),
-            patch("backend.services.api_usage_service.estimate_groq_cost", return_value=0.0),
-        ):
-            mock_client.chat.completions.create.side_effect = ConnectionError("timeout")
-            with pytest.raises(RuntimeError, match="API request failed"):
-                ask_grok_chat([{"role": "user", "content": "hi"}])
-
-    def test_ask_grok_chat_logs_api_call(self):
-        from backend.services.grok_service import ask_grok_chat
-
-        mock_choice = MagicMock()
-        mock_choice.message.content = "logged"
-        mock_response = MagicMock()
-        mock_response.choices = [mock_choice]
-        mock_response.usage.prompt_tokens     = 80
-        mock_response.usage.completion_tokens = 40
-
-        with (
-            patch("backend.services.grok_service.client") as mock_client,
-            patch("backend.services.api_usage_service.log_api_call") as mock_log,
-            patch("backend.services.api_usage_service.estimate_groq_cost", return_value=0.001),
-        ):
-            mock_client.chat.completions.create.return_value = mock_response
-            ask_grok_chat([{"role": "user", "content": "test"}])
-        mock_log.assert_called_once()
-        call_kwargs = mock_log.call_args[1]
-        assert call_kwargs["operation"] == "chat_conversation"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 10. ChatIntegration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@pytest.mark.integration
-class TestChatIntegration:
-
-    def test_full_chat_round_trip(self):
-        """One real conversation turn using the live Groq API and DB."""
-        import uuid
-        session_id = f"integration-test-{uuid.uuid4().hex[:8]}"
-
-        result = chat_with_ai(
-            session_id=session_id,
-            message="In one sentence, what is RAG (Retrieval Augmented Generation)?",
-            topic_hint="RAG Pipelines",
-        )
-
-        assert result["session_id"] == session_id
-        assert isinstance(result["response"], str)
-        assert len(result["response"]) > 10
-        assert isinstance(result["message_id"], int)
-
-        history = get_history(session_id)
-        assert len(history) == 2
-        assert history[0]["role"] == "user"
-        assert history[1]["role"] == "assistant"
-
-        # Cleanup
-        clear_history(session_id)
-        assert get_history(session_id) == []

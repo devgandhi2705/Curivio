@@ -8,10 +8,10 @@ from . import config as cfg
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Literal, Optional
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,6 @@ from .services.auth_service import (
     complete_signup_verification,
 )
 from .services.chat_service import (
-    chat as chat_with_ai,
     chat_stream as chat_stream_generator,
     get_history as get_chat_history,
     clear_history as clear_chat_history,
@@ -98,6 +97,9 @@ SEARCH_RATE_LIMIT        = cfg.SEARCH_RATE_LIMIT
 FEEDBACK_RATE_LIMIT      = cfg.FEEDBACK_RATE_LIMIT
 MEMORY_RATE_LIMIT        = cfg.MEMORY_RATE_LIMIT
 UNPACK_RATE_LIMIT        = cfg.UNPACK_RATE_LIMIT
+CHAT_UPLOAD_RATE_LIMIT   = cfg.CHAT_UPLOAD_RATE_LIMIT
+AUTH_STRICT_RATE_LIMIT   = cfg.AUTH_STRICT_RATE_LIMIT
+AUTH_LOOSE_RATE_LIMIT    = cfg.AUTH_LOOSE_RATE_LIMIT
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -167,6 +169,10 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def generic_exception_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+from .routes.admin import router as admin_router
+app.include_router(admin_router)
 
 
 # --- Request models ---
@@ -423,12 +429,14 @@ class CompleteSignupRequest(BaseModel):
 
 
 @app.post("/auth/register", status_code=201)
-async def auth_register(data: RegisterRequest):
+@limiter.limit(AUTH_LOOSE_RATE_LIMIT)
+async def auth_register(request: Request, data: RegisterRequest):
     return register_user(data.email, data.name, data.password)
 
 
 @app.post("/auth/login")
-async def auth_login(data: LoginRequest):
+@limiter.limit(AUTH_STRICT_RATE_LIMIT)
+async def auth_login(request: Request, data: LoginRequest):
     return login_user(data.email, data.password)
 
 
@@ -474,31 +482,36 @@ async def auth_verify_password(
 
 
 @app.post("/auth/forgot-password")
-async def auth_forgot_password(data: ForgotPasswordRequest):
+@limiter.limit(AUTH_LOOSE_RATE_LIMIT)
+async def auth_forgot_password(request: Request, data: ForgotPasswordRequest):
     create_reset_token(data.email)
     return {"ok": True}
 
 
 @app.post("/auth/verify-reset-code")
-async def auth_verify_reset_code(data: VerifyResetCodeRequest):
+@limiter.limit(AUTH_STRICT_RATE_LIMIT)
+async def auth_verify_reset_code(request: Request, data: VerifyResetCodeRequest):
     verify_reset_code(data.email, data.code)
     return {"ok": True}
 
 
 @app.post("/auth/reset-password")
-async def auth_reset_password(data: ResetPasswordRequest):
+@limiter.limit(AUTH_STRICT_RATE_LIMIT)
+async def auth_reset_password(request: Request, data: ResetPasswordRequest):
     consume_reset_token(data.email, data.code, data.new_password)
     return {"ok": True}
 
 
 @app.post("/auth/send-verify-email")
-async def auth_send_verify_email(data: SendVerifyEmailRequest):
+@limiter.limit(AUTH_LOOSE_RATE_LIMIT)
+async def auth_send_verify_email(request: Request, data: SendVerifyEmailRequest):
     create_signup_verification(data.email, data.name, data.password)
     return {"ok": True}
 
 
 @app.post("/auth/complete-signup", status_code=201)
-async def auth_complete_signup(data: CompleteSignupRequest):
+@limiter.limit(AUTH_STRICT_RATE_LIMIT)
+async def auth_complete_signup(request: Request, data: CompleteSignupRequest):
     return complete_signup_verification(data.email, data.code)
 
 
@@ -1000,9 +1013,19 @@ class FeedContext(BaseModel):
     source_urls:      list[str]       = []
     project_name:     str             = ""
     project_keywords: list[str]       = []
+    project_id:       str             = ""
     category:         str | None      = None
     content_type:     str             = "news"   # "news" | "educational"
     domain:           str             = "default"
+
+
+class ChatAttachment(BaseModel):
+    """A Gemini Files API upload reference — never the file bytes. See /chat/upload."""
+    uri:        str
+    mime_type:  str
+    filename:   str
+    size_bytes: int | None = None
+    expires_at: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -1011,6 +1034,8 @@ class ChatRequest(BaseModel):
     topic_hint:   str | None        = None
     chat_mode:    str               = "normal"
     feed_context: FeedContext | None = None
+    attachments:  list[ChatAttachment] | None = None
+    extended_thinking: bool         = False
 
     @field_validator("chat_mode")
     @classmethod
@@ -1028,45 +1053,16 @@ class ChatRequest(BaseModel):
 
     @field_validator("message")
     @classmethod
-    def message_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("message must not be blank")
+    def message_strip(cls, v: str) -> str:
         return v.strip()
 
-
-class ChatContextUsed(BaseModel):
-    has_deep_research:      bool
-    has_learning_path:      bool
-    has_topic_expansion:    bool
-    has_github_repos:       bool
-    interests_count:        int
-    history_turns:          int
-    topics_in_session:      int = 0
-    total_topics_explored:  int = 0
-
-
-class RecommendationItem(BaseModel):
-    topic:  str
-    reason: str
-
-
-class ChatRecommendations(BaseModel):
-    based_on_topic:  str | None
-    source:          str               # "stored" | "empty"
-    next_topics:     list[RecommendationItem]
-    prerequisites:   list[RecommendationItem]
-    advanced_topics: list[RecommendationItem]
-
-
-class ChatResponse(BaseModel):
-    session_id:      str
-    message_id:      int
-    response:        str
-    topic_hint:      str | None
-    action:          str | None = None   # detected action, e.g. "show_repos"
-    recommendations: ChatRecommendations | None = None
-    context_used:    ChatContextUsed
-    created_at:      str
+    @model_validator(mode="after")
+    def message_or_attachments_required(self):
+        # An attachment-only turn (image/PDF, no typed text) is valid — the
+        # bare message string just can't be empty with nothing else attached.
+        if not self.message and not self.attachments:
+            raise ValueError("message must not be blank")
+        return self
 
 
 class ChatMessageRecord(BaseModel):
@@ -1076,6 +1072,7 @@ class ChatMessageRecord(BaseModel):
     content:     str
     topic_hint:  str | None
     created_at:  str
+    attachments: list[ChatAttachment] | None = None
 
 
 class ChatSessionSummary(BaseModel):
@@ -1092,37 +1089,6 @@ class RenameSessionRequest(BaseModel):
 
 # --- Chat endpoints ---
 
-@app.post("/chat", response_model=ChatResponse)
-@limiter.limit(CHAT_RATE_LIMIT)
-async def chat_endpoint(
-    request: Request,
-    data: ChatRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    from .services.chat_title_service import ensure_session_owner
-    result = chat_with_ai(
-        session_id=data.session_id,
-        message=data.message,
-        topic_hint=data.topic_hint,
-        chat_mode=data.chat_mode,
-        feed_context=data.feed_context.model_dump() if data.feed_context else None,
-    )
-    ensure_session_owner(data.session_id, current_user["user_id"])
-    raw_rec = result.get("recommendations")
-    recommendations = ChatRecommendations(**raw_rec) if raw_rec else None
-
-    return ChatResponse(
-        session_id=result["session_id"],
-        message_id=result["message_id"],
-        response=result["response"],
-        topic_hint=result["topic_hint"],
-        action=result.get("action"),
-        recommendations=recommendations,
-        context_used=ChatContextUsed(**result["context_used"]),
-        created_at=result["created_at"],
-    )
-
-
 @app.post("/chat/stream")
 @limiter.limit(CHAT_RATE_LIMIT)
 async def chat_stream_endpoint(
@@ -1134,7 +1100,9 @@ async def chat_stream_endpoint(
     Stream the AI response as NDJSON.
 
     Each line is a JSON object:
-      {"t":"chunk","v":"<text>"}          — incremental AI text
+      {"t":"chunk",   "v":"<text>"}       — incremental AI text
+      {"t":"thinking","v":"<text>"}       — incremental Gemini reasoning (Chat-6)
+      {"t":"thinking_gap","v":"<text>"}   — reasoning ran but can't stream on this leg (Chat-6 followup)
       {"t":"done", <metadata>}            — final metadata (same shape as /chat)
       {"t":"error","message":"<reason>"}  — unrecoverable error
     """
@@ -1148,6 +1116,9 @@ async def chat_stream_endpoint(
             topic_hint   = data.topic_hint,
             chat_mode    = data.chat_mode,
             feed_context = data.feed_context.model_dump() if data.feed_context else None,
+            user_id      = current_user["user_id"],
+            attachments  = [a.model_dump() for a in data.attachments] if data.attachments else None,
+            extended_thinking = data.extended_thinking,
         )
 
     return StreamingResponse(
@@ -1158,6 +1129,42 @@ async def chat_stream_endpoint(
             "Cache-Control":     "no-cache",
         },
     )
+
+
+_CHAT_UPLOAD_ALLOWED_MIME = {
+    "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf",
+}
+_CHAT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024  # 20MB — app-level cap, well under Gemini's own 2GB Files API ceiling
+
+
+@app.post("/chat/upload", response_model=ChatAttachment)
+@limiter.limit(CHAT_UPLOAD_RATE_LIMIT)
+async def chat_upload_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Upload an image/PDF to Gemini's Files API (primary key only — see
+    model_provider.upload_attachment) and return a URI reference. The file
+    bytes are never persisted on our side; only this response is stored
+    against the chat message that attaches it.
+    """
+    if file.content_type not in _CHAT_UPLOAD_ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}")
+
+    data = await file.read()
+    if len(data) > _CHAT_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (20MB limit).")
+
+    from .llm.model_provider import upload_attachment
+    try:
+        result = upload_attachment(data, file.content_type, file.filename or "upload")
+    except Exception as exc:
+        logger.warning("[chat] attachment upload failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Upload failed — please try again.")
+
+    return ChatAttachment(**result)
 
 
 @app.post("/unpack/explain")

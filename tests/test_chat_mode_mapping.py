@@ -10,6 +10,13 @@ backend behaviour stays consistent with the frontend contract:
   Web Search on        "web_search"             Tavily search, no deep pipeline
   Deep Research on     "deep_research"          Tavily + full research workflow
 
+chat_stream() (the only chat path — sync /chat and its backend-orchestrated
+chat_modes_service.prepare_mode_context pre-fetch were both retired) drives
+this differently since Chat-4.1: chat_mode only gates tool availability and
+supplies an optional bias hint (chat_agent.resolve_tools_and_hint) — web_search
+and deep_research are real tools the model calls itself, not a pre-fetch —
+see TestResolveToolsAndHint / TestStreamReflectsActualToolUse below.
+
 Toggle rules (mirrors ChatInput.jsx logic):
   - Clicking Web Search when mode is "web_search"     → "normal"
   - Clicking Web Search otherwise                     → "web_search"
@@ -128,58 +135,6 @@ class TestModeTransitionGraph:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Backend mode routing — chat_modes_service
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestBackendModeRouting:
-    """Verify that each chatMode drives the correct retrieval path."""
-
-    MOCK_ARTICLES  = [{"title": "T", "url": "u", "content": "c"}]
-    MOCK_RESEARCH  = {"topic": "X", "research_summary": "S", "key_findings": []}
-
-    def test_normal_mode_skips_retrieval(self):
-        from backend.services.chat_modes_service import prepare_mode_context
-        result = prepare_mode_context("normal", "What is AI?", None)
-        assert result == {}
-
-    def test_web_search_calls_tavily(self):
-        from backend.services.chat_modes_service import prepare_mode_context
-        with patch("backend.services.tavily_service.search_articles",
-                   return_value=self.MOCK_ARTICLES) as mock_search:
-            result = prepare_mode_context("web_search", "AI news", "AI")
-        mock_search.assert_called_once()
-        assert result["mode"] == "web_search"
-        assert result["web_search_results"] == self.MOCK_ARTICLES
-
-    def test_web_search_does_not_call_deep_research(self):
-        from backend.services.chat_modes_service import prepare_mode_context
-        with patch("backend.services.tavily_service.search_articles",
-                   return_value=self.MOCK_ARTICLES), \
-             patch("backend.services.deep_research_service.run_deep_research") as mock_dr:
-            prepare_mode_context("web_search", "AI news", "AI")
-        mock_dr.assert_not_called()
-
-    def test_deep_research_calls_pipeline(self):
-        from backend.services.chat_modes_service import prepare_mode_context
-        with patch("backend.services.deep_research_service.run_deep_research",
-                   return_value=self.MOCK_RESEARCH) as mock_dr:
-            result = prepare_mode_context("deep_research", "Transformers", "Transformers")
-        mock_dr.assert_called_once()
-        assert result["mode"] == "deep_research"
-        assert result["deep_research_result"] == self.MOCK_RESEARCH
-
-    def test_deep_research_does_not_separately_call_tavily(self):
-        # The deep research pipeline itself may use Tavily internally,
-        # but chat_modes_service should not make an additional separate Tavily call
-        from backend.services.chat_modes_service import prepare_mode_context
-        with patch("backend.services.deep_research_service.run_deep_research",
-                   return_value=self.MOCK_RESEARCH), \
-             patch("backend.services.tavily_service.search_articles") as mock_tavily:
-            prepare_mode_context("deep_research", "Transformers", "Transformers")
-        mock_tavily.assert_not_called()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Backend ChatRequest validation — mode field
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -216,17 +171,62 @@ class TestChatRequestValidation:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Auto-mode: explicit mode selection prevents auto-upgrade
+# Chat-4.1: resolve_tools_and_hint — pure chat_mode -> (tools_enabled, hint)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestAutoModeDoesNotOverrideExplicit:
+class TestResolveToolsAndHint:
     """
-    When the user explicitly sets a non-normal mode, the backend must NOT
-    auto-detect and override it.
+    Three-way mode handling (chat_agent.resolve_tools_and_hint), the single
+    place chat_mode gets translated into tool availability + an optional bias.
     """
 
-    def _collect_done_event(self, message, chat_mode):
+    def test_layman_hard_gates_tools(self):
+        from backend.llm.chat_agent import resolve_tools_and_hint
+        tools_enabled, hint = resolve_tools_and_hint("layman")
+        assert tools_enabled is False
+        assert hint is None
+
+    def test_normal_has_tools_and_no_hint(self):
+        from backend.llm.chat_agent import resolve_tools_and_hint
+        tools_enabled, hint = resolve_tools_and_hint("normal")
+        assert tools_enabled is True
+        assert hint is None
+
+    def test_web_search_has_tools_and_a_hint(self):
+        from backend.llm.chat_agent import resolve_tools_and_hint
+        tools_enabled, hint = resolve_tools_and_hint("web_search")
+        assert tools_enabled is True
+        assert hint and "web_search" in hint
+
+    def test_deep_research_has_tools_and_a_hint(self):
+        from backend.llm.chat_agent import resolve_tools_and_hint
+        tools_enabled, hint = resolve_tools_and_hint("deep_research")
+        assert tools_enabled is True
+        assert hint and "deep_research" in hint
+
+    def test_unknown_mode_falls_back_to_tools_no_hint(self):
+        from backend.llm.chat_agent import resolve_tools_and_hint
+        tools_enabled, hint = resolve_tools_and_hint("turbo_mode")
+        assert tools_enabled is True
+        assert hint is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat-4.1: chat_stream's chat_mode/auto_mode/sources reflect which tool the
+# model actually called, not which mode was pre-selected. The regex
+# auto-upgrade is retired — chat_agent.ask_chat_stream (the model's decision)
+# is mocked here so the test is fast/deterministic; whether the model
+# genuinely chooses to call a tool live is verified separately, not here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestStreamReflectsActualToolUse:
+
+    def _collect_done_event(self, message, chat_mode, agent_events):
         from backend.services.chat_service import chat_stream
+
+        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False, extended_thinking=False):
+            yield from agent_events
+
         events = []
         with patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
              patch("backend.services.chat_service._load_history_messages", return_value=[]), \
@@ -236,37 +236,60 @@ class TestAutoModeDoesNotOverrideExplicit:
              patch("backend.services.action_router_service.route", return_value=None), \
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
-             patch("backend.services.grok_service.ask_grok_chat_stream",
-                   return_value=["ok"]), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
                                  "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
-             patch("backend.services.chat_modes_service._fetch_web_context",
-                   return_value={"mode": "web_search", "query_type": "default",
-                                 "subjects": [], "web_search_results": []}), \
-             patch("backend.services.chat_modes_service._fetch_deep_research_context",
-                   return_value={"mode": "deep_research", "query_type": "default",
-                                 "deep_research_result": None}):
+             patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream):
             for line in chat_stream("sess", message, chat_mode=chat_mode):
                 line = line.strip()
                 if line:
                     events.append(json.loads(line))
-        return next(e for e in events if e["t"] == "done")
+        return events, next(e for e in events if e["t"] == "done")
 
-    def test_explicit_web_search_stays_web_search(self):
-        # "Research X" would normally trigger deep_research auto-mode,
-        # but the user explicitly set web_search → must stay web_search
-        done = self._collect_done_event("Research AI manufacturing", "web_search")
+    def test_explicit_web_search_stays_web_search_when_no_tool_called(self):
+        # Explicit web_search mode, but the model answers without calling a
+        # tool this turn (already answerable) — chat_mode still reports
+        # "web_search" (what was requested), auto_mode False (not model-initiated).
+        _, done = self._collect_done_event(
+            "Research AI manufacturing", "web_search",
+            [{"type": "text", "text": "ok"}],
+        )
         assert done["chat_mode"] == "web_search"
         assert done["auto_mode"] is False
 
-    def test_explicit_normal_with_compare_triggers_auto(self):
-        # User on "normal" mode sends a compare message → auto-upgrades to web_search
-        done = self._collect_done_event("Compare Python vs JavaScript", "normal")
+    def test_normal_mode_model_calls_web_search_marks_auto(self):
+        # chat_mode left on "normal", model decides on its own to call
+        # web_search — done event surfaces the tool actually used and flags
+        # auto_mode True, mirroring the old regex-auto-upgrade UX signal.
+        agent_events = [
+            {"type": "tool_start", "tool": "web_search"},
+            {"type": "tool_end", "tool": "web_search",
+             "sources": [{"title": "T", "url": "https://example.com"}]},
+            {"type": "text", "text": "Python vs JavaScript..."},
+        ]
+        events, done = self._collect_done_event("Compare Python vs JavaScript", "normal", agent_events)
         assert done["chat_mode"] == "web_search"
         assert done["auto_mode"] is True
+        assert done["sources"] == [{"title": "T", "url": "https://example.com"}]
+        statuses = [e["v"] for e in events if e["t"] == "status"]
+        assert "Searching the web…" in statuses
 
-    def test_explicit_normal_with_plain_message_stays_normal(self):
-        done = self._collect_done_event("What is attention?", "normal")
+    def test_normal_mode_no_tool_called_stays_normal(self):
+        _, done = self._collect_done_event(
+            "What is attention?", "normal",
+            [{"type": "text", "text": "Attention is..."}],
+        )
         assert done["chat_mode"] == "normal"
         assert done["auto_mode"] is False
+        assert done["sources"] == []
+
+    def test_deep_research_tool_populates_sources(self):
+        agent_events = [
+            {"type": "tool_start", "tool": "deep_research"},
+            {"type": "tool_end", "tool": "deep_research",
+             "sources": [{"title": "", "url": "https://a.com"}, {"title": "", "url": "https://b.com"}]},
+            {"type": "text", "text": "Deep dive..."},
+        ]
+        _, done = self._collect_done_event("Analyze quantum computing", "deep_research", agent_events)
+        assert done["chat_mode"] == "deep_research"
+        assert len(done["sources"]) == 2

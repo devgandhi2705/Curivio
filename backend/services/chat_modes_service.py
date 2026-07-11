@@ -1,5 +1,5 @@
 """
-Chat mode orchestration — mode-specific context preparation.
+Chat mode orchestration — feed-context system note formatting.
 
 Three modes
 -----------
@@ -7,119 +7,33 @@ Three modes
   web_search    — Tavily search injected before LLM call
   deep_research — full DeepResearchWorkflow; always uses web retrieval
 
+Retrieval for web_search/deep_research is now driven by the model itself via
+real tool calls (chat_agent.py + chat_tools.py, Chat-4.1) — this module no
+longer pre-fetches or builds mode-flag system notes for chat_stream(). It
+still formats the feed-context note (build_feed_context_note) and the two
+tool-result formatters chat_tools.py calls after a live tool invocation
+(format_reasoning_search_note, format_research_note).
+
+prepare_mode_context/build_mode_system_note (the old backend-orchestrated
+mode-flag pre-fetch) and their private helpers/formatters were removed —
+confirmed zero callers repo-wide once chat_service.chat() (the sync /chat
+path, retired) was deleted; chat_stream() never called them.
+
 Public API
 ----------
-prepare_mode_context(mode, message, topic)  → dict
-build_mode_system_note(mode_context)        → str
-stream_status_event(mode)                   → str | None  (NDJSON line)
+build_feed_context_note(feed_context)       → str
+format_reasoning_search_note(reasoning)     → str
+format_research_note(result)                → str
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-VALID_MODES = ("normal", "web_search", "deep_research", "layman")
-
-_WEB_SEARCH_MAX_ARTICLES  = 5
 _DEEP_RESEARCH_SUMMARY_LEN = 600
 _DEEP_RESEARCH_FINDINGS    = 4
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Public API
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_STAGE_EXPANSION_ANGLES: dict[str, str] = {
-    "foundation":   "implications downstream effects practical consequences",
-    "mechanisms":   "system dependencies fragility upstream vulnerabilities failure modes",
-    "dependencies": "geopolitical regulatory risk who controls who wins who loses",
-    "optimization": "competitive dynamics incumbents structural advantage moat",
-    "geopolitical": "cross-domain technology disruption second-order effects",
-    "disruption":   "strategic synthesis future scenarios long-term structural shifts",
-    "synthesis":    "cross-domain connections adjacent industries paradigm implications",
-}
-
-
-def prepare_mode_context(
-    mode: str,
-    message: str,
-    topic: str | None,
-    query_type: str = "default",
-    subjects: list[str] | None = None,
-    intent_profile: dict | None = None,
-    domain: str = "",
-    feed_context: dict | None = None,
-) -> dict:
-    """
-    Return mode-specific additions to be merged into the chat context dict.
-
-    Always safe to call — errors in retrieval are caught and return an empty
-    result so the calling code can fall back to normal chat gracefully.
-
-    Parameters
-    ----------
-    query_type : "default" | "comparison" | "research" | "analysis"
-        Affects how retrieval queries are constructed and how the system note
-        is formatted for the LLM.
-    subjects   : two-item list for comparison queries (e.g. ["PyTorch", "TensorFlow"])
-    """
-    if mode not in VALID_MODES:
-        logger.warning("[chat_modes] unknown mode %r — falling back to normal", mode)
-        return {}
-
-    if mode == "normal":
-        return {}
-
-    if mode == "layman":
-        # No retrieval — context comes entirely from system prompt + feed context
-        return {"mode": "layman"}
-
-    if mode == "web_search":
-        return _fetch_web_context(
-            message, topic,
-            query_type=query_type, subjects=subjects or [],
-            intent_profile=intent_profile, domain=domain,
-            feed_context=feed_context,
-        )
-
-    # deep_research
-    return _fetch_deep_research_context(message, topic, query_type=query_type, feed_context=feed_context)
-
-
-def build_mode_system_note(mode_context: dict) -> str:
-    """
-    Render the mode-specific retrieval data as a compact system note.
-
-    The note is injected as a system message just before the last user turn
-    so the LLM sees retrieval data immediately before generating its answer.
-    Returns an empty string for normal mode or when no data was retrieved.
-    """
-    mode       = mode_context.get("mode", "normal")
-    query_type = mode_context.get("query_type", "default")
-
-    if mode == "web_search":
-        articles = mode_context.get("web_search_results", [])
-        if not articles:
-            return "[WEB SEARCH]: No results retrieved for this query."
-        if query_type == "comparison":
-            return _format_comparison_note(mode_context, articles)
-        reasoning = mode_context.get("reasoning_search")
-        if reasoning and reasoning.get("all_articles"):
-            return _format_reasoning_search_note(reasoning)
-        return _format_web_search_note(articles)
-
-    if mode == "deep_research":
-        result = mode_context.get("deep_research_result")
-        if not result or not isinstance(result, dict):
-            return "[DEEP RESEARCH]: No research data available for this topic."
-        if query_type == "analysis":
-            return _format_analysis_note(result)
-        return _format_research_note(result)
-
-    return ""
 
 
 def build_feed_context_note(feed_context: dict) -> str:
@@ -263,123 +177,26 @@ def build_feed_context_note(feed_context: dict) -> str:
     return "\n".join(parts)
 
 
-def stream_status_event(mode: str) -> str | None:
-    """
-    Return a `{"t":"status","v":"..."}` NDJSON line for modes that do
-    retrieval before streaming, or None for normal/layman mode.
-    """
-    if mode == "web_search":
-        return json.dumps({"t": "status", "v": "Searching the web…"}) + "\n"
-    if mode == "deep_research":
-        return json.dumps({"t": "status", "v": "Starting deep research…"}) + "\n"
-    return None
+# Chat-4.3: stream_status_event removed — confirmed genuinely orphaned (zero
+# real callers repo-wide, only its own unit tests). It drove the pre-fetch
+# status line for the OLD backend-orchestrated web_search/deep_research
+# retrieval; chat_stream doesn't pre-fetch anymore (Chat-4.1's real tool
+# calls surface their own tool_start status events instead).
 
-
-def stream_research_progress(
-    message: str,
-    topic: str | None,
-    query_type: str = "default",
-    feed_context: dict | None = None,
-):
-    """
-    Generator — yields ``("status", text)`` tuples as each research stage runs,
-    then yields ``("result", mode_context_dict)`` once all stages complete.
-
-    Callers (chat_service) iterate this and forward status strings as
-    ``{"t":"status","v":"..."}`` NDJSON events before the LLM call.
-
-    Designed to be called instead of ``prepare_mode_context`` for
-    deep_research mode; web_search and normal modes are unaffected.
-    """
-    from .deep_research_service import get_stored_research, DeepResearchWorkflow
-
-    # When coming from a feed card: branch outward from the card's mechanism
-    if feed_context and feed_context.get("mechanism"):
-        mechanism = feed_context["mechanism"]
-        title     = feed_context.get("insight_title", "")
-        stage     = feed_context.get("progression_stage", "")
-        expansion = _STAGE_EXPANSION_ANGLES.get(stage, "adjacent systems strategic implications")
-        query = f"{title} {mechanism} {expansion}"
-        query = query[:250]
-    else:
-        query = (topic or message)[:200]
-
-    # Fast path — cached result needs no stage progress
-    cached = get_stored_research(query)
-    if cached is not None:
-        logger.debug("[chat_modes] deep research cache hit for %r", query[:60])
-        yield ("status", "Loading cached research…")
-        yield ("result", {
-            "mode":                 "deep_research",
-            "query_type":           query_type,
-            "deep_research_result": cached,
-            "articles":             cached.get("articles", []) if isinstance(cached, dict) else [],
-        })
-        return
-
-    # Stage-by-stage with status labels
-    _STAGE_LABELS = {
-        "expand_queries":    "Expanding search angles…",
-        "fetch_articles":    "Searching sources…",
-        "rank_articles":     "Ranking results…",
-        "extract_viewpoints": "Comparing perspectives…",
-        "generate":          "Generating findings…",
-        "persist":           "Finalizing report…",
-    }
-
-    try:
-        wf = DeepResearchWorkflow(query)
-        for stage in DeepResearchWorkflow.STAGES:
-            label = _STAGE_LABELS.get(stage, stage.replace("_", " ").capitalize() + "…")
-            yield ("status", label)
-            try:
-                getattr(wf, stage)()
-            except Exception:
-                logger.warning("[chat_modes] deep research stage %r failed (non-fatal)", stage)
-
-        yield ("result", {
-            "mode":                 "deep_research",
-            "query_type":           query_type,
-            "deep_research_result": wf.state.get("result") or None,
-            "articles":             wf.state.get("articles", []),
-        })
-    except Exception:
-        logger.exception("[chat_modes] deep research workflow failed")
-        yield ("result", {
-            "mode":                 "deep_research",
-            "query_type":           query_type,
-            "deep_research_result": None,
-            "articles":             [],
-        })
+# Chat-4.2: stream_research_progress removed — confirmed genuinely orphaned
+# (Chat-4.1 recon found zero callers in chat_service.py; this phase's recon
+# re-confirmed zero callers anywhere in the repo, backend or frontend, beyond
+# its own direct unit tests). The per-stage status UX it drove is superseded
+# by chat_agent.ask_chat_stream's real tool_start/tool_end events (Chat-4.1)
+# and deep_research_service's own plan->act->replan subgraph logging
+# (Chat-4.2) — there was no real remaining use to wire it to.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Note formatters
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _format_web_search_note(articles: list[dict]) -> str:
-    """Fallback formatter used when reasoning_search data is unavailable."""
-    lines = ["[WEB SEARCH CONTEXT — synthesise these into your answer]"]
-    for i, a in enumerate(articles[:_WEB_SEARCH_MAX_ARTICLES], 1):
-        title   = a.get("title", "").strip()
-        content = (a.get("content") or "").strip()
-        url     = a.get("url", "")
-        snippet = content[:300] + ("…" if len(content) > 300 else "")
-        lines.append(f"\n[{i}] {title}\n    {snippet}\n    Source: {url}")
-    lines.append(
-        "\nSynthesis rules — enforce strictly:"
-        "\n- Deduplicate: if multiple sources report the same fact, state it ONCE using the most detailed version."
-        "\n- DO NOT repeat the same information in both a paragraph and a bullet list."
-        "\n- Extract PATTERNS across sources — do not summarise sources one by one."
-        "\n- If sources contradict each other, surface the disagreement explicitly — name what each says."
-        "\n- Cite inline naturally ('According to Bloomberg…', 'A recent study found…') — not as footnotes."
-        "\n- Match depth to question complexity: a factual query gets a direct answer, not an essay."
-        "\n- The response should feel like a fast, informed briefing — not a digest of search results."
-    )
-    return "\n".join(lines)
-
-
-def _format_reasoning_search_note(reasoning: dict) -> str:
+def format_reasoning_search_note(reasoning: dict) -> str:
     """
     Reasoning-first system note for web search mode.
 
@@ -464,33 +281,7 @@ def _format_reasoning_search_note(reasoning: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_comparison_note(mode_context: dict, articles: list[dict]) -> str:
-    subjects = mode_context.get("subjects", [])
-    label    = f"{subjects[0]} vs {subjects[1]}" if len(subjects) >= 2 else "Comparison"
-    lines    = [f"[WEB SEARCH — COMPARISON: {label}]"]
-    lines.append("Retrieved context:")
-    for i, a in enumerate(articles[:_WEB_SEARCH_MAX_ARTICLES], 1):
-        title   = a.get("title", "").strip()
-        content = (a.get("content") or "").strip()
-        url     = a.get("url", "")
-        snippet = content[:250] + ("…" if len(content) > 250 else "")
-        lines.append(f"\n[{i}] {title}\n    {snippet}\n    Source: {url}")
-    lines.append(
-        "\nAnalysis rules — enforce strictly:"
-        "\n- Do NOT write 'A has X, B has Y' parallel descriptions — analyse ACROSS dimensions with causality."
-        "\n  BAD: 'China dominates APIs.' GOOD: 'China dominates APIs because vertically integrated"
-        "\n  state-supported manufacturing creates margins competitors structurally cannot match.'"
-        "\n- For each dimension of difference: explain WHY each subject occupies its position."
-        "\n  Name the structural, economic, or incentive force behind each difference."
-        "\n- Dimensions to analyse: structural differences, economics, competitive moats,"
-        "\n  hidden dependencies, regulatory or geopolitical vectors, and practical verdict."
-        "\n- Deliver a clear verdict with explicit reasoning — not 'both have advantages.'"
-        "\n- Use headers/structure only where genuinely clearer than analytical prose."
-    )
-    return "\n".join(lines)
-
-
-def _format_research_note(result: dict) -> str:
+def format_research_note(result: dict) -> str:
     topic    = result.get("topic", "")
     summary  = (result.get("research_summary") or result.get("executive_summary") or "").strip()
     findings = result.get("key_findings", [])
@@ -536,116 +327,3 @@ def _format_research_note(result: dict) -> str:
     )
     return "\n".join(lines)
 
-
-def _format_analysis_note(result: dict) -> str:
-    topic    = result.get("topic", "")
-    summary  = (result.get("research_summary") or result.get("executive_summary") or "").strip()
-    findings = result.get("key_findings", [])
-    lines    = [f"[DEEP RESEARCH — ANALYSIS REQUEST: {topic}]"]
-    if summary:
-        lines.append(f"Research context: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
-    if findings:
-        lines.append("Evidence points:")
-        for f in findings[:_DEEP_RESEARCH_FINDINGS]:
-            lines.append(f"  • {f}")
-    contrarian = result.get("contrarian_view", "")
-    if contrarian:
-        lines.append(f"Contrarian view: {contrarian[:200]}")
-    lines.append(
-        "\nAnalytical framework — work through ALL of these before writing:"
-        "\n1. Core MECHANISM: what structural force or dynamic is driving this situation?"
-        "\n2. Hidden DRIVERS: what does conventional coverage underweight or miss entirely?"
-        "\n3. KEY TENSIONS: what tradeoffs do practitioners actually face — with real costs?"
-        "\n4. CONVERGENCE vs DIVERGENCE: where do the data points agree and where do they conflict?"
-        "\n5. STRATEGIC IMPLICATIONS: what concrete decision does this create for a practitioner?"
-        "\n6. SECOND-ORDER EFFECTS: what does this situation cause that will matter in 2–5 years?"
-        "\n\nWrite like a sharp analyst — name mechanisms and causality, not just patterns:"
-        "\n- NOT 'X is growing' — but 'X grows because Y creates incentive Z, which produces outcome W'"
-        "\n- Name specifics: actors, events, data points, named mechanisms"
-        "\n- Surface the non-obvious: what is the conventional framing getting wrong?"
-        "\n- Use ## headers for distinct analytical dimensions; bullets for parallel evidence points"
-    )
-    return "\n".join(lines)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Retrieval helpers
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _fetch_web_context(
-    message: str,
-    topic: str | None,
-    query_type: str = "default",
-    subjects: list[str] | None = None,
-    intent_profile: dict | None = None,
-    domain: str = "",
-    feed_context: dict | None = None,
-) -> dict:
-    if query_type == "comparison" and subjects and len(subjects) >= 2:
-        search_message = f"{subjects[0]} vs {subjects[1]}"
-    elif feed_context and feed_context.get("mechanism"):
-        # Anchor on the card's specific mechanism claim, not just the title
-        mechanism = feed_context["mechanism"]
-        project   = feed_context.get("project_name", "")
-        search_message = f"{mechanism} {project} evidence current 2025 examples"
-        search_message = search_message[:220]
-    else:
-        search_message = (topic or message)[:200]
-
-    try:
-        from .web_search_reasoning_service import fetch_reasoned_results
-        reasoning = fetch_reasoned_results(search_message, intent_profile, domain)
-        return {
-            "mode":               "web_search",
-            "query_type":         query_type,
-            "subjects":           subjects or [],
-            "web_search_results": reasoning["all_articles"],
-            "reasoning_search":   reasoning,
-        }
-    except Exception:
-        logger.warning("[chat_modes] reasoning web search failed — falling back to plain search")
-        try:
-            from .retrieval_router import route
-            articles = route(search_message, mode="chat")
-        except Exception:
-            logger.warning("[chat_modes] web search failed for query %r", search_message[:60])
-            articles = []
-        return {
-            "mode":               "web_search",
-            "query_type":         query_type,
-            "subjects":           subjects or [],
-            "web_search_results": articles,
-            "reasoning_search":   None,
-        }
-
-
-def _fetch_deep_research_context(
-    message: str,
-    topic: str | None,
-    query_type: str = "default",
-    feed_context: dict | None = None,
-) -> dict:
-    if feed_context and feed_context.get("mechanism"):
-        mechanism = feed_context["mechanism"]
-        title     = feed_context.get("insight_title", "")
-        stage     = feed_context.get("progression_stage", "")
-        expansion = _STAGE_EXPANSION_ANGLES.get(stage, "adjacent systems strategic implications")
-        query = f"{title} {mechanism} {expansion}"
-        query = query[:250]
-    else:
-        query = (topic or message)[:200]
-    try:
-        from .deep_research_service import run_deep_research
-        result = run_deep_research(query)
-        return {
-            "mode":                 "deep_research",
-            "query_type":           query_type,
-            "deep_research_result": result,
-        }
-    except Exception:
-        logger.warning("[chat_modes] deep research failed for query %r", query[:60])
-        return {
-            "mode":                 "deep_research",
-            "query_type":           query_type,
-            "deep_research_result": None,
-        }

@@ -49,6 +49,8 @@ from tavily import TavilyClient
 from dotenv import load_dotenv
 from pathlib import Path
 
+from ..utils.text import truncate_at_sentence
+
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 _API_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -192,7 +194,7 @@ def _to_article(raw: dict, source_op: str = "") -> dict:
     return {
         "title":      raw.get("title", ""),
         "url":        raw.get("url",   ""),
-        "content":    content[:2000],
+        "content":    truncate_at_sentence(content, 2000),
         "source_op":  source_op,
     }
 

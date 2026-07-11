@@ -139,6 +139,7 @@ class TestRoadmapPrefix:
 # (backend spec)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@pytest.mark.integration
 class TestAutoModeWithQuickStarters:
     """
     Verify that when chat_mode is explicitly set by the user (not "normal"),
@@ -162,13 +163,7 @@ class TestAutoModeWithQuickStarters:
              patch("backend.services.grok_service.ask_grok_chat_stream", return_value=["ok"]), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
-                                 "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
-             patch("backend.services.chat_modes_service._fetch_web_context",
-                   return_value={"mode": "web_search", "query_type": "default",
-                                 "subjects": [], "web_search_results": []}), \
-             patch("backend.services.chat_modes_service._fetch_deep_research_context",
-                   return_value={"mode": "deep_research", "query_type": "default",
-                                 "deep_research_result": None}):
+                                 "next_topics": [], "prerequisites": [], "advanced_topics": []}):
             events = [
                 json.loads(line.strip())
                 for line in chat_stream("s1", message, chat_mode=chat_mode)
@@ -200,21 +195,13 @@ class TestAutoModeWithQuickStarters:
         assert done["auto_mode"] is False
 
     # ── Auto mode (normal → intent detection fires) ───────────────────────────
-
-    def test_auto_research_prefix_upgrades_to_deep_research(self):
-        done = self._stream_done("Research semiconductor fabs", "normal")
-        assert done["chat_mode"] == "deep_research"
-        assert done["auto_mode"] is True
-
-    def test_auto_compare_prefix_upgrades_to_web_search(self):
-        done = self._stream_done("Compare NVIDIA vs AMD", "normal")
-        assert done["chat_mode"] == "web_search"
-        assert done["auto_mode"] is True
-
-    def test_auto_analyze_prefix_upgrades_to_deep_research(self):
-        done = self._stream_done("Analyze global pharma supply chains", "normal")
-        assert done["chat_mode"] == "deep_research"
-        assert done["auto_mode"] is True
+    # Chat-4.1: the three regex-driven "auto upgrades to X" tests that lived
+    # here were removed — chat_stream no longer overrides chat_mode from
+    # detect_intent(), the model decides whether to call a tool via real
+    # tool-calling now (a live, non-deterministic decision, not something a
+    # regex-mocked unit test can assert deterministically). See
+    # tests/test_chat_mode_mapping.py::TestStreamReflectsActualToolUse for
+    # the replacement coverage (mocks chat_agent.ask_chat_stream directly).
 
     def test_auto_roadmap_stays_normal(self):
         done = self._stream_done("Learning roadmap for Python", "normal")

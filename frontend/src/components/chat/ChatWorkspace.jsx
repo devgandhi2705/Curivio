@@ -55,6 +55,7 @@ function apiMessageToLocal(msg) {
     action: null,
     recommendations: null,
     contextUsed: null,
+    attachments: msg.attachments ?? null, // no previewUrl — history has no bytes, see ChatMessage's expiry chip
   }
 }
 
@@ -86,6 +87,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   const [isLoading, setIsLoading]     = useState(false)
   const [error, setError]             = useState(null)
   const [chatMode, setChatMode]         = useState("normal")
+  const [extendedThinking, setExtendedThinking] = useState(false)
   const [statusMsg, setStatusMsg]       = useState(null)
   const [statusHistory, setStatusHistory] = useState([])
   const [autoMode, setAutoMode]         = useState(null)
@@ -149,7 +151,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
 
-  const handleSend = useCallback((text, { retryMode = false } = {}) => {
+  const handleSend = useCallback((text, attachments = [], { retryMode = false } = {}) => {
     if (isLoading) return
     setError(null)
     setStatusMsg(null)
@@ -173,6 +175,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       recommendations: null,
       contextUsed:     null,
       chatMode:        effectiveMode,
+      attachments:     attachments.length ? attachments : null,
     }
 
     // Placeholder assistant message — grows as chunks arrive
@@ -181,6 +184,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       id:              streamId,
       role:            "assistant",
       content:         "",
+      thinking:        "",
+      thinkingGap:     null,
+      codeBlocks:      [],
       streaming:       true,
       action:          null,
       recommendations: null,
@@ -193,6 +199,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setIsLoading(true)
 
     let accumulated = ""
+    let thinkingAccumulated = ""
+    let thinkingGapText = null
+    let codeBlocksAccumulated = []
 
     streamAbortRef.current = sendMessageStream(sessionId, text, {
       onChunk(chunk) {
@@ -200,6 +209,38 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         setStatusMsg(null)
         setMessages(prev =>
           prev.map(m => m.id === streamId ? { ...m, content: accumulated } : m)
+        )
+      },
+      onThinking(chunk) {
+        thinkingAccumulated += chunk
+        setStatusMsg(null)
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, thinking: thinkingAccumulated } : m)
+        )
+      },
+      onThinkingGap(text) {
+        thinkingGapText = text
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, thinkingGap: text } : m)
+        )
+      },
+      onCode(source, language) {
+        codeBlocksAccumulated = [...codeBlocksAccumulated, { code: source, language, output: null, success: null }]
+        const snapshot = codeBlocksAccumulated
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, codeBlocks: snapshot } : m)
+        )
+      },
+      onCodeOutput(output, success) {
+        // Fills the most recently pushed block still missing its result —
+        // executable_code and code_execution_result stream as two separate
+        // chunks for the same call (see chat_agent._split_content_chunks).
+        codeBlocksAccumulated = codeBlocksAccumulated.map((b, i) =>
+          i === codeBlocksAccumulated.length - 1 ? { ...b, output, success } : b
+        )
+        const snapshot = codeBlocksAccumulated
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, codeBlocks: snapshot } : m)
         )
       },
       onTitle(title) {
@@ -237,6 +278,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
                   id:                  `asst-${meta.message_id ?? Date.now()}`,
                   role:                "assistant",
                   content:             accumulated,
+                  thinking:            thinkingAccumulated || null,
+                  thinkingGap:         thinkingGapText,
+                  codeBlocks:          codeBlocksAccumulated.length ? codeBlocksAccumulated : null,
                   streaming:           false,
                   action:              meta.action          ?? null,
                   recommendations:     meta.recommendations ?? null,
@@ -280,9 +324,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         setError(err || "Something went wrong. Please try again.")
         setIsLoading(false)
       },
-    }, effectiveMode, feedCtx)
+    }, effectiveMode, feedCtx, attachments.map(({ previewUrl, ...a }) => a), extendedThinking)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode])
+  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode, extendedThinking])
 
   const handleNewChat = useCallback(() => {
     setSessionId(generateSessionId())
@@ -290,6 +334,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setError(null)
     setConversationMode(null)
     setChatMode("normal")
+    setExtendedThinking(false)
     navigate('/chat')
   }, [navigate])
 
@@ -301,6 +346,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setError(null)
     setConversationMode(null)
     setChatMode("normal")
+    setExtendedThinking(false)
     setIsLoading(true)
     try {
       const history = await fetchHistory(session.session_id, 50)
@@ -360,13 +406,14 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     if (!userMsg || userMsg.role !== "user") return
     try { await deleteLastTurn(sessionId) } catch (e) {}
     setMessages(prev => prev.slice(0, msgIndex))
-    handleSend(userMsg.content, { retryMode: true })
+    handleSend(userMsg.content, userMsg.attachments || [], { retryMode: true })
   }, [messages, sessionId, handleSend])
 
   const handleEditMessage = useCallback((msgIndex, newText) => {
+    const userMsg = messages[msgIndex]
     setMessages(prev => prev.slice(0, msgIndex))
-    handleSend(newText)
-  }, [handleSend])
+    handleSend(newText, userMsg?.attachments || [])
+  }, [handleSend, messages])
 
   // Context menu — rename modal state
   const [showRenameModal,   setShowRenameModal]   = useState(false)
@@ -508,6 +555,8 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
               else if (conversationMode === "layman" && mode !== "layman") setConversationMode(null)
             }}
             autoMode={autoMode}
+            extendedThinking={extendedThinking}
+            onToggleExtendedThinking={setExtendedThinking}
           />
         </div>
       </div>

@@ -1,7 +1,11 @@
 """
 Phase A2 Verification — four checks, real output, no mocking of LLM calls for check 1.
 
-Check 1: Real Gemini generation (valid GEMINI_WRITER_API_KEY).
+Post-migration: writer/synthesis route through backend/llm/model_provider.py's
+shared factory (get_chat_model), so checks 2/3 mock the Gemini leg by patching
+backend.llm.get_chat_model rather than writer_provider_router's old raw client.
+
+Check 1: Real Gemini generation (shared GEMINI_API_KEYS pool).
 Check 2: Quota fallback — mock Gemini to raise 429, confirm Groq completes it.
 Check 3: Non-quota error — mock Gemini to raise a non-quota error, confirm raise, no fallback.
 Check 4: frame_hint present in Gemini prompt; source ranking scores not broken.
@@ -250,12 +254,8 @@ def _run(patches_ctx=(), frame_hint="timeline", article_plan_block=None):
 
 def check1_real_gemini():
     print("\n" + "="*72)
-    print("CHECK 1 — Real Gemini generation (valid GEMINI_WRITER_API_KEY)")
+    print("CHECK 1 — Real Gemini generation (shared GEMINI_API_KEYS pool)")
     print("="*72)
-
-    # Reset cached Gemini writer client so it picks up the real key fresh
-    import backend.services.writer_provider_router as _router
-    _router._gemini_writer_client = None
 
     _flush_records()
     from backend.services.article_plan_service import resolve_package_counts
@@ -326,20 +326,25 @@ def check2_quota_fallback():
     print("\n" + "="*72)
     print("CHECK 2 — Quota fallback: mock Gemini raises 429, Groq completes")
     print("="*72)
+    print("(Post-migration: Gemini leg mocked via the shared backend.llm.get_chat_model")
+    print(" factory; Groq leg passes through to the real factory unmocked.)")
 
-    import backend.services.writer_provider_router as _router
-    _router._gemini_writer_client = None
+    import backend.llm as _llm_pkg
+    _real_get_chat_model = _llm_pkg.get_chat_model
 
-    # Build a mock client whose .chat.completions.create() raises a 429-style error
-    _mock_resp = MagicMock()
-    _mock_resp.chat.completions.create.side_effect = Exception(
-        "Error code: 429 - {'error': {'code': 429, 'message': 'RESOURCE_EXHAUSTED: "
-        "Quota exceeded for quota metric quota.googleapis.com/generate_content_free_tier_input_token_count'}}"
-    )
+    def _fake_get_chat_model(*args, **kwargs):
+        if kwargs.get("legs") == "gemini":
+            stub = MagicMock()
+            stub.invoke.side_effect = Exception(
+                "Error code: 429 - {'error': {'code': 429, 'message': 'RESOURCE_EXHAUSTED: "
+                "Quota exceeded for quota metric quota.googleapis.com/generate_content_free_tier_input_token_count'}}"
+            )
+            return stub
+        return _real_get_chat_model(*args, **kwargs)
 
     _flush_records()
 
-    with patch.object(_router, "_get_gemini_writer_client", return_value=_mock_resp):
+    with patch("backend.llm.get_chat_model", side_effect=_fake_get_chat_model):
         raw, error, elapsed = _run()
 
     # ── Results ───────────────────────────────────────────────────────────────
@@ -390,19 +395,22 @@ def check3_non_quota_error():
     print("CHECK 3 — Non-quota Gemini error: must raise, no Groq fallback")
     print("="*72)
 
-    import backend.services.writer_provider_router as _router
-    _router._gemini_writer_client = None
+    import backend.llm as _llm_pkg
+    _real_get_chat_model = _llm_pkg.get_chat_model
 
-    # Mock: raises a ConnectionError (non-quota — no "429" or "RESOURCE_EXHAUSTED")
-    _mock_resp = MagicMock()
-    _mock_resp.chat.completions.create.side_effect = ConnectionError(
-        "Failed to establish connection to generativelanguage.googleapis.com: "
-        "Name or service not known"
-    )
+    def _fake_get_chat_model(*args, **kwargs):
+        if kwargs.get("legs") == "gemini":
+            stub = MagicMock()
+            stub.invoke.side_effect = ConnectionError(
+                "Failed to establish connection to generativelanguage.googleapis.com: "
+                "Name or service not known"
+            )
+            return stub
+        return _real_get_chat_model(*args, **kwargs)
 
     _flush_records()
 
-    with patch.object(_router, "_get_gemini_writer_client", return_value=_mock_resp):
+    with patch("backend.llm.get_chat_model", side_effect=_fake_get_chat_model):
         raw, error, elapsed = _run()
 
     print(f"\nElapsed: {elapsed:.1f}s")
@@ -457,8 +465,8 @@ def check4_frame_hint_and_ranking():
     from backend.prompts.project_insight_prompt import PromptContext, build_batch_prompt
     from backend.services.writer_provider_router import format_articles_full
 
-    full_core_text  = format_articles_full(CORE_ARTICLES,      "CORE")
-    full_curio_text = format_articles_full(CURIOSITY_ARTICLES, "CURIOSITY")
+    full_core_text,  _  = format_articles_full(CORE_ARTICLES,      "CORE")
+    full_curio_text, _  = format_articles_full(CURIOSITY_ARTICLES, "CURIOSITY")
 
     ctx = PromptContext(
         project_name             = "Indian Pharma",
@@ -499,7 +507,7 @@ def check4_frame_hint_and_ranking():
               f"src={a.get('source_strength'):.2f}  domain={a.get('domain')}")
 
     # Verify all source_intelligence fields present in full article text (spot check article 1)
-    a0_text = format_articles_full([CORE_ARTICLES[0]], "CORE")
+    a0_text, _ = format_articles_full([CORE_ARTICLES[0]], "CORE")
     print(f"\n-- format_articles_full spot check (article 1) --")
     for line in a0_text.splitlines():
         print(f"  {line}")

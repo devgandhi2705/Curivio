@@ -202,7 +202,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role         TEXT    NOT NULL CHECK(role IN ('user', 'assistant')),
     content      TEXT    NOT NULL,
     topic_hint   TEXT,
-    created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    attachments  TEXT
 );
 """
 
@@ -210,6 +211,12 @@ CREATE_CHAT_MESSAGES_IDX = """
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session
     ON chat_messages (session_id, created_at);
 """
+
+# JSON-encoded list of {uri, mime_type, filename, size_bytes, expires_at} — the
+# Gemini Files API URI only, never the file bytes. NULL/absent for plain-text turns.
+MIGRATE_ADD_CHAT_MESSAGES_ATTACHMENTS = (
+    "ALTER TABLE chat_messages ADD COLUMN attachments TEXT"
+)
 
 CREATE_CONCEPT_MEMORY = """
 CREATE TABLE IF NOT EXISTS concept_memory (
@@ -448,6 +455,43 @@ CREATE TABLE IF NOT EXISTS read_later_items (
 CREATE_READ_LATER_ITEMS_IDX = """
 CREATE INDEX IF NOT EXISTS idx_read_later_user
     ON read_later_items (user_id, queued_at DESC);
+"""
+
+# One row per LLM call made through backend/llm/model_provider.py's
+# get_chat_model()/get_structured_chat_model() — written by
+# backend/llm/call_logger.py's LangChain callback. No FKs (log table —
+# rows must survive deletion of the user/project/insight they reference).
+CREATE_LLM_CALL_LOG = """
+CREATE TABLE IF NOT EXISTS llm_call_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT    NOT NULL UNIQUE,
+    parent_run_id   TEXT,
+    timestamp_start TEXT    NOT NULL,
+    timestamp_end   TEXT    NOT NULL,
+    latency_ms      INTEGER NOT NULL,
+    provider        TEXT    NOT NULL,
+    model_requested TEXT,
+    model_used      TEXT,
+    call_type       TEXT,
+    user_id         TEXT,
+    project_id      TEXT,
+    day_ref         INTEGER,
+    input           TEXT    NOT NULL DEFAULT '',
+    output          TEXT,
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    total_tokens    INTEGER,
+    success         INTEGER NOT NULL,
+    error_type      TEXT,
+    error_message   TEXT,
+    retry_count     INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_LLM_CALL_LOG_IDX = """
+CREATE INDEX IF NOT EXISTS idx_llm_call_log_created
+    ON llm_call_log (created_at DESC);
 """
 
 CREATE_PASSWORD_RESET_TOKENS = """
@@ -785,6 +829,17 @@ MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE = [
     "PRAGMA foreign_keys=ON",
 ]
 
+CREATE_CONVERSATION_MEMORY_VEC = """
+CREATE VIRTUAL TABLE IF NOT EXISTS conversation_memory_vec USING vec0(
+    embedding   float[3072],
+    +user_id    TEXT,
+    +session_id TEXT,
+    +topic      TEXT,
+    +entry_text TEXT,
+    +created_at TEXT
+);
+"""
+
 MIGRATIONS = [
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
     MIGRATE_DROP_FOCUS_AREAS,
@@ -810,6 +865,7 @@ MIGRATIONS = [
     MIGRATE_ADD_INSIGHT_STATUS,
     MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM,
     MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE,
+    MIGRATE_ADD_CHAT_MESSAGES_ATTACHMENTS,
 ]
 
 ALL_TABLES = [
@@ -884,4 +940,7 @@ ALL_TABLES = [
     CREATE_SHARE_LINKS_LOOKUP_IDX,
     CREATE_READ_LATER_ITEMS,
     CREATE_READ_LATER_ITEMS_IDX,
+    CREATE_LLM_CALL_LOG,
+    CREATE_LLM_CALL_LOG_IDX,
+    CREATE_CONVERSATION_MEMORY_VEC,
 ]

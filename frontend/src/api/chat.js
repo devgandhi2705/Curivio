@@ -4,32 +4,13 @@
  * Set VITE_USE_MOCK=true in .env to bypass live API calls.
  */
 
-import {
-  MOCK_CHAT_DEFAULT,
-  MOCK_CHAT_ROADMAP,
-  MOCK_CHAT_REPOS,
-  MOCK_CHAT_COMPARE,
-  selectMockResponse,
-} from "../mocks/chat.js"
+import { selectMockResponse } from "../mocks/chat.js"
 import { getAuthHeaders, signalUnauthorized } from "./auth.js"
 
 const API_URL = import.meta.env.VITE_API_URL ?? ""
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true"
 
 const mockDelay = (ms = 800) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function post(path, body) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Request failed: ${res.status}`)
-  }
-  return res.json()
-}
 
 async function get(path) {
   const res = await fetch(`${API_URL}${path}`, { headers: { ...getAuthHeaders() } })
@@ -49,12 +30,35 @@ async function del(path) {
   return res.json()
 }
 
-export async function sendMessage(sessionId, message, topicHint = null) {
+/**
+ * Upload an image/PDF to Gemini's Files API (via our backend) and get back a
+ * URI reference — upload once, then attach that reference to sendMessageStream.
+ * Never re-uploads the bytes on later turns; the backend persists only this
+ * metadata against the message, not the file itself.
+ */
+export async function uploadAttachment(file) {
   if (USE_MOCK) {
-    await mockDelay(900)
-    return selectMockResponse(message, sessionId)
+    await mockDelay(400)
+    return {
+      uri: `mock://attachment/${file.name}`,
+      mime_type: file.type,
+      filename: file.name,
+      size_bytes: file.size,
+      expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+    }
   }
-  return post("/chat", { session_id: sessionId, message, topic_hint: topicHint })
+  const formData = new FormData()
+  formData.append("file", file)
+  const res = await fetch(`${API_URL}/chat/upload`, {
+    method: "POST",
+    headers: { ...getAuthHeaders() }, // no Content-Type — browser sets multipart boundary
+    body: formData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Upload failed: ${res.status}`)
+  }
+  return res.json()
 }
 
 // Per-session AbortControllers — auto-cancel previous stream when a new one starts
@@ -75,14 +79,20 @@ export function cancelStream(sessionId) {
  * @param {string}   sessionId
  * @param {string}   message
  * @param {object}   callbacks
- * @param {function} callbacks.onChunk   - called with each text string
- * @param {function} callbacks.onDone    - called with the final metadata object
- * @param {function} callbacks.onError   - called with an error string
- * @param {function} callbacks.onStatus  - called with status update strings
- * @param {function} callbacks.onTitle   - called with the auto-generated session title
+ * @param {function} callbacks.onChunk       - called with each text string
+ * @param {function} callbacks.onThinking    - called with each Gemini reasoning string (Chat-6)
+ * @param {function} callbacks.onThinkingGap - called once with an honest note when reasoning ran
+ *                                              but can't stream on this turn's model (Chat-6 followup)
+ * @param {function} callbacks.onCode        - called with (source, language) when Gemini executes code (Chat-7)
+ * @param {function} callbacks.onCodeOutput  - called with (output, success) for that code's result (Chat-7)
+ * @param {function} callbacks.onDone        - called with the final metadata object
+ * @param {function} callbacks.onError       - called with an error string
+ * @param {function} callbacks.onStatus      - called with status update strings
+ * @param {function} callbacks.onTitle       - called with the auto-generated session title
+ * @param {boolean}  extendedThinking        - "think harder" toggle (Chat-6), off by default
  * @returns {function} abort
  */
-export function sendMessageStream(sessionId, message, { onChunk, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null) {
+export function sendMessageStream(sessionId, message, { onChunk, onThinking, onThinkingGap, onCode, onCodeOutput, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null, attachments = null, extendedThinking = false) {
   if (USE_MOCK) {
     ;(async () => {
       const mock = selectMockResponse(message, sessionId)
@@ -132,7 +142,9 @@ export function sendMessageStream(sessionId, message, { onChunk, onDone, onError
           message,
           topic_hint: null,
           chat_mode: chatMode,
+          extended_thinking: extendedThinking,
           ...(feedContext ? { feed_context: feedContext } : {}),
+          ...(attachments?.length ? { attachments } : {}),
         }),
         signal: controller.signal,
       })
@@ -174,8 +186,12 @@ export function sendMessageStream(sessionId, message, { onChunk, onDone, onError
           if (!line.trim()) continue
           try {
             const obj = JSON.parse(line)
-            if      (obj.t === "chunk")     onChunk(obj.v)
-            else if (obj.t === "title")     onTitle?.(obj.v)
+            if      (obj.t === "chunk")        onChunk(obj.v)
+            else if (obj.t === "thinking")     onThinking?.(obj.v)
+            else if (obj.t === "thinking_gap") onThinkingGap?.(obj.v)
+            else if (obj.t === "code")         onCode?.(obj.v, obj.language)
+            else if (obj.t === "code_output")  onCodeOutput?.(obj.v, obj.success)
+            else if (obj.t === "title")        onTitle?.(obj.v)
             else if (obj.t === "status")    onStatus?.(obj.v)
             else if (obj.t === "heartbeat") { /* keepalive — no-op */ }
             else if (obj.t === "done")      onDone(obj)

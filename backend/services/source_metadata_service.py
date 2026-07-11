@@ -28,7 +28,7 @@ Standard-path breakdown fallbacks:
 Source types
 ------------
 news | research_paper | government | industry_report |
-company_blog | regulatory | educational | market_analysis
+company_blog | regulatory | educational | market_analysis | social_media
 
 Public API
 ----------
@@ -66,10 +66,18 @@ _TYPE_RULES: list[tuple[list[str], str]] = [
     ),
     (
         ["mckinsey.com", "deloitte.com", "pwc.com", "bcg.com", "bain.com",
-         "gartner.com", "forrester.com", "idc.com", "statista.com",
-         "frost.com", "ibisworld.com", "mordorintelligence", "grandviewresearch",
-         "marketsandmarkets"],
+         "idc.com", "frost.com", "ibisworld.com", "mordorintelligence",
+         "grandviewresearch", "marketsandmarkets"],
         "industry_report",
+    ),
+    (
+        ["gartner.com", "forrester.com", "statista.com", "nielsen.com"],
+        "market_analysis",
+    ),
+    (
+        ["facebook.com", "twitter.com", "x.com", "reddit.com", "instagram.com",
+         "tiktok.com", "quora.com", "threads.net", "pinterest.com", "tumblr.com"],
+        "social_media",
     ),
     (
         ["bloomberg.com", "reuters.com", "cnbc.com", "ft.com", "wsj.com",
@@ -113,8 +121,8 @@ def _extract_domain(url: str) -> str:
         return ""
 
 
-def _classify_source_type(url: str, title: str) -> str:
-    """Classify a source into one of 8 canonical types via URL pattern matching."""
+def classify_source_type(url: str, title: str) -> str:
+    """Classify a source into one of 9 canonical types via URL pattern matching."""
     lower_url   = url.lower()
     lower_title = title.lower()
 
@@ -170,7 +178,7 @@ def enrich(
 
     # Source type — classified once; URL/title don't change after retrieval
     if "source_type" not in article:
-        article["source_type"] = _classify_source_type(
+        article["source_type"] = classify_source_type(
             article.get("url", ""), article.get("title", "")
         )
 

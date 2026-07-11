@@ -160,12 +160,57 @@ const TYPE_CONFIG = {
   },
 }
 
+// ─── Image block ──────────────────────────────────────────────────────────────
+// Hides itself entirely on load failure — these are arbitrary fetched URLs,
+// no broken-image icon.
+
+function ImageBlock({ url, sourceId }) {
+  const [failed, setFailed] = useState(false)
+  if (!url || failed) return null
+  return (
+    <div className="mx-3 md:mx-4 mb-2.5">
+      <img
+        src={url}
+        alt="Illustrative image for this insight"
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="w-full max-h-64 object-cover rounded-lg border border-slate-800/50"
+      />
+      {sourceId && <SourceTag sourceId={sourceId} className="mt-1 block" />}
+    </div>
+  )
+}
+
+// ─── Source-id tag ────────────────────────────────────────────────────────────
+// Non-interactive label — source_id has no reliable mapping to a source_links[]
+// entry in the data the frontend receives, so this never links anywhere.
+
+function SourceTag({ sourceId, className = "" }) {
+  if (!sourceId) return null
+  return (
+    <span className={`text-[9px] text-slate-600 ${className}`}>
+      Source: {sourceId}
+    </span>
+  )
+}
+
 // ─── Block renderer ───────────────────────────────────────────────────────────
 // Public API: renderBlock(type, content)
 // Third param `key` is an implementation detail for list rendering.
+// Fourth param `sourceId` renders a plain "Source: X" tag on every block type
+// that carries one — inline in the header row for types that have one,
+// trailing bottom-right otherwise. No reliable mapping to source_links[]
+// exists (see SourceTag), so it's a label, never a link.
 
-function renderBlock(type, content, key) {
+function renderBlock(type, content, key, sourceId) {
   const text = content || ""
+
+  // image → fetched article image, hidden entirely on load failure
+  if (type === "image") {
+    return (
+      <ImageBlock key={key} url={content || ""} sourceId={sourceId} />
+    )
+  }
 
   // ── 8 visually distinct types ──────────────────────────────────────────────
 
@@ -174,6 +219,7 @@ function renderBlock(type, content, key) {
     return (
       <div key={key} className="px-3 md:px-4 pt-3 pb-1">
         <p className="text-[13px] font-semibold text-slate-200 leading-snug">{text}</p>
+        <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
       </div>
     )
   }
@@ -184,6 +230,7 @@ function renderBlock(type, content, key) {
       <div key={key} className="mx-3 md:mx-4 mb-2.5">
         <div className="bg-blue-500/[0.07] border border-blue-500/20 rounded-lg px-3 py-2.5">
           <p className="text-[12px] text-blue-200/75 leading-relaxed">{text}</p>
+          <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
     )
@@ -196,6 +243,7 @@ function renderBlock(type, content, key) {
         <p className="text-[9px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 px-0.5">For Example</p>
         <div className="border border-slate-700/40 rounded-lg bg-slate-800/20 px-3 py-2.5">
           <p className="text-[11px] text-slate-400 leading-relaxed">{text}</p>
+          <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
     )
@@ -209,6 +257,7 @@ function renderBlock(type, content, key) {
         <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
           <ClockIcon className="w-3 h-3 text-slate-600" />
           <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Timeline</span>
+          <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
         <div className="px-3 md:px-4 pb-2.5 space-y-1.5">
           {items.length > 0 ? items.map((item, j) => (
@@ -230,6 +279,7 @@ function renderBlock(type, content, key) {
         <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
           <BookIcon className="w-3 h-3 text-slate-600" />
           <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Comparison</span>
+          <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
         <div className="px-3 md:px-4 pb-2.5 space-y-1">
           {items.length > 1 ? items.map((item, j) => (
@@ -249,6 +299,7 @@ function renderBlock(type, content, key) {
         <div className="bg-amber-500/[0.07] border border-amber-500/25 rounded-lg px-3 py-2.5">
           <p className="text-[9px] font-semibold uppercase tracking-widest text-amber-500/60 mb-1.5">Caution</p>
           <p className="text-[11px] text-amber-200/60 leading-relaxed">{text}</p>
+          <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
     )
@@ -261,6 +312,7 @@ function renderBlock(type, content, key) {
         <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
           <GlobeIcon className="w-3 h-3 text-slate-600" />
           <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Source</span>
+          <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
         <div className="mx-3 md:mx-4 mb-2.5 border-l-2 border-slate-700/50 pl-2.5">
           <p className="text-[11px] text-slate-500 leading-relaxed italic">{text}</p>
@@ -274,6 +326,7 @@ function renderBlock(type, content, key) {
     return (
       <div key={key} className="mx-3 md:mx-4 mb-3 mt-0.5 border-t border-slate-800/40 pt-2.5">
         <p className="text-[11px] text-slate-500/80 leading-relaxed italic">{text}</p>
+        <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
       </div>
     )
   }
@@ -287,6 +340,7 @@ function renderBlock(type, content, key) {
         <div className="min-w-0 py-0.5">
           <p className="text-[9px] font-semibold uppercase tracking-widest text-indigo-400/55 mb-1.5">Hidden Mechanism</p>
           <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>
+          <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
     )
@@ -299,6 +353,7 @@ function renderBlock(type, content, key) {
         <div className="min-w-0 py-0.5">
           <p className="text-[9px] font-semibold uppercase tracking-widest text-blue-400/55 mb-1.5">Insight</p>
           <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>
+          <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
     )
@@ -311,6 +366,7 @@ function renderBlock(type, content, key) {
         <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
           <BookIcon className="w-3 h-3 text-slate-600" />
           <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Steps</span>
+          <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
         <div className="px-3 md:px-4 pb-2.5 space-y-1.5">
           {steps.length > 0 ? steps.map((step, j) => (
@@ -336,6 +392,7 @@ function renderBlock(type, content, key) {
       <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
         <cfg.Icon className="w-3 h-3 text-slate-600" />
         <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">{cfg.label}</span>
+        <SourceTag sourceId={sourceId} className="ml-auto" />
       </div>
       <div className="px-3 md:px-4 pb-2.5 md:pb-3.5">
         <p className="text-[12px] md:text-xs text-slate-500 md:text-slate-400 leading-relaxed">{text}</p>
@@ -625,7 +682,7 @@ export default function InsightCard({
 
       {/* Content blocks — new schema; fallback to legacy flat fields */}
       {card.blocks?.length > 0 ? (
-        card.blocks.map((b, i) => renderBlock(b.type || "", b.content || "", i))
+        card.blocks.map((b, i) => renderBlock(b.type || "", b.content || "", i, b.source_id))
       ) : (
         <>
           {card.educational_explanation && (

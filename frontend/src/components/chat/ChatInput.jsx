@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react"
+import { uploadAttachment } from "../../api/chat.js"
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,15 @@ function LightbulbIcon() {
   )
 }
 
+function ThinkHarderIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 20V14M12 20V8M18 20V4" />
+    </svg>
+  )
+}
+
 function ArrowUpIcon() {
   return (
     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
@@ -50,6 +60,73 @@ function SpinnerIcon() {
   )
 }
 
+function PaperclipIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48" />
+    </svg>
+  )
+}
+
+function FileIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+    </svg>
+  )
+}
+
+function XIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  )
+}
+
+// ── Attachment chip ───────────────────────────────────────────────────────────
+
+const MAX_ATTACHMENTS = 4
+const ACCEPTED_TYPES = "image/png,image/jpeg,image/webp,image/gif,application/pdf"
+
+function AttachmentChip({ attachment, onRemove }) {
+  const { file, previewUrl, status, error } = attachment
+  const isImage = file.type.startsWith("image/")
+
+  return (
+    <div
+      className={`
+        relative flex items-center gap-2 pl-1.5 pr-2 py-1.5 rounded-xl border text-xs
+        ${status === "error" ? "bg-red-950/40 border-red-800/50" : "bg-white/[0.04] border-white/[0.08]"}
+      `}
+      title={status === "error" ? error : file.name}
+    >
+      {isImage && previewUrl ? (
+        <img src={previewUrl} alt="" className="w-7 h-7 rounded-lg object-cover flex-shrink-0" />
+      ) : (
+        <span className="w-7 h-7 rounded-lg bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-slate-400">
+          <FileIcon />
+        </span>
+      )}
+      <span className="max-w-[110px] truncate text-slate-300">{file.name}</span>
+      {status === "uploading" && <SpinnerIcon />}
+      {status === "error" && <span className="text-red-400 text-[10px]">failed</span>}
+      <button
+        type="button"
+        onClick={() => onRemove(attachment.id)}
+        className="ml-0.5 w-4 h-4 rounded-full flex items-center justify-center text-slate-500 hover:text-slate-200 hover:bg-white/[0.08] transition-colors flex-shrink-0"
+        aria-label="Remove attachment"
+      >
+        <XIcon />
+      </button>
+    </div>
+  )
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function ModeToggle({ active, onClick, disabled, icon, label, variant }) {
@@ -57,7 +134,9 @@ function ModeToggle({ active, onClick, disabled, icon, label, variant }) {
     ? "bg-violet-950/60 border-violet-700/50 text-violet-300"
     : variant === "amber"
       ? "bg-amber-950/60 border-amber-700/50 text-amber-300"
-      : "bg-blue-950/60 border-blue-700/50 text-blue-300"
+      : variant === "emerald"
+        ? "bg-emerald-950/60 border-emerald-700/50 text-emerald-300"
+        : "bg-blue-950/60 border-blue-700/50 text-blue-300"
 
   return (
     <button
@@ -86,11 +165,15 @@ function ModeToggle({ active, onClick, disabled, icon, label, variant }) {
 /**
  * Props
  * ─────
- * onSend(text)        — fire when user submits a message
+ * onSend(text, attachments)  — fire when user submits a message; attachments
+ *                               is [{uri, mime_type, filename, size_bytes,
+ *                               expires_at, previewUrl}] or []
  * disabled            — true while AI is responding
  * chatMode            — "normal" | "web_search" | "deep_research" | "layman"
  * onModeChange(mode)  — called when user clicks a mode toggle
  * autoMode            — string | null — last backend-detected auto-mode
+ * extendedThinking            — bool — "think harder" toggle state (Chat-6), off by default
+ * onToggleExtendedThinking(v) — called with the new bool when the toggle is clicked
  */
 export default function ChatInput({
   onSend,
@@ -98,11 +181,15 @@ export default function ChatInput({
   chatMode = "normal",
   onModeChange,
   autoMode,
+  extendedThinking = false,
+  onToggleExtendedThinking,
 }) {
   const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   const [hasText,   setHasText]   = useState(false)
   const [charCount, setCharCount] = useState(0)
+  const [attachments, setAttachments] = useState([]) // [{id, file, previewUrl, status, uploaded, error}]
 
   // ── Resize helper ─────────────────────────────────────────────────────────
 
@@ -131,16 +218,51 @@ export default function ChatInput({
     }
   }
 
+  // ── Attachments ───────────────────────────────────────────────────────────
+
+  function handleFilePick(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = "" // allow re-picking the same file later
+    const room = MAX_ATTACHMENTS - attachments.length
+    for (const file of files.slice(0, room)) {
+      const id = `att-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null
+      setAttachments(prev => [...prev, { id, file, previewUrl, status: "uploading", uploaded: null, error: null }])
+
+      uploadAttachment(file)
+        .then(uploaded => {
+          setAttachments(prev => prev.map(a => a.id === id ? { ...a, status: "done", uploaded } : a))
+        })
+        .catch(err => {
+          setAttachments(prev => prev.map(a => a.id === id ? { ...a, status: "error", error: err.message } : a))
+        })
+    }
+  }
+
+  function removeAttachment(id) {
+    setAttachments(prev => {
+      const target = prev.find(a => a.id === id)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
+      return prev.filter(a => a.id !== id)
+    })
+  }
+
+  const uploadingCount = attachments.filter(a => a.status === "uploading").length
+  const readyAttachments = attachments.filter(a => a.status === "done")
+
   function submit() {
-    const value = textareaRef.current?.value.trim()
-    if (!value || disabled) return
-    onSend(value)
+    const value = textareaRef.current?.value.trim() || ""
+    if (disabled || uploadingCount > 0) return
+    if (!value && readyAttachments.length === 0) return
+
+    onSend(value, readyAttachments.map(a => ({ ...a.uploaded, previewUrl: a.previewUrl })))
 
     const el = textareaRef.current
     el.value = ""
     el.style.height = "auto"
     setHasText(false)
     setCharCount(0)
+    setAttachments([])
 
     // Restore focus immediately after React flushes the state update
     requestAnimationFrame(() => el?.focus())
@@ -165,6 +287,10 @@ export default function ChatInput({
     if (disabled) return
     onModeChange?.(chatMode === "deep_research" ? "normal" : "deep_research")
   }
+  function toggleThinkHarder() {
+    if (disabled) return
+    onToggleExtendedThinking?.(!extendedThinking)
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -174,7 +300,9 @@ export default function ChatInput({
       ? "Deep research + web retrieval active"
       : chatMode === "layman"
         ? "Explain Simply mode active"
-        : null
+        : extendedThinking
+          ? "Think Harder active — deeper reasoning"
+          : null
 
   return (
     <div className="px-3 sm:px-4 pb-3 pb-safe pt-1">
@@ -192,6 +320,15 @@ export default function ChatInput({
             }
           `}
         >
+          {/* Attachment chips */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+              {attachments.map(a => (
+                <AttachmentChip key={a.id} attachment={a} onRemove={removeAttachment} />
+              ))}
+            </div>
+          )}
+
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -212,8 +349,30 @@ export default function ChatInput({
           {/* Footer row */}
           <div className="flex items-center justify-between px-2.5 pb-2 pt-0 gap-2">
 
-            {/* Left: mode toggles — Explain Simply · Web Search · Deep Research */}
+            {/* Left: attach + mode toggles — Explain Simply · Web Search · Deep Research */}
             <div className="flex items-center gap-0.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_TYPES}
+                multiple
+                onChange={handleFilePick}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || attachments.length >= MAX_ATTACHMENTS}
+                title="Attach image or PDF"
+                aria-label="Attach image or PDF"
+                className="
+                  inline-flex items-center justify-center w-6 h-6 rounded-md
+                  text-slate-500 hover:text-slate-300 hover:bg-white/[0.05]
+                  disabled:opacity-40 disabled:cursor-not-allowed transition-colors
+                "
+              >
+                <PaperclipIcon />
+              </button>
               <ModeToggle
                 active={laymanActive}
                 onClick={toggleLayman}
@@ -238,6 +397,14 @@ export default function ChatInput({
                 label="Deep Research"
                 variant="violet"
               />
+              <ModeToggle
+                active={extendedThinking}
+                onClick={toggleThinkHarder}
+                disabled={disabled}
+                icon={<ThinkHarderIcon />}
+                label="Think Harder"
+                variant="emerald"
+              />
 
               {autoMode && (
                 <span className="text-[10px] text-slate-600 ml-1 select-none" title={`Auto-detected: ${autoMode.replace("_", " ")}`}>
@@ -256,21 +423,21 @@ export default function ChatInput({
               <button
                 type="button"
                 onClick={submit}
-                disabled={disabled || !hasText}
-                title="Send (Enter)"
+                disabled={disabled || uploadingCount > 0 || (!hasText && readyAttachments.length === 0)}
+                title={uploadingCount > 0 ? "Waiting for upload to finish…" : "Send (Enter)"}
                 aria-label="Send message"
                 className={`
                   w-7 h-7 rounded-lg flex items-center justify-center
                   transition-all duration-150 flex-shrink-0
                   ${disabled
                     ? "bg-white/[0.05] text-slate-500 cursor-not-allowed"
-                    : hasText
+                    : (hasText || readyAttachments.length > 0) && uploadingCount === 0
                       ? "bg-slate-100 text-slate-900 hover:bg-white shadow-sm active:scale-95"
                       : "bg-white/[0.05] text-slate-600 cursor-default"
                   }
                 `}
               >
-                {disabled ? <SpinnerIcon /> : <ArrowUpIcon />}
+                {disabled || uploadingCount > 0 ? <SpinnerIcon /> : <ArrowUpIcon />}
               </button>
             </div>
           </div>

@@ -8,14 +8,25 @@ practical applications, and advanced follow-up topics.
 
 Workflow architecture
 ---------------------
-DeepResearchWorkflow is a five-stage pipeline.  Each stage is a separate method
+DeepResearchWorkflow is a six-stage pipeline.  Each stage is a separate method
 that reads from and writes to self.state, making it independently testable:
 
   Stage 1 — expand_queries  :  build multiple search angles from the topic title
   Stage 2 — fetch_articles  :  Tavily searches across all query angles (cached)
   Stage 3 — rank_articles   :  quality-filter, score, and deduplicate results
-  Stage 4 — generate        :  Groq call → structured JSON analysis
-  Stage 5 — persist         :  upsert result into the deep_research DB table
+  Stage 4 — extract_viewpoints : source_analyzer + viewpoint_extractor pre-analysis
+  Stage 5 — generate        :  Groq call → structured JSON analysis
+  Stage 6 — persist         :  upsert result into the deep_research DB table
+
+Each stage method above is unchanged and still independently callable/testable
+(see tests/test_deep_research.py). Chat-4.2: run() no longer chains stages 1-3
+as a fixed one-shot sequence — it runs them as a plan->act->replan LangGraph
+subgraph instead (_run_research_act_subgraph below), so a thin first pass (an
+obscure topic starving rank_articles' min_score=0.1 filter) gets one bounded
+retry with broadened query angles before falling through to stage 4 with
+whatever it found. Stages 4-6 stay exactly the linear chain they always were —
+forcing a replan loop around deterministic synthesis steps is theater, not
+correctness (recon finding, Chat-4 recon).
 
 Public API
 ----------
@@ -31,11 +42,29 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from typing import TypedDict
+
+from langgraph.graph import StateGraph, END
 
 from ..utils.db import get_connection, get_preference
 from ..prompts.deep_research_prompt import build_deep_research_prompt
 
 logger = logging.getLogger(__name__)
+
+# Target survivor count after ranking — also the thin-coverage threshold that
+# triggers a replan (real existing number, not invented: this was already
+# rank_articles' top_n default before Chat-4.2).
+_TARGET_ARTICLE_COUNT = 6
+
+# Bounds the plan->act->replan subgraph: 1 initial attempt + at most 1 replan.
+# Small and explicit per Chat-4.2's constraint — no unbounded loop.
+_MAX_RESEARCH_ATTEMPTS = 2
+
+# Real min_domains value already used by project_service.py's feed-mode
+# rank_articles calls for primary/core content (used twice there — the main
+# core_articles call and its own thin-result retry-fallback); deep_research's
+# role matches "core" content, not the lighter "curiosity" slot which uses 3.
+_DEEP_RESEARCH_MIN_DOMAINS = 4
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -166,8 +195,18 @@ class DeepResearchWorkflow:
     # ── Runner ────────────────────────────────────────────────────────────────
 
     def run(self) -> dict:
-        """Execute all stages in order and return the result dict."""
-        for stage in self.STAGES:
+        """
+        Execute the full pipeline and return the result dict.
+
+        Chat-4.2: stages 1-3 (expand_queries/fetch_articles/rank_articles) run
+        as the plan->act->replan subgraph instead of a fixed one-shot chain —
+        see _run_research_act_subgraph(). The individual stage methods above
+        are unchanged and still independently callable (tests call them
+        directly); this only changes what run() does with them. Stages 4-6
+        are unchanged, called linearly exactly as before.
+        """
+        self.state["queries"], self.state["articles"] = _run_research_act_subgraph(self.topic)
+        for stage in self.STAGES[3:]:
             getattr(self, stage)()
         return self.state["result"]
 
@@ -296,14 +335,97 @@ def _fetch_research_articles(queries: list[str]) -> list[dict]:
     )
 
 
-def _rank_research_articles(articles: list[dict], topic: str, top_n: int = 6) -> list[dict]:
+def _rank_research_articles(
+    articles: list[dict], topic: str, top_n: int = _TARGET_ARTICLE_COUNT,
+) -> list[dict]:
     """Rank and deduplicate articles using domain-aware deep_research scoring."""
     from .source_ranker import rank_articles  # deferred to avoid circular
     from .retrieval_router import multi_classify
 
     domain = multi_classify(topic).primary.domain_key
     return rank_articles(articles, query=topic, top_n=top_n, min_score=0.1,
-                         domain=domain, mode="deep_research")
+                         domain=domain, mode="deep_research",
+                         min_domains=_DEEP_RESEARCH_MIN_DOMAINS)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Plan -> act -> replan subgraph (stages 1-3, Chat-4.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# act reuses _expand_queries / _fetch_research_articles / _rank_research_articles
+# unchanged above — this only adds a bounded retry loop around them, it does not
+# rewrite their logic. Stages 4-6 (extract_viewpoints/generate/persist) are not
+# part of this graph; DeepResearchWorkflow.run() calls them linearly afterward.
+
+def _broaden_queries(topic: str) -> list[str]:
+    """
+    Replan-only query set — genuinely different angles from _expand_queries().
+
+    query_expansion_engine's domain-angle tables already cap out at the
+    deep_research query budget (6) on the FIRST call for every known domain
+    (confirmed: each of ai/technology/finance/pharma/manufacturing/
+    export_trade/business has exactly 6 angles; "default" has 3, still under
+    budget) — calling _expand_queries() again would return the identical
+    list. If 6 targeted domain-angle queries already came up thin, the real
+    gap is that the query language itself is too narrow — broader, plainer
+    phrasing is a genuinely different second attempt, not a rewrite of the
+    angle-template engine.
+    """
+    base = topic.strip()
+    return [
+        f"{base} explained",
+        f"{base} overview introduction",
+        f"{base} recent developments",
+    ]
+
+
+class _ActState(TypedDict):
+    topic:        str
+    queries:      list[str]
+    raw_articles: list[dict]   # accumulated pre-rank articles across attempts
+    ranked:       list[dict]   # latest rank_articles() output
+    attempt:      int
+
+
+def _plan_node(state: _ActState) -> dict:
+    topic = state["topic"]
+    queries = _expand_queries(topic) if state["attempt"] == 0 else _broaden_queries(topic)
+    return {"queries": queries}
+
+
+def _act_node(state: _ActState) -> dict:
+    new_raw      = _fetch_research_articles(state["queries"])
+    combined_raw = state["raw_articles"] + new_raw
+    ranked       = _rank_research_articles(combined_raw, state["topic"])
+    return {"raw_articles": combined_raw, "ranked": ranked, "attempt": state["attempt"] + 1}
+
+
+def _should_replan(state: _ActState) -> str:
+    thin = len(state["ranked"]) < _TARGET_ARTICLE_COUNT
+    if thin and state["attempt"] < _MAX_RESEARCH_ATTEMPTS:
+        logger.info(
+            "[deep_research] thin coverage (%d/%d articles) after attempt %d — replanning",
+            len(state["ranked"]), _TARGET_ARTICLE_COUNT, state["attempt"],
+        )
+        return "plan"
+    return END
+
+
+_act_graph = StateGraph(_ActState)
+_act_graph.add_node("plan", _plan_node)
+_act_graph.add_node("act", _act_node)
+_act_graph.set_entry_point("plan")
+_act_graph.add_edge("plan", "act")
+_act_graph.add_conditional_edges("act", _should_replan, {"plan": "plan", END: END})
+_compiled_act_graph = _act_graph.compile()
+
+
+def _run_research_act_subgraph(topic: str) -> tuple[list[str], list[dict]]:
+    """Run the plan->act->replan subgraph; returns (last queries used, ranked articles)."""
+    result = _compiled_act_graph.invoke({
+        "topic": topic, "queries": [], "raw_articles": [], "ranked": [], "attempt": 0,
+    })
+    return result["queries"], result["ranked"]
 
 
 def _generate_analysis(

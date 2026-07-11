@@ -257,24 +257,33 @@ class TestDispatchAction:
     # ── find_tutorials ──
 
     def test_find_tutorials_with_results(self):
+        # domain_resource_service.discover_resources() is the real primary path
+        # now (domain-aware GitHub/docs discovery); tavily_service is only the
+        # fallback when discovery fails — force that here to exercise it.
         search_results = [
             {"title": "FAISS Tutorial", "url": "https://example.com/faiss", "content": "..."},
             {"title": "Pinecone Guide",  "url": "https://example.com/pinecone", "content": "..."},
         ]
-        with patch("backend.services.tavily_service.search_articles", return_value=search_results):
+        with patch("backend.services.domain_resource_service.discover_resources",
+                   side_effect=RuntimeError("discovery down")), \
+             patch("backend.services.tavily_service.search_articles", return_value=search_results):
             result = self._dispatch("find_tutorials")
         assert result["found"] is True
         assert len(result["data"]["results"]) == 2
         assert "FAISS Tutorial" in result["instruction"]
 
     def test_find_tutorials_search_fails_gracefully(self):
-        with patch("backend.services.tavily_service.search_articles", side_effect=RuntimeError("down")):
+        with patch("backend.services.domain_resource_service.discover_resources",
+                   side_effect=RuntimeError("discovery down")), \
+             patch("backend.services.tavily_service.search_articles", side_effect=RuntimeError("down")):
             result = self._dispatch("find_tutorials")
         assert result["found"] is False
         assert result["instruction"]
 
     def test_find_tutorials_empty_results(self):
-        with patch("backend.services.tavily_service.search_articles", return_value=[]):
+        with patch("backend.services.domain_resource_service.discover_resources",
+                   side_effect=RuntimeError("discovery down")), \
+             patch("backend.services.tavily_service.search_articles", return_value=[]):
             result = self._dispatch("find_tutorials")
         assert result["found"] is False
 
@@ -437,6 +446,8 @@ class TestActionPromptSection:
         assert result == "Hello world"
 
     def test_section_in_system_prompt(self):
+        # action_result only renders in structured modes — "normal" (the
+        # default) is deliberately minimal, see build_system_prompt's docstring.
         from backend.services.chat_prompt_service import build_system_prompt
         ctx = {
             "user_profile": {}, "research": {}, "session": {},
@@ -444,7 +455,7 @@ class TestActionPromptSection:
             "preference_snapshot": {}, "learner_profile": {},
             "action_result": {"instruction": "Action: SHOW REPOSITORIES\nHere are repos..."},
         }
-        prompt = build_system_prompt(ctx)
+        prompt = build_system_prompt(ctx, mode="deep_research")
         assert "Action: SHOW REPOSITORIES" in prompt
 
     def test_no_action_result_prompt_unchanged(self):
@@ -456,113 +467,6 @@ class TestActionPromptSection:
         }
         prompt = build_system_prompt(ctx)
         assert "Action:" not in prompt
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestChatServiceAction
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestChatServiceAction:
-    def _make_ctx(self):
-        return {
-            **_ctx(),
-            "action_result": None,
-        }
-
-    def test_chat_returns_action_key(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _ctx()
-        action_res = {"action": "show_repos", "topic": "RAG", "found": True,
-                      "data": {}, "instruction": "Action: SHOW REPOSITORIES\n..."}
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Here are repos."), \
-             patch("backend.services.action_router_service.route", return_value=action_res), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None):
-            result = chat("sess-action-1", "Show repositories for RAG", topic_hint="RAG")
-        assert result["action"] == "show_repos"
-
-    def test_chat_action_none_when_no_intent(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _ctx()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Sure."), \
-             patch("backend.services.action_router_service.route", return_value=None), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None):
-            result = chat("sess-action-2", "What is machine learning?")
-        assert result["action"] is None
-
-    def test_action_result_injected_into_context(self, patch_db):
-        """Verify action_result is placed into context before build_messages."""
-        from backend.services.chat_service import chat
-        ctx = _ctx()
-        captured_ctx = {}
-        action_res = {"action": "compare", "topic": "RAG", "found": False,
-                      "data": {}, "instruction": "Action: COMPARE\n..."}
-
-        def fake_build_messages(history, message, context):
-            captured_ctx.update(context)
-            return [{"role": "user", "content": message}]
-
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.chat_service.build_messages", side_effect=fake_build_messages), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Response"), \
-             patch("backend.services.action_router_service.route", return_value=action_res), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None):
-            chat("sess-action-3", "Compare RAG vs fine-tuning", topic_hint="RAG")
-
-        assert "action_result" in captured_ctx
-        assert captured_ctx["action_result"]["action"] == "compare"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestActionEndpoint
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestActionEndpoint:
-    def _chat_result(self, action=None):
-        return {
-            "session_id":  "sess-ep",
-            "message_id":  1,
-            "response":    "Here are the repos.",
-            "topic_hint":  "Vector Databases",
-            "action":      action,
-            "recommendations": {
-                "based_on_topic": "Vector Databases", "source": "empty",
-                "next_topics": [], "prerequisites": [], "advanced_topics": [],
-            },
-            "context_used": {
-                "has_deep_research": False, "has_learning_path": False,
-                "has_topic_expansion": False, "has_github_repos": False,
-                "interests_count": 0, "history_turns": 0,
-                "topics_in_session": 0, "total_topics_explored": 0,
-            },
-            "created_at": "2026-01-01 00:00:00",
-        }
-
-    def test_action_field_present_in_response(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        with patch("backend.main.chat_with_ai", return_value=self._chat_result("show_repos")):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "Show repos"})
-        assert resp.status_code == 200
-        assert "action" in resp.json()
-
-    def test_action_value_propagated(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        with patch("backend.main.chat_with_ai", return_value=self._chat_result("show_repos")):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "Show repos"})
-        assert resp.json()["action"] == "show_repos"
-
-    def test_action_none_when_no_intent(self):
-        from fastapi.testclient import TestClient
-        from backend.main import app
-        client = TestClient(app)
-        with patch("backend.main.chat_with_ai", return_value=self._chat_result(None)):
-            resp = client.post("/chat", json={"session_id": "s1", "message": "What is ML?"})
-        assert resp.json()["action"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

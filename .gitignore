@@ -73,7 +73,8 @@ frontend/.vite/
 .eslintcache
 .stylelintcache
 
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 .claude/
-# Added by code-review-graph
-.code-review-graph/
+# Added by graphify
+graphify-out/

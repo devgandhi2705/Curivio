@@ -28,6 +28,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 _DATETIME_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -74,7 +76,7 @@ def create_project(
     intent_profile = None
     try:
         from .intent_profile_service import generate_intent_profile, save_intent_profile
-        intent_profile = generate_intent_profile(name, description, keywords or [], difficulty)
+        intent_profile = generate_intent_profile(name, description, keywords or [], difficulty, project_id=project_id)
         save_intent_profile(project_id, intent_profile)
         project["intent_profile"] = intent_profile
     except Exception:
@@ -139,8 +141,8 @@ def update_project(project_id: str, **fields) -> dict | None:
         updates["keywords"] = json.dumps(updates["keywords"])
     if "daily_core_article_count" in updates:
         updates["daily_core_article_count"] = max(2, min(10, int(updates["daily_core_article_count"])))
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    from ..utils.db import get_connection
+    from ..utils.db import get_connection, build_set_clause
+    set_clause = build_set_clause(updates)
     with get_connection() as conn:
         conn.execute(
             f"UPDATE learning_projects SET {set_clause} WHERE project_id = ?",
@@ -159,7 +161,7 @@ def update_project(project_id: str, **fields) -> dict | None:
                 def _regen_ip():
                     try:
                         _kw  = project.get("keywords") or []
-                        _prof = _ip_gen(project["name"], _desc, _kw, _diff)
+                        _prof = _ip_gen(project["name"], _desc, _kw, _diff, project_id=project_id)
                         _ip_save(project_id, _prof)
                         logger.info("[project_service] intent profile regenerated for %s", project_id)
                     except Exception as _e:
@@ -398,41 +400,66 @@ def _fetch_curiosity_articles(
 # Daily package generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Jargon terms that are too dense for beginner content — each hit adds weight
-_BEGINNER_JARGON: list[str] = [
-    "value chain", "supply chain fragility", "supply fragility", "dependency risk",
-    "competitive dynamics", "market fragmentation", "regulatory pathway",
-    "regulatory framework", "operational efficiency", "cost structure",
-    "margin compression", "demand elasticity", "vertical integration",
-    "horizontal integration", "economies of scale", "first-mover advantage",
-    "network effects", "platform economics", "monopsony", "oligopoly",
-    "cartelization", "geopolitical", "macroeconomic", "systemic risk",
-    "strategic imperative", "value proposition", "market positioning",
-    "capital allocation", "risk-adjusted return", "portfolio optimization",
-    # Pharma / domain-specific abbreviations (ok in context but jargon-heavy alone)
-    " anda ", " nda ", " cmo ", " cro ", " ich ", " cdsco ", " who-gmp ",
-]
-
-_BEGINNER_JARGON_THRESHOLD = 18  # total jargon-term occurrences across the package
+class _BeginnerCalibrationJudgment(BaseModel):
+    is_appropriate_for_beginner: bool
+    unexplained_jargon_terms: list[str]
+    reasoning: str
 
 
-def _score_beginner_calibration(package: dict) -> int:
-    """
-    Count jargon-term occurrences across all card text fields.
-    Returns total hit count; compare against _BEGINNER_JARGON_THRESHOLD.
-    """
+def _package_text_for_judge(package: dict) -> str:
+    """Concatenate all card text fields the beginner-calibration judge should read."""
     all_cards = (package.get("insights", []) or []) + (package.get("curiosity_insights", []) or [])
-    total_hits = 0
+    parts: list[str] = []
     for card in all_cards:
         blocks_text = " ".join(b.get("content", "") for b in (card.get("blocks") or []))
-        text = " ".join(filter(None, [
+        parts.append(" ".join(filter(None, [
             card.get("summary", ""),
             blocks_text or card.get("educational_explanation", ""),
             blocks_text or card.get("why_it_matters", ""),
-        ])).lower()
-        for term in _BEGINNER_JARGON:
-            total_hits += text.count(term)
-    return total_hits
+        ])))
+    return "\n\n".join(parts)
+
+
+def _judge_beginner_calibration(
+    package: dict, project_id: str, day_number: int,
+) -> _BeginnerCalibrationJudgment | None:
+    """
+    LLM judge: does this package read as beginner-appropriate? Replaces the old
+    hardcoded jargon word-list, which only matched macro-economics vocabulary and
+    missed real jargon outside it (e.g. "parametric adstock", "identifiability").
+    Returns None on failure — caller treats that as "no retry".
+    """
+    from ..llm import get_structured_chat_model
+    from ..config import GEMINI_FALLBACK_MODEL
+
+    package_text = _package_text_for_judge(package)
+    if not package_text.strip():
+        return None
+
+    prompt = (
+        "You are checking whether a daily learning package is appropriate for a "
+        "BEGINNER reader with no background in the subject.\n\n"
+        "Flag any term, acronym, or concept used WITHOUT a plain-English explanation "
+        "that a total beginner would not understand — technical, financial, statistical, "
+        "or domain-specific jargon of any kind, not just business jargon.\n\n"
+        f"PACKAGE TEXT:\n{package_text}\n\n"
+        "Return is_appropriate_for_beginner=false if there is meaningful unexplained "
+        "jargon a beginner would stumble on."
+    )
+    try:
+        judge = get_structured_chat_model(
+            _BeginnerCalibrationJudgment, model=GEMINI_FALLBACK_MODEL, legs="gemini",
+        )
+        return judge.invoke(prompt, config={"metadata": {
+            "call_type": "feed_beginner_calibration_judge",
+            "project_id": project_id, "day_ref": day_number,
+        }})
+    except Exception as exc:
+        logger.warning(
+            "[project_service] beginner calibration judge failed for %s: %s (skipping retry)",
+            project_id, exc,
+        )
+        return None
 
 
 def generate_project_insight(
@@ -510,7 +537,8 @@ def generate_project_insight(
         if intent_profile is None:
             # Legacy project or profile generation failed at creation — generate now
             intent_profile = generate_intent_profile(
-                project["name"], project.get("description", ""), keywords, difficulty
+                project["name"], project.get("description", ""), keywords, difficulty,
+                project_id=project_id,
             )
             save_intent_profile(project_id, intent_profile)
     except Exception:
@@ -583,7 +611,7 @@ def generate_project_insight(
         from .retrieval_planner import plan as _plan_retrieval
         retrieval_plan = _plan_retrieval(
             intent_profile, _planning_ks, keywords, project["name"],
-            today_plan=today_plan,
+            today_plan=today_plan, project_id=project_id, day_ref=day_number,
         )
         _planner_called    = True
         _queries_generated = (
@@ -629,17 +657,12 @@ def generate_project_insight(
     _tp_is_rotating = bool(today_plan and "theme" in today_plan and "focus" not in today_plan)
     if _tp_is_rotating and _tp_trusted:
         try:
-            from .tavily_service import _search_raw as _tavily_search_raw, normalize_query as _nq
+            from .tinyfish_service import search as _tinyfish_search
             _sup_queries = (retrieval_plan.get("core_queries") or [])[:2] if retrieval_plan else [project["name"]]
             _core_seen: set[str] = {a.get("url", "") for a in core_articles}
             _sup_added: list[dict] = []
             for _sq in _sup_queries:
-                for _a in _tavily_search_raw(
-                    _nq(_sq),
-                    max_results=5,
-                    search_depth="basic",
-                    include_domains=_tp_trusted,
-                ):
+                for _a in _tinyfish_search(_sq, include_domains=list(_tp_trusted)):
                     _url = _a.get("url", "")
                     if _url and _url not in _core_seen:
                         _a.setdefault("retrieval_query", _sq)
@@ -712,7 +735,23 @@ def generate_project_insight(
     # Moved BEFORE ranking so signal_density / source_strength are available
     # to the ranker for T4 (quality amplifier) and T5 (tie-breaker) scoring.
     # Deterministic enrichment — no LLM calls. Mutates in-place. Non-fatal.
+    #
+    # source_type is normally classified inside source_ranker.rank_articles()
+    # (via source_metadata_service.enrich(), after scoring) — too late for
+    # source_intelligence_service's _compute_source_strength(), which needs it
+    # here. Pre-classify it now so source_strength isn't always the 0.40
+    # default; source_metadata_service.enrich() later sees it already set
+    # (idempotent — "first call wins") and skips reclassifying.
     import time as _t5_time
+    try:
+        from .source_metadata_service import classify_source_type as _classify_type
+        for _a in core_articles + curiosity_articles:
+            _a.setdefault(
+                "source_type",
+                _classify_type(_a.get("url", ""), _a.get("title", "")),
+            )
+    except Exception:
+        logger.warning("[project_service] source_type pre-classification failed for %s (non-fatal)", project_id)
     _t5_pre_enrich = _t5_time.monotonic()
     _t5_pre_sample = [
         (a.get("url", "")[:50], a.get("signal_density"), a.get("source_strength"))
@@ -778,6 +817,33 @@ def generate_project_insight(
         "[PHASE2B-ITEM5] post_rank elapsed_ms=%.1f",
         (_t5_time.monotonic() - _t5_pre_rank) * 1000,
     )
+
+    # ── Feed-3: full-content capture for the final ranked pool (additive) ────
+    # Purely additive — does not persist, does not feed article_plan_service or
+    # the writer. Proves the fetch mechanism populates real data ahead of a
+    # future phase that will actually consume it.
+    try:
+        from .tinyfish_service import fetch as _tinyfish_fetch
+        _pool_urls = [a["url"] for a in (core_articles + curiosity_articles) if a.get("url")]
+        _fetched: dict = {}
+        for _i in range(0, len(_pool_urls), 10):  # TinyFish Fetch caps at 10 URLs/request
+            try:
+                _fetched.update(_tinyfish_fetch(_pool_urls[_i:_i + 10], image_links=True))
+            except Exception as _batch_exc:
+                logger.warning(
+                    "[project_service] full_content batch fetch failed for %s (urls %d-%d, non-fatal): %s",
+                    project_id, _i, _i + 10, _batch_exc,
+                )
+        for _a in (core_articles + curiosity_articles):
+            _r = _fetched.get(_a.get("url", ""))
+            _a["full_content"]        = _r.get("text") if _r else None
+            _a["full_content_images"] = _r.get("image_links") if _r else None
+        logger.info(
+            "[project_service] %s day=%d [full_content_capture] pool=%d fetched=%d",
+            project_id, day_number, len(_pool_urls), len(_fetched),
+        )
+    except Exception as _fc_exc:
+        logger.warning("[project_service] full_content capture failed for %s (non-fatal): %s", project_id, _fc_exc)
 
     # ── Persist retrieval provenance before generation ────────────────────────
     _feed_date = datetime.now(timezone.utc).strftime(_DATE_FMT)
@@ -998,6 +1064,32 @@ def generate_project_insight(
         _dist_str or "no_articles",
     )
 
+    # Full single-package prompt — built unconditionally (cheap: no LLM call, just
+    # composer assembly) so it's available for the beginner-calibration retry below
+    # regardless of which generation path (single-call vs multi-call) actually ran.
+    _composer = make_daily_package_composer(
+        project_name=project["name"],
+        keywords=keywords,
+        difficulty=difficulty,
+        day_number=day_number,
+        display_label=display_label,
+        core_articles=core_articles,
+        curiosity_articles=curiosity_articles,
+        daily_core_article_count=daily_core_article_count,
+        curiosity_directives=curiosity_directives,
+        intelligence_context=intelligence_context,
+        quality_feedback=quality_feedback,
+        intent_profile=intent_profile,
+        knowledge_state=knowledge_state or None,
+        article_plan_block=_article_plan_block,
+        core_article_text=_core_str,
+        curiosity_article_text=_curio_str,
+    )
+
+    prompt, _assembly = ModelAwareAssembler.build(
+        _composer, _ACTIVE_MODEL, expected_output_tokens=2000
+    )
+
     # ── Phase 9.3.4C: feature-flag routing — single-call vs multi-call ──────────
     try:
         from ..config import MULTI_CALL_GENERATION as _MULTI_CALL
@@ -1030,29 +1122,6 @@ def generate_project_insight(
             logger.error("[project_service] multi-call generation failed for %s: %s", project_id, _e)
             raise RuntimeError(str(_e)) from _e
     else:
-        _composer = make_daily_package_composer(
-            project_name=project["name"],
-            keywords=keywords,
-            difficulty=difficulty,
-            day_number=day_number,
-            display_label=display_label,
-            core_articles=core_articles,
-            curiosity_articles=curiosity_articles,
-            daily_core_article_count=daily_core_article_count,
-            curiosity_directives=curiosity_directives,
-            intelligence_context=intelligence_context,
-            quality_feedback=quality_feedback,
-            intent_profile=intent_profile,
-            knowledge_state=knowledge_state or None,
-            article_plan_block=_article_plan_block,
-            core_article_text=_core_str,
-            curiosity_article_text=_curio_str,
-        )
-
-        prompt, _assembly = ModelAwareAssembler.build(
-            _composer, _ACTIVE_MODEL, expected_output_tokens=2000
-        )
-
         # ── Task 9: Structured feed-generation budget observability log ───────────
         # One concise structured log per feed generation.  All budget dimensions
         # visible in a single line for easy filtering/alerting.
@@ -1100,9 +1169,11 @@ def generate_project_insight(
         try:
             from .writer_provider_router import route_writer_call, format_articles_full
             from ..prompts.project_insight_prompt import PromptContext as _PC, build_batch_prompt as _bbp_sc
-            # Build full Gemini prompt: same prompt structure, uncompressed articles
-            _full_core_text  = format_articles_full(core_articles,      "CORE")
-            _full_curio_text = format_articles_full(curiosity_articles,  "CURIOSITY")
+            # Build full Gemini prompt: same prompt structure, uncompressed articles.
+            # Package mode does not get full_content (Feed-4.2 is batch-mode only —
+            # curiosity has no pre-assigned primary source here to scope it to).
+            _full_core_text,  _ = format_articles_full(core_articles,      "CORE")
+            _full_curio_text, _ = format_articles_full(curiosity_articles,  "CURIOSITY")
             _full_ctx_sc = _PC(
                 project_name             = project["name"],
                 keywords                 = keywords,
@@ -1126,16 +1197,24 @@ def generate_project_insight(
                 "[writer_router] single-call  gemini_prompt_tokens~=%d  groq_prompt_tokens=%d",
                 len(_gemini_prompt_sc) // 4, _assembly.final_tokens,
             )
-            from .grok_service import ask_grok as _ask_grok_sc
-            text, _sc_provider = route_writer_call(
-                _gemini_prompt_sc,
-                lambda: _ask_grok_sc(prompt, json_mode=True),
-                json_mode=True,
+            from ..llm import call_and_parse_json
+            raw, _sc_provider = call_and_parse_json(
+                lambda: route_writer_call(
+                    _gemini_prompt_sc,
+                    prompt,
+                    call_type="feed_writer",
+                    json_mode=True,
+                    metadata={"project_id": project_id, "day_ref": day_number},
+                ),
+                call_type="feed_writer",
             )
-            raw  = _extract_json(text)
         except Exception as e:
             logger.error("[project_service] generation failed for %s: %s", project_id, e)
             raise RuntimeError(str(e)) from e
+
+    # Feed-4.2: run_generation_orchestrator() smuggles this onto raw (batch mode
+    # only); package mode never sets it, so this defaults to {} there.
+    _citable_sources: dict = raw.pop("_citable_sources", {})
 
     # Validate that the model returned actual content before saving anything
     if not raw.get("insights"):
@@ -1143,12 +1222,13 @@ def generate_project_insight(
         raise RuntimeError("Generation produced no insight cards — please try again.")
 
     # ── Beginner calibration check + single retry ─────────────────────────────
-    if difficulty == "beginner" and not _MULTI_CALL:
-        jargon_hits = _score_beginner_calibration(raw)
-        if jargon_hits > _BEGINNER_JARGON_THRESHOLD:
+    if difficulty == "beginner":
+        judgment = _judge_beginner_calibration(raw, project_id, day_number)
+        if judgment is not None and not judgment.is_appropriate_for_beginner:
             logger.warning(
-                "[project_service] beginner calibration failed for %s — jargon_hits=%d, retrying",
-                project_id, jargon_hits,
+                "[project_service] beginner calibration failed for %s — "
+                "unexplained_jargon=%s reasoning=%s, retrying",
+                project_id, judgment.unexplained_jargon_terms, judgment.reasoning,
             )
             retry_addendum = (
                 "\n\n══════════════════════════════════════\n"
@@ -1194,9 +1274,16 @@ def generate_project_insight(
                 logger.debug("[project_service] retry budget instrumentation failed (non-fatal)", exc_info=True)
 
             try:
-                from .grok_service import ask_grok as _ask_grok_retry
-                retry_text = _ask_grok_retry(prompt + retry_addendum, json_mode=True)
-                retry_raw  = _extract_json(retry_text)
+                from ..llm import get_chat_model, extract_text
+                _retry_model = get_chat_model(json_mode=True)
+                retry_resp = _retry_model.invoke(
+                    prompt + retry_addendum,
+                    config={"metadata": {
+                        "call_type": "feed_writer_calibration_retry",
+                        "project_id": project_id, "day_ref": day_number,
+                    }},
+                )
+                retry_raw  = _extract_json(extract_text(retry_resp))
                 if retry_raw.get("insights"):
                     raw = retry_raw
                     logger.info("[project_service] beginner calibration retry succeeded for %s", project_id)
@@ -1229,11 +1316,12 @@ def generate_project_insight(
         if a.get("url")
     }
     raw, _grounding_violations = _ground_package(
-        raw_package    = raw,
-        allowed_urls   = _allowed_urls,
-        allowed_titles = _allowed_titles,
-        project_id     = project_id,
-        day_number     = day_number,
+        raw_package     = raw,
+        allowed_urls    = _allowed_urls,
+        allowed_titles  = _allowed_titles,
+        project_id      = project_id,
+        day_number      = day_number,
+        citable_sources = _citable_sources,
     )
     if _grounding_violations:
         logger.warning(
@@ -1515,18 +1603,9 @@ def _pkg_row(row) -> dict:
 
 
 def _extract_json(text: str) -> dict:
-    """Extract a JSON object from LLM output using multiple fallback strategies."""
-    # Strategy 1: JSON inside a code fence
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if m:
-        return json.loads(m.group(1))
-    # Strategy 2: outermost { ... }
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start != -1 and end > start:
-        return json.loads(text[start : end + 1])
-    # Strategy 3: raw parse (will raise if not JSON)
-    return json.loads(text.strip())
+    """Extract a JSON object from LLM output. Thin wrapper — see backend/llm/json_response.py."""
+    from ..llm import extract_json
+    return extract_json(text)
 
 
 def delete_project_insight(project_id: str, insight_id: int) -> bool:

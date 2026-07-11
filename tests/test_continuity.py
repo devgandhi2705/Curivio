@@ -473,6 +473,8 @@ class TestContinuityPromptSection:
 
 class TestContinuityInSystemPrompt:
     def test_section_appears_in_prompt(self):
+        # continuity only renders in structured modes — "normal" (the
+        # default) is deliberately minimal, see build_system_prompt's docstring.
         from backend.services.chat_prompt_service import build_system_prompt
         ctx = {
             **_base_ctx(),
@@ -484,7 +486,7 @@ class TestContinuityInSystemPrompt:
                 "sessions_count": 2,
             },
         }
-        prompt = build_system_prompt(ctx)
+        prompt = build_system_prompt(ctx, mode="deep_research")
         assert "Embeddings" in prompt
         assert "FAISS" in prompt
 
@@ -528,66 +530,6 @@ class TestInjectMemoryIncludesContinuity:
             from backend.services.memory_injection_service import inject_memory
             result = inject_memory("sess-1", topic_hint=None)
         assert result.get("continuity") == {}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestChatServiceRecordsContinuity
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestChatServiceRecordsContinuity:
-    def test_record_concepts_called_with_topic(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _base_ctx()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Answer"), \
-             patch("backend.services.action_router_service.route", return_value=None), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None), \
-             patch("backend.services.continuity_service.record_concepts") as mock_rc, \
-             patch("backend.services.continuity_service.record_recommendations"):
-            chat("sess-1", "Explain HNSW", topic_hint="Vector Databases")
-        mock_rc.assert_called_once()
-        args = mock_rc.call_args[0]
-        assert args[0] == "Vector Databases"   # topic
-        assert args[2] == "sess-1"             # session_id
-
-    def test_record_recommendations_called_after_turn(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _base_ctx()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Answer"), \
-             patch("backend.services.action_router_service.route", return_value=None), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None), \
-             patch("backend.services.continuity_service.record_concepts"), \
-             patch("backend.services.continuity_service.record_recommendations") as mock_rr:
-            chat("sess-1", "What is RAG?", topic_hint="RAG")
-        mock_rr.assert_called_once()
-
-    def test_continuity_not_called_when_no_topic(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _base_ctx()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Answer"), \
-             patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
-             patch("backend.services.action_router_service.route", return_value=None), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None), \
-             patch("backend.services.continuity_service.record_concepts") as mock_rc, \
-             patch("backend.services.continuity_service.record_recommendations") as mock_rr:
-            chat("sess-1", "Hello!")
-        mock_rc.assert_not_called()
-        mock_rr.assert_not_called()
-
-    def test_continuity_error_does_not_break_chat(self, patch_db):
-        from backend.services.chat_service import chat
-        ctx = _base_ctx()
-        with patch("backend.services.chat_service.inject_memory", return_value=ctx), \
-             patch("backend.services.grok_service.ask_grok_chat", return_value="Answer"), \
-             patch("backend.services.action_router_service.route", return_value=None), \
-             patch("backend.services.topic_expansion_service.get_stored_expansion", return_value=None), \
-             patch("backend.services.continuity_service.record_concepts",
-                   side_effect=RuntimeError("db error")), \
-             patch("backend.services.continuity_service.record_recommendations"):
-            result = chat("sess-1", "Explain HNSW", topic_hint="Vector Databases")
-        assert result["response"] == "Answer"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
