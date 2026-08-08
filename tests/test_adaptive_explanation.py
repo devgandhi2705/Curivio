@@ -33,7 +33,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.database.schema import ALL_TABLES
+from backend.database.schema import ALL_TABLES, MIGRATIONS
 from backend.services.adaptive_explanation_service import (
     BASE_SCORE,
     BEGINNER_CAP,
@@ -63,6 +63,17 @@ def mem_db(monkeypatch):
     conn.row_factory = sqlite3.Row
     for stmt in ALL_TABLES:
         conn.execute(stmt)
+    # Chat-R7a: user_preferences/research_sessions only gain their user_id
+    # column via MIGRATIONS (matches real init_db()'s behavior).
+    for migration in MIGRATIONS:
+        try:
+            if isinstance(migration, (list, tuple)):
+                for stmt in migration:
+                    conn.execute(stmt)
+            else:
+                conn.execute(migration)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
     @contextmanager
@@ -79,20 +90,23 @@ def mem_db(monkeypatch):
     return conn
 
 
-def _insert_pref(conn, topic, score, difficulty=None):
+_TEST_USER = "test-user-1"
+
+
+def _insert_pref(conn, topic, score, difficulty=None, user_id=_TEST_USER):
     conn.execute(
         "INSERT OR REPLACE INTO user_preferences "
-        "(topic, preference_score, difficulty_preference) VALUES (?, ?, ?)",
-        (topic, score, difficulty),
+        "(topic, user_id, preference_score, difficulty_preference) VALUES (?, ?, ?, ?)",
+        (topic, user_id, score, difficulty),
     )
     conn.commit()
 
 
-def _insert_session(conn, topic, activity="deep_research", ts="2025-01-01 10:00:00"):
+def _insert_session(conn, topic, activity="deep_research", ts="2025-01-01 10:00:00", user_id=_TEST_USER):
     conn.execute(
-        "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at) "
-        "VALUES (?, ?, ?, ?)",
-        (topic, topic.lower().strip(), activity, ts),
+        "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at, user_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (topic, topic.lower().strip(), activity, ts, user_id),
     )
     conn.commit()
 
@@ -113,62 +127,75 @@ def _insert_chat(conn, session_id, role, content, ts="2025-01-01 10:00:00"):
 class TestGatherSignals:
 
     def test_empty_db_returns_defaults(self, mem_db):
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert signals["explicit_difficulty"] is None
         assert signals["exploration_breadth"] == 0
         assert signals["avg_preference_score"] == 0.0
         assert signals["session_depth"] == 0
 
+    def test_missing_user_id_returns_defaults_even_with_data(self, mem_db):
+        # Chat-R7a: no user_id must never fall back to global/other-user data.
+        _insert_pref(mem_db, "T1", 1.0, "advanced")
+        signals = _gather_signals(None)
+        assert signals["explicit_difficulty"] is None
+
     def test_explicit_difficulty_most_common(self, mem_db):
         _insert_pref(mem_db, "T1", 1.0, "intermediate")
         _insert_pref(mem_db, "T2", 0.5, "intermediate")
         _insert_pref(mem_db, "T3", 0.2, "advanced")
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert signals["explicit_difficulty"] == "intermediate"
 
     def test_difficulty_distribution_populated(self, mem_db):
         _insert_pref(mem_db, "T1", 1.0, "beginner")
         _insert_pref(mem_db, "T2", 0.5, "advanced")
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert "beginner" in signals["difficulty_distribution"]
         assert "advanced" in signals["difficulty_distribution"]
 
     def test_avg_preference_score_correct(self, mem_db):
         _insert_pref(mem_db, "T1", 2.0)
         _insert_pref(mem_db, "T2", 0.0)
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert abs(signals["avg_preference_score"] - 1.0) < 0.01
 
     def test_exploration_breadth_counts_unique_topics(self, mem_db):
         _insert_session(mem_db, "RAG",  "deep_research",   "2025-01-01")
         _insert_session(mem_db, "LoRA", "topic_expansion", "2025-01-02")
         _insert_session(mem_db, "RAG",  "learning_path",   "2025-01-03")  # duplicate topic
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert signals["exploration_breadth"] == 2
+
+    def test_other_user_signals_not_visible(self, mem_db):
+        _insert_pref(mem_db, "T1", 2.0, "advanced", user_id="other-user")
+        _insert_session(mem_db, "RAG", "deep_research", user_id="other-user")
+        signals = _gather_signals(None, user_id=_TEST_USER)
+        assert signals["explicit_difficulty"] is None
+        assert signals["exploration_breadth"] == 0
 
     def test_session_depth_counts_user_turns(self, mem_db):
         _insert_chat(mem_db, "s1", "user",      "q1", "2025-01-01 10:00:00")
         _insert_chat(mem_db, "s1", "assistant", "a1", "2025-01-01 10:01:00")
         _insert_chat(mem_db, "s1", "user",      "q2", "2025-01-01 10:02:00")
-        signals = _gather_signals("s1")
+        signals = _gather_signals("s1", user_id=_TEST_USER)
         assert signals["session_depth"] == 2
 
     def test_session_depth_zero_without_session_id(self, mem_db):
         _insert_chat(mem_db, "s1", "user", "q1")
-        signals = _gather_signals(None)
+        signals = _gather_signals(None, user_id=_TEST_USER)
         assert signals["session_depth"] == 0
 
     def test_session_depth_isolates_sessions(self, mem_db):
         _insert_chat(mem_db, "s1", "user", "q1", "2025-01-01 10:00:00")
         _insert_chat(mem_db, "s1", "user", "q2", "2025-01-01 10:01:00")
         _insert_chat(mem_db, "s2", "user", "q3", "2025-01-01 10:02:00")
-        assert _gather_signals("s1")["session_depth"] == 2
-        assert _gather_signals("s2")["session_depth"] == 1
+        assert _gather_signals("s1", user_id=_TEST_USER)["session_depth"] == 2
+        assert _gather_signals("s2", user_id=_TEST_USER)["session_depth"] == 1
 
     def test_graceful_on_db_error(self, monkeypatch):
         import backend.utils.db as _db
         monkeypatch.setattr(_db, "get_connection", MagicMock(side_effect=RuntimeError))
-        signals = _gather_signals("any")
+        signals = _gather_signals("any", user_id=_TEST_USER)
         assert signals["explicit_difficulty"] is None
         assert signals["exploration_breadth"] == 0
 
@@ -348,13 +375,13 @@ class TestBuildLearnerProfile:
         _insert_pref(mem_db, "T1", 0.5, "beginner")
         _insert_pref(mem_db, "T2", 0.3, "beginner")
         _insert_pref(mem_db, "T3", 0.1, "beginner")
-        profile = build_learner_profile()
+        profile = build_learner_profile(user_id=_TEST_USER)
         assert profile["inferred_level"] == "beginner"
 
     def test_advanced_preference_produces_advanced_level(self, mem_db):
         _insert_pref(mem_db, "T1", 1.5, "advanced")
         _insert_pref(mem_db, "T2", 1.2, "advanced")
-        profile = build_learner_profile()
+        profile = build_learner_profile(user_id=_TEST_USER)
         assert profile["inferred_level"] == "advanced"
 
     def test_style_matches_inferred_level(self, mem_db):
@@ -378,14 +405,14 @@ class TestBuildLearnerProfile:
     def test_topic_connections_populated(self, mem_db):
         _insert_session(mem_db, "RAG Pipelines",  "deep_research",   "2025-01-02")
         _insert_session(mem_db, "LoRA Fine-tuning","topic_expansion", "2025-01-01")
-        profile = build_learner_profile()
+        profile = build_learner_profile(user_id=_TEST_USER)
         assert "RAG Pipelines" in profile["topic_connections"]
 
     def test_session_id_passed_for_depth(self, mem_db):
         _insert_chat(mem_db, "s1", "user", "q1", "2025-01-01 10:00:00")
         _insert_chat(mem_db, "s1", "user", "q2", "2025-01-01 10:01:00")
         _insert_chat(mem_db, "s1", "user", "q3", "2025-01-01 10:02:00")
-        profile = build_learner_profile("s1")
+        profile = build_learner_profile("s1", user_id=_TEST_USER)
         assert profile["signals"]["session_depth"] == 3
 
     def test_get_explanation_directive_returns_string(self, mem_db):
@@ -484,7 +511,7 @@ class TestTopicConnections:
 
     def test_topic_connections_in_full_profile(self, mem_db):
         _insert_session(mem_db, "RAG Pipelines", "deep_research", "2025-01-02")
-        profile = build_learner_profile()
+        profile = build_learner_profile(user_id=_TEST_USER)
         assert "RAG Pipelines" in profile["topic_connections"]
         assert "RAG Pipelines" in profile["directive"]
 
@@ -663,7 +690,7 @@ class TestInjectMemoryIncludesProfile:
         from backend.services.memory_injection_service import inject_memory
 
         captured = {}
-        def mock_profile(session_id=None):
+        def mock_profile(session_id=None, user_id=None):
             captured["session_id"] = session_id
             return self._mock_profile()
 

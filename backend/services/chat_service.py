@@ -10,6 +10,10 @@ chat_stream(session_id, message, topic_hint=None) -> Iterator[str]
 get_history(session_id, limit=20) -> list[dict]
 clear_history(session_id) -> int
 list_sessions(limit=20) -> list[dict]
+sweep_expired_attachments() -> dict   Chat-R13 admin cleanup — see docstring below.
+attachment_belongs_to_session(session_id, attachment_id) -> bool   Chat-R15a ownership check.
+get_document_owner_session(attachment_id) -> str | None   Chat-R15c permanent owner lookup, survives sweep.
+list_session_attachments(session_id) -> list[dict]   Chat-R16 files panel — every attachment, unbounded.
 """
 
 from __future__ import annotations
@@ -17,8 +21,10 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 
 from ..utils.db import get_connection
+from . import r2_storage_service
 from .memory_injection_service import inject_memory
 from .chat_prompt_service import build_messages
 
@@ -52,13 +58,23 @@ def chat_stream(
 
     Line types
     ----------
-    {"t": "chunk",    "v": "<text>"}       — AI text arriving incrementally
-    {"t": "thinking", "v": "<text>"}       — Gemini reasoning arriving incrementally (Chat-6)
+    {"t": "chunk",    "v": "<text>", "seq": int, "block_id": int}       — AI text arriving incrementally
+    {"t": "thinking", "v": "<text>", "seq": int, "block_id": int}       — Gemini reasoning arriving incrementally (Chat-6)
     {"t": "thinking_gap", "v": "<text>"}   — one-shot note: reasoning ran but can't stream (Chat-6 followup)
+    {"t": "status", "v": "<label>", "seq": int, "block_id": int, "tool": str, "query": str|None}  — tool_start (others below are plain {"t":"status","v":...}, no tool/seq/block_id)
+    {"t": "status", "v": "<label>", "seq": int, "block_id": int, "tool": str, "sources": [...]}    — tool_end (Chat-R10e; same block_id as the tool_start status above)
     {"t": "code", "v": "<source>", "language": "python"}       — executed code (Chat-7)
     {"t": "code_output", "v": "<stdout>", "success": true}     — its execution result (Chat-7)
     {"t": "done",  <full metadata>}        — final metadata after stream ends
     {"t": "error", "message": "<reason>"}  — unrecoverable error; stream stops
+
+    seq/block_id (Chat-R10d) let a consumer reconstruct the ordered
+    thinking/tool_call/text blocks server-side already builds into the
+    persisted `blocks` column (see get_history) — order is otherwise only
+    implicit in arrival. tool/query/sources on the status events (Chat-R10e)
+    let the frontend build the same tool_call block live, without waiting
+    for reload. R5's gap-note events (thinking_gap/extended_thinking_gap/
+    code_execution_gap) are exempt: one-shot, no ordering concept needed.
 
     Callers should iterate until exhaustion or until an "error" event is seen.
     """
@@ -70,6 +86,15 @@ def chat_stream(
     if not message and not attachments:
         yield json.dumps({"t": "error", "message": "message must not be empty"}) + "\n"
         return
+
+    # Chat-R6a: images stay on the existing Gemini vision/Files-API path
+    # (has_attachments hard gate, Chat-5) — documents (pdf/docx/csv/text/code)
+    # go through text extraction instead (document_memory_service) and are
+    # injected as context, never as a build_messages "media" part. mime_type
+    # startswith "image/" is the discriminator used everywhere in this stack
+    # (main.py's ChatAttachment docstring, frontend ChatMessage.jsx).
+    image_attachments    = [a for a in (attachments or []) if (a.get("mime_type") or "").startswith("image/")]
+    document_attachments = [a for a in (attachments or []) if not (a.get("mime_type") or "").startswith("image/")]
 
     # ── Context preparation ───────────────────────────────────────────────────
     # auto_mode is resolved after the model call now (Chat-4.1): True only when
@@ -111,7 +136,7 @@ def chat_stream(
         history_turns = len(history) // 2
 
         from .memory_injection_service import inject_memory as _inject
-        context = _inject(session_id, topic_hint)
+        context = _inject(session_id, topic_hint, user_id=user_id)
 
         # Inject format intent so system prompt can apply structural guidance
         context["format_intent"]   = _format_intent
@@ -175,14 +200,37 @@ def chat_stream(
         except Exception:
             logger.debug("[chat_service] feed_entry_anchor failed (non-fatal)")
 
+        # Chat-R7b: genuine Feed-context link, the sole signal for structured
+        # JSON output (chat_prompt_service.build_system_prompt) — a union of
+        # both signals, not either alone. feed_context is request-scoped and
+        # only present on the turn right after a Feed-card action; the
+        # feed_chat_links row backing feed_entry_anchor isn't created until
+        # AFTER that first turn's response completes (ChatWorkspace.jsx
+        # persists it in the onDone callback), so feed_entry_anchor is empty
+        # on turn 1 of a Feed-linked session. feed_context covers turn 1;
+        # feed_entry_anchor covers every turn after — together, no gap.
+        context["feed_linked"] = bool(feed_context) or bool(context.get("feed_entry_anchor"))
+
         from .chat_prompt_service import build_messages as _build
-        messages_payload = _build(history, message, context, mode=chat_mode, attachments=attachments)
+        messages_payload = _build(history, message, context, mode=chat_mode, attachments=image_attachments or None)
 
         # Inject feed context note first (background knowledge)
         if feed_context:
             from .chat_modes_service import build_feed_context_note
             feed_note = build_feed_context_note(feed_context)
             messages_payload = _inject_mode_note(messages_payload, feed_note)
+
+        # Chat-R6a: extracted document text, injected as context — never as a
+        # build_messages "media" part (that path is Gemini-vision-only, images
+        # only). Retrieval-trimmed automatically by document_memory_service
+        # when a document's full text exceeds its token budget.
+        for doc in document_attachments:
+            attachment_id = (doc.get("uri") or "").removeprefix("doc://")
+            if not attachment_id:
+                continue
+            from .document_memory_service import get_context as _doc_context
+            doc_note = _doc_context(attachment_id, doc.get("filename") or "document", message or topic_hint or "")
+            messages_payload = _inject_mode_note(messages_payload, doc_note)
 
     except Exception:
         logger.exception("chat_stream: context preparation failed")
@@ -194,8 +242,27 @@ def chat_stream(
     # still used unchanged by the sync chat() path above). chat_mode now only
     # decides tool availability + an optional bias hint — web_search/deep_research
     # are real tools the model calls itself; layman gets tools=None structurally.
-    from ..llm.chat_agent import resolve_tools_and_hint
+    from ..llm.chat_agent import resolve_tools_and_hint, build_mode_hint
     tools_enabled, mode_hint = resolve_tools_and_hint(chat_mode)
+
+    # ── Chat-R4: task-based router ────────────────────────────────────────────
+    # Only for "normal" mode (no explicit web_search/deep_research toggle) and
+    # never for IMAGE attachment turns — an explicit toggle always wins outright
+    # (R1: 10/10 hit rate), and the vision hard gate (Chat-5) is untouched by
+    # task-based routing. Document-only turns route normally (Chat-R6a) — a
+    # document isn't a structural gate the way an image is. Non-fatal:
+    # classify_message returns None on any failure, leaving task_type=None
+    # (today's default fixed chain, no hint).
+    task_type = None
+    if chat_mode == "normal" and not image_attachments:
+        from ..llm.chat_router import classify_message, map_to_task_type
+        _router_metadata = {"user_id": user_id} if user_id else None
+        decision = classify_message(message, metadata=_router_metadata)
+        if decision is not None:
+            task_type = map_to_task_type(decision)
+            if decision.needs_tool:
+                mode_hint = build_mode_hint(decision.tool_name, decision.shaped_query)
+
     if mode_hint:
         messages_payload = _inject_mode_note(messages_payload, mode_hint)
 
@@ -239,13 +306,13 @@ def chat_stream(
         logger.debug("[chat_service] stream budget instrumentation failed (non-fatal)", exc_info=True)
 
     # ── Stream AI response ────────────────────────────────────────────────────
-    # Emit a status event before blocking on the model so HF Spaces proxies
-    # don't close the connection during the cold-start delay before the first chunk.
-    yield json.dumps({"t": "status", "v": "Generating response…"}) + "\n"
-
+    # Keep the frontend loading indicator quiet until the model emits a
+    # meaningful step or the first answer chunk. The generic filler is now
+    # omitted for the default path to avoid redundant dots + text.
     from .chat_title_service import stream_extract_state, advance_stream_state
     title_state     = stream_extract_state() if is_new_session else None
     collected:       list[str]  = []
+    thinking_chunks: list[str]  = []
     extracted_title: str | None = None
     sources:         list[dict] = []
     tool_used:       str | None = None
@@ -254,6 +321,25 @@ def chat_stream(
         "deep_research": "Running deep research…",
     }
 
+    # Chat-R10d: ordered {type: "thinking"|"tool_call"|"text", ...} segments,
+    # built alongside (not instead of) the flat thinking_chunks/collected
+    # accumulators above — thinking_chunks still becomes the `thinking`
+    # column exactly as before. `blocks` folds chat_agent's block_id-tagged
+    # events into one entry per contiguous run: a tool_start/tool_end pair
+    # for the same call shares a block_id (see chat_agent._stream_agent),
+    # so this dict lookup — not positional "last entry" — is what lets
+    # tool_end's sources land back on the same entry tool_start opened.
+    blocks:       list[dict]   = []
+    _block_index: dict[int, int] = {}
+
+    def _block_entry(block_id, factory):
+        if block_id in _block_index:
+            return blocks[_block_index[block_id]]
+        _block_index[block_id] = len(blocks)
+        entry = factory()
+        blocks.append(entry)
+        return entry
+
     try:
         from ..llm.chat_agent import ask_chat_stream
         _call_metadata: dict = {"call_type": "chat_turn"}
@@ -261,25 +347,74 @@ def chat_stream(
             _call_metadata["user_id"] = user_id
         for event in ask_chat_stream(
             messages_payload, metadata=_call_metadata, tools_enabled=tools_enabled,
-            has_attachments=bool(attachments), extended_thinking=extended_thinking,
+            has_attachments=bool(image_attachments), extended_thinking=extended_thinking,
+            task_type=task_type,
         ):
+            if event["type"] == "status":
+                yield json.dumps({"t": "status", "v": event.get("text") or "Working…"}) + "\n"
+                continue
             if event["type"] == "tool_start":
-                label = _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…")
-                yield json.dumps({"t": "status", "v": label}) + "\n"
+                label = event.get("status_text") or _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…")
+                # Chat-R10e: tool/query on the wire (additive fields on the
+                # existing "status" type, no new NDJSON type) — R10d's
+                # seq/block_id alone don't give the frontend enough to render
+                # a live tool_call block; the persisted blocks column already
+                # had tool/query, this just also puts it on the stream.
+                yield json.dumps({
+                    "t": "status", "v": label,
+                    "seq": event.get("seq"), "block_id": event.get("block_id"),
+                    "tool": event["tool"], "query": event.get("query"),
+                }) + "\n"
+                _block_entry(event["block_id"], lambda: {
+                    "type": "tool_call", "tool": event["tool"],
+                    "query": event.get("query"), "sources": [],
+                })
                 continue
             if event["type"] == "tool_end":
                 tool_used = event["tool"]
                 sources.extend(event.get("sources", []))
+                entry = _block_entry(event["block_id"], lambda: {
+                    "type": "tool_call", "tool": event["tool"],
+                    "query": None, "sources": [],
+                })
+                entry["sources"] = event.get("sources", [])
+                # Chat-R10e: second "status" emission (same type, same block_id)
+                # for the wire — no tool_end signal existed on the wire before
+                # this; carries sources so the live tool_call block can fill in
+                # without waiting for reload.
+                yield json.dumps({
+                    "t": "status", "v": event.get("status_text") or _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…"),
+                    "seq": event.get("seq"), "block_id": event.get("block_id"),
+                    "tool": event["tool"], "sources": event.get("sources", []),
+                }) + "\n"
+                if entry.get("tool") is None:
+                    entry["tool"] = event["tool"]
                 continue
             if event["type"] == "thinking":
                 # Bypasses title extraction — that parser only ever needs to see
                 # visible answer text (see ask_chat_stream's module docstring).
-                yield json.dumps({"t": "thinking", "v": event["text"]}) + "\n"
+                thinking_chunks.append(event["text"])
+                entry = _block_entry(event["block_id"], lambda: {"type": "thinking", "text": ""})
+                entry["text"] += event["text"]
+                yield json.dumps({
+                    "t": "thinking", "v": event["text"],
+                    "seq": event.get("seq"), "block_id": event.get("block_id"),
+                }) + "\n"
                 continue
             if event["type"] == "thinking_gap":
                 # One-shot honest note when the Gemini 3+ leg answers — see
                 # chat_agent._THINKING_GAP_TEXT for why thinking never arrives here.
                 yield json.dumps({"t": "thinking_gap", "v": event["text"]}) + "\n"
+                continue
+            if event["type"] == "extended_thinking_gap":
+                # Chat-R5b: one-shot note when extended_thinking was requested
+                # but the leg answering is Groq (no reasoning config exists there).
+                yield json.dumps({"t": "extended_thinking_gap", "v": event["text"]}) + "\n"
+                continue
+            if event["type"] == "code_execution_gap":
+                # Chat-R5b: one-shot note when task_type=="coding" but the leg
+                # answering isn't Gemini 3+ (code_execution unavailable there).
+                yield json.dumps({"t": "code_execution_gap", "v": event["text"]}) + "\n"
                 continue
             if event["type"] == "code":
                 # Bypasses title extraction and collected/response_text, same as
@@ -298,16 +433,28 @@ def chat_stream(
                     yield json.dumps({"t": "title", "v": extracted_title}) + "\n"
                 if result["forward"] is not None:
                     collected.append(result["forward"])
-                    yield json.dumps({"t": "chunk", "v": result["forward"]}) + "\n"
+                    entry = _block_entry(event["block_id"], lambda: {"type": "text", "text": ""})
+                    entry["text"] += result["forward"]
+                    yield json.dumps({
+                        "t": "chunk", "v": result["forward"],
+                        "seq": event.get("seq"), "block_id": event.get("block_id"),
+                    }) + "\n"
             else:
                 collected.append(chunk)
-                yield json.dumps({"t": "chunk", "v": chunk}) + "\n"
+                entry = _block_entry(event["block_id"], lambda: {"type": "text", "text": ""})
+                entry["text"] += chunk
+                yield json.dumps({
+                    "t": "chunk", "v": chunk,
+                    "seq": event.get("seq"), "block_id": event.get("block_id"),
+                }) + "\n"
     except Exception as exc:
         logger.exception("chat_stream: AI generation failed")
         yield json.dumps({"t": "error", "message": str(exc)}) + "\n"
         return
 
     response_text = "".join(collected)
+    thinking_text = "".join(thinking_chunks) or None
+    blocks_data   = blocks or None
 
     try:
         from .tension_engine import score_tension as _score_tension
@@ -325,7 +472,7 @@ def chat_stream(
     user_msg_id = 0
     try:
         user_msg_id = _save_message(session_id, "user",      message,       topic_hint, now, attachments=attachments)
-        msg_id      = _save_message(session_id, "assistant", response_text, topic_hint, now)
+        msg_id      = _save_message(session_id, "assistant", response_text, topic_hint, now, thinking=thinking_text, blocks=blocks_data)
     except Exception:
         logger.exception("chat_stream: message persistence failed")
         msg_id = 0
@@ -449,14 +596,16 @@ def get_history(session_id: str, limit: int = 20) -> list[dict]:
     """
     Return the most recent *limit* messages for *session_id*, oldest first.
 
-    Each entry: {id, session_id, role, content, topic_hint, created_at, attachments}
+    Each entry: {id, session_id, role, content, topic_hint, created_at, attachments, thinking, blocks}
     `attachments` is the raw stored list (uri/mime_type/filename/size_bytes/expires_at)
     — the frontend decides how to render an expired one, this layer doesn't filter it.
+    `blocks` (Chat-R10d) is the ordered thinking/tool_call/text segment list,
+    coexisting with the flat `thinking` string — both come from the same turn.
     """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, session_id, role, content, topic_hint, created_at, attachments
+            SELECT id, session_id, role, content, topic_hint, created_at, attachments, thinking, blocks
             FROM   chat_messages
             WHERE  session_id = ?
             ORDER BY created_at DESC, id DESC
@@ -474,6 +623,8 @@ def get_history(session_id: str, limit: int = 20) -> list[dict]:
             "topic_hint":  r["topic_hint"],
             "created_at":  r["created_at"],
             "attachments": json.loads(r["attachments"]) if r["attachments"] else None,
+            "thinking":    r["thinking"],
+            "blocks":      json.loads(r["blocks"]) if r["blocks"] else None,
         }
         for r in reversed(rows)
     ]
@@ -620,27 +771,52 @@ def _save_message(
     topic_hint: str | None,
     created_at: str,
     attachments: list[dict] | None = None,
+    thinking: str | None = None,
+    blocks: list[dict] | None = None,
 ) -> int:
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO chat_messages (session_id, role, content, topic_hint, created_at, attachments) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO chat_messages (session_id, role, content, topic_hint, created_at, attachments, thinking, blocks) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, role, content, topic_hint, created_at,
-             json.dumps(attachments) if attachments else None),
+             json.dumps(attachments) if attachments else None, thinking,
+             json.dumps(blocks) if blocks else None),
         )
-        return cur.lastrowid
+        msg_id = cur.lastrowid
+        # Chat-R15c: permanent attachment_id -> session_id record for document
+        # (doc://) attachments — the ONLY point this co-occurs with attachments,
+        # and it must be written here (not derived later from the attachments
+        # JSON), since sweep_expired_attachments drops that JSON entry once the
+        # original file expires. See CREATE_DOCUMENT_ATTACHMENT_SESSIONS.
+        for attachment in (attachments or []):
+            uri = attachment.get("uri") or ""
+            if uri.startswith("doc://"):
+                conn.execute(
+                    "INSERT OR IGNORE INTO document_attachment_sessions (attachment_id, session_id) VALUES (?, ?)",
+                    (uri.split("://", 1)[1], session_id),
+                )
+        return msg_id
 
 
 def _load_history_messages(session_id: str, limit: int = 50) -> list[dict]:
     """
     Return up to *limit* messages as OpenAI-format dicts (role + content).
 
-    A message with live (non-expired) attachments gets a list-of-parts content
-    (text + Gemini "media" file_uri parts) instead of a plain string, so the
-    model can still see an image/PDF attached on an earlier turn. Expired
+    A message with live (non-expired) IMAGE attachments gets a list-of-parts
+    content (text + Gemini "media" file_uri parts) instead of a plain string,
+    so the model can still see an image attached on an earlier turn. Expired
     attachments are silently dropped — the file_uri is dead on Google's side
     (verified live: cross-key access already 403s, and Google deletes the file
     server-side after 48h), so re-sending it would just fail the whole turn.
+
+    Chat-R6a: document attachments (pdf/docx/csv/text/code) are excluded here
+    regardless of expires_at — their "doc://<id>" uri is never a real Gemini
+    file_uri, and expires_at is always None for them (our own storage doesn't
+    expire), which would otherwise make _attachment_is_live() treat them as
+    permanently "live" and re-send a broken media part on every future turn.
+    Their extracted text was already injected as context on the turn it was
+    uploaded (chat_stream's document_attachments block) — it doesn't need to
+    be re-injected on every subsequent turn of the same session.
     """
     with get_connection() as conn:
         rows = conn.execute(
@@ -658,7 +834,10 @@ def _load_history_messages(session_id: str, limit: int = 50) -> list[dict]:
     messages = []
     for r in reversed(rows):
         attachments = json.loads(r["attachments"]) if r["attachments"] else None
-        live = [a for a in attachments if _attachment_is_live(a, now)] if attachments else []
+        live = [
+            a for a in attachments
+            if (a.get("mime_type") or "").startswith("image/") and _attachment_is_live(a, now)
+        ] if attachments else []
         if not live:
             messages.append({"role": r["role"], "content": r["content"]})
             continue
@@ -668,14 +847,181 @@ def _load_history_messages(session_id: str, limit: int = 50) -> list[dict]:
     return messages
 
 
-def _attachment_is_live(attachment: dict, now: datetime) -> bool:
-    expires_at = attachment.get("expires_at")
+def _past_expiry(expires_at: str | None, now: datetime) -> bool:
+    """True if expires_at is set and has passed. None/unparseable -> not expired (permanent)."""
     if not expires_at:
-        return True
+        return False
     try:
-        return datetime.fromisoformat(expires_at.replace("Z", "+00:00")) > now
+        return datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= now
     except ValueError:
-        return True
+        return False
+
+
+def _attachment_is_live(attachment: dict, now: datetime) -> bool:
+    return not _past_expiry(attachment.get("expires_at"), now)
+
+
+def _r2_key_for(attachment_id: str, filename: str | None) -> str:
+    ext = PurePosixPath(filename or "").suffix.lower()
+    return f"chat-attachments/{attachment_id}{ext}"
+
+
+def get_document_owner_session(attachment_id: str) -> str | None:
+    """
+    Chat-R15c: permanent session_id for a document (doc://) attachment_id, or
+    None if it was never persisted to a message (upload-only, orphaned) or
+    predates this record (written by _save_message going forward).
+
+    Deliberately NOT attachment_belongs_to_session's JSON-liveness scan —
+    that table (chat_messages.attachments) is pruned once the original file
+    is swept, which would incorrectly 404 the OWNER's permanent access to
+    their own extracted text. This table is never touched by sweep.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT session_id FROM document_attachment_sessions WHERE attachment_id = ?",
+            (attachment_id,),
+        ).fetchone()
+    return row["session_id"] if row else None
+
+
+def attachment_belongs_to_session(session_id: str, attachment_id: str) -> bool:
+    """
+    Chat-R15a ownership check: True if attachment_id genuinely appears
+    somewhere in session_id's own messages. Needed so share-scoped attachment
+    access can't become a skeleton key (any valid token + any attachment_id).
+
+    Reuses sweep_expired_attachments's exact id-extraction shape: doc://<id>
+    and file://<id> from uri (documents/"other" files), r2_attachment_id
+    (Chat-R14a image dual-write) — the same three places a real attachment_id
+    can live.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT attachments FROM chat_messages "
+            "WHERE session_id = ? AND attachments IS NOT NULL AND attachments != ''",
+            (session_id,),
+        ).fetchall()
+
+    for row in rows:
+        for attachment in json.loads(row["attachments"]):
+            uri = attachment.get("uri") or ""
+            if uri.startswith(("doc://", "file://")) and uri.split("://", 1)[1] == attachment_id:
+                return True
+            if attachment.get("r2_attachment_id") == attachment_id:
+                return True
+    return False
+
+
+def list_session_attachments(session_id: str) -> list[dict]:
+    """
+    Chat-R16 files panel: every attachment across every message in
+    session_id, most-recent first, unbounded (no LIMIT) — unlike get_history,
+    which caps at `limit` messages. Reuses attachment_belongs_to_session's
+    scan shape (same WHERE clause) but returns the full attachment dicts
+    instead of a boolean membership check.
+
+    Each entry is the raw stored attachment dict plus `created_at` (its
+    owning message's timestamp), so a panel can render/sort without a
+    second per-message lookup.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT attachments, created_at FROM chat_messages "
+            "WHERE session_id = ? AND attachments IS NOT NULL AND attachments != '' "
+            "ORDER BY created_at DESC, id DESC",
+            (session_id,),
+        ).fetchall()
+
+    result: list[dict] = []
+    for row in rows:
+        for attachment in json.loads(row["attachments"]):
+            result.append({**attachment, "created_at": row["created_at"]})
+    return result
+
+
+def sweep_expired_attachments() -> dict:
+    """
+    Chat-R13/R14a admin cleanup: delete the R2 object backing every R2-backed
+    attachment whose retention window has passed, and update
+    chat_messages.attachments accordingly. Two disposal shapes, by type:
+
+    - Documents (doc://<id>) and "other" files (file://<id>, Chat-R14a):
+      expires_at IS the R2-only clock here. Once past it, the R2 object is
+      deleted and the whole attachment entry is dropped — nothing else
+      references it.
+    - Images (Chat-R14a dual-write): r2_attachment_id/r2_expires_at are a
+      SEPARATE clock from uri/expires_at (which stay Gemini's own real 48h
+      expiry, checked elsewhere by _attachment_is_live/_load_history_messages
+      — see ChatAttachment's docstring for why they can't be reused). Once
+      r2_expires_at has passed, only the R2 object + those two fields are
+      cleared — the rest of the entry (Gemini uri, its own expires_at,
+      filename, mime_type) is kept, since it's independently meaningful
+      regardless of R2 state (e.g. the frontend's "expired" chip badge).
+
+    Extracted text/embeddings (document_chunks_vec, document_memory_service.py)
+    are never written to here — permanent regardless of original-file retention.
+
+    A failed R2 delete is reported in "errors" and the reference is left in
+    place (not lost) — retried on the next sweep. Returns
+    {"swept": int, "attachment_ids": list[str], "errors": list[dict]}.
+    """
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, attachments FROM chat_messages WHERE attachments IS NOT NULL AND attachments != ''"
+        ).fetchall()
+
+    swept_ids: list[str] = []
+    errors: list[dict] = []
+
+    for row in rows:
+        attachments = json.loads(row["attachments"])
+        if not attachments:
+            continue
+
+        kept = []
+        row_changed = False
+        for attachment in attachments:
+            uri = attachment.get("uri") or ""
+            is_r2_original = uri.startswith("doc://") or uri.startswith("file://")
+
+            if is_r2_original and _past_expiry(attachment.get("expires_at"), now):
+                attachment_id = uri.split("://", 1)[1]
+                key = _r2_key_for(attachment_id, attachment.get("filename"))
+                try:
+                    r2_storage_service.delete(key)
+                    swept_ids.append(attachment_id)
+                    row_changed = True
+                    continue  # drop the whole entry
+                except Exception as exc:
+                    logger.error("[chat] sweep: R2 delete failed for key=%r: %s", key, exc)
+                    errors.append({"attachment_id": attachment_id, "key": key, "error": str(exc)})
+                    kept.append(attachment)
+                    continue
+
+            r2_attachment_id = attachment.get("r2_attachment_id")
+            if r2_attachment_id and _past_expiry(attachment.get("r2_expires_at"), now):
+                key = _r2_key_for(r2_attachment_id, attachment.get("filename"))
+                try:
+                    r2_storage_service.delete(key)
+                    swept_ids.append(r2_attachment_id)
+                    row_changed = True
+                    attachment = {**attachment, "r2_attachment_id": None, "r2_expires_at": None}
+                except Exception as exc:
+                    logger.error("[chat] sweep: R2 delete failed for key=%r: %s", key, exc)
+                    errors.append({"attachment_id": r2_attachment_id, "key": key, "error": str(exc)})
+
+            kept.append(attachment)
+
+        if row_changed:
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE chat_messages SET attachments = ? WHERE id = ?",
+                    (json.dumps(kept), row["id"]),
+                )
+
+    return {"swept": len(swept_ids), "attachment_ids": swept_ids, "errors": errors}
 
 
 def _detect_topic_hint(message: str) -> str | None:

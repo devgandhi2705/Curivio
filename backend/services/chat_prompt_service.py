@@ -14,13 +14,11 @@ build_messages(history: list[dict], user_message: str, context: dict) -> list[di
 from __future__ import annotations
 
 import json
+import re
 
 from ..prompts.prompt_composer import PromptComposer
 
 MAX_HISTORY_TURNS = 6
-
-# Modes that receive the full structured context + JSON schema
-_STRUCTURED_MODES = frozenset({"deep_research", "web_search", "roadmap", "compare", "trend_analysis"})
 
 # ── Depth detection ───────────────────────────────────────────────────────────
 
@@ -29,17 +27,31 @@ _QUICK_GREETINGS = frozenset(
     "thanks thank you bye goodbye ok okay cool noted got it lol".split()
 )
 
-_DETAILED_TRIGGERS = frozenset(
-    "in detail detailed deeply deep explain properly thoroughly complete completely "
-    "comprehensive full understand properly how does internally step by step "
-    "teach me walk me through guide me from scratch everything about all about".split()
+# Chat-R7b: phrases, not a word bag — the old frozenset(single_string.split())
+# shape flattened multi-word phrases ("in detail", "how does", "step by step",
+# "teach me", "walk me through", "from scratch", "all about") into individual
+# words, so a token-set intersection false-positived on any message merely
+# containing "how" or "about" in isolation (confirmed live, R7 recon: a plain
+# personal/career question landed on "detailed" purely because it used the
+# words "how" and "about" — neither phrase was actually present). Matched via
+# regex word-boundary search against the raw message instead of a token-set
+# intersection, so "how does" only fires when those two words are contiguous.
+_DETAILED_TRIGGERS = (
+    "in detail", "detailed", "deeply", "deep", "explain properly", "thoroughly",
+    "complete", "completely", "comprehensive", "full", "understand properly",
+    "how does", "internally", "step by step", "teach me", "walk me through",
+    "guide me", "from scratch", "everything about", "all about",
 )
 
-_RESEARCH_TRIGGERS = frozenset(
-    "research analyze analyse compare deeply contrast tradeoffs implications "
-    "perspectives viewpoints history historical evolution future outlook "
-    "multi-angle cross-domain strategic implications contradictions competing".split()
+_RESEARCH_TRIGGERS = (
+    "research", "analyze", "analyse", "compare", "deeply", "contrast", "tradeoffs",
+    "implications", "perspectives", "viewpoints", "history", "historical",
+    "evolution", "future outlook", "multi-angle", "cross-domain",
+    "strategic implications", "contradictions", "competing",
 )
+
+_DETAILED_PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in _DETAILED_TRIGGERS) + r")\b")
+_RESEARCH_PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in _RESEARCH_TRIGGERS) + r")\b")
 
 
 def detect_depth(message: str, mode: str = "normal") -> str:
@@ -50,7 +62,7 @@ def detect_depth(message: str, mode: str = "normal") -> str:
 
     - Mode deep_research always → research
     - Short / casual / greeting → quick
-    - Explicit depth phrases → detailed or research
+    - Explicit depth phrases (phrase-matched, see _DETAILED_PATTERN/_RESEARCH_PATTERN) → detailed or research
     - Default → standard
     """
     if mode == "deep_research":
@@ -67,16 +79,19 @@ def detect_depth(message: str, mode: str = "normal") -> str:
     if tokens <= _QUICK_GREETINGS or (len(tokens) <= 3 and tokens & _QUICK_GREETINGS):
         return "quick"
 
+    has_detailed = bool(_DETAILED_PATTERN.search(m))
+    has_research = bool(_RESEARCH_PATTERN.search(m))
+
     # Very short factual asks (< 5 words, no depth trigger)
-    if len(tokens) <= 4 and not (tokens & _DETAILED_TRIGGERS) and not (tokens & _RESEARCH_TRIGGERS):
+    if len(tokens) <= 4 and not has_detailed and not has_research:
         return "quick"
 
     # Research-grade
-    if tokens & _RESEARCH_TRIGGERS:
+    if has_research:
         return "research"
 
     # Detailed
-    if tokens & _DETAILED_TRIGGERS:
+    if has_detailed:
         return "detailed"
 
     return "standard"
@@ -215,20 +230,30 @@ def build_system_prompt(context: dict, mode: str = "normal") -> str:
     """
     Assemble the system prompt from all available context sections.
 
-    Mode routing
+    Routing (Chat-R7b — was mode-based: web_search/deep_research/roadmap/
+    compare/trend_analysis always got the JSON schema regardless of whether
+    the turn had anything to do with Feed. That forced a Key Takeaways/
+    Resources/Explore Next card onto plain conversational answers like "top
+    10 github trends" — confirmed live, R1/R7 recon. roadmap/compare/
+    trend_analysis were never even reachable in practice: ChatRequest.
+    chat_mode only ever validates to normal/web_search/deep_research/layman.)
     ------------
-    normal / feed_discussion
-        Minimal prompt: persona + conversation memory + natural guidelines.
-        No JSON schema. No research dumps. Feels like a natural AI assistant.
-
-    layman
-        Same minimal prompt but with the Explain Simply directive injected.
-
-    web_search / deep_research / roadmap / compare / trend_analysis
+    context["feed_linked"] present and truthy (chat_service.py: feed_context
+    for this turn, OR a resolved feed_entry_anchor from a prior turn's
+    feed_chat_links row — a union because the link row isn't persisted until
+    after the first Feed-triggered turn's response completes, so
+    feed_entry_anchor alone is empty on turn 1)
         Full context injection (profile, research, domain, action) + structured
-        JSON format directive so the renderer can display rich sections.
+        JSON format directive so the renderer can display rich sections —
+        this is a genuine Feed-linked conversation, structure is warranted.
+
+    Everything else (normal / web_search / deep_research / layman with no
+    Feed link)
+        Minimal prompt: persona + conversation memory + natural guidelines.
+        No JSON schema. No research dumps. Adaptive free-form prose — the
+        default for an ordinary chat turn, whichever tool answered it.
     """
-    if mode in _STRUCTURED_MODES:
+    if context.get("feed_linked"):
         return _build_structured_prompt(context)
     else:
         return _build_natural_prompt(context, mode)
@@ -483,7 +508,16 @@ CODE GENERATION RULES:
 - Never include code as a "bonus" at the end of a prose answer.
 - When code is appropriate: show a minimal working example — not a full application scaffold.
 - Match language to what the user specified, or infer from context.
-- Add inline comments only if the code does something non-obvious."""
+- Add inline comments only if the code does something non-obvious.
+
+ATTACHMENT AWARENESS:
+- Images: when this turn includes an image, you genuinely receive and see its actual visual
+  content through this interface — describe what you actually observe. Never say you cannot
+  process, view, or see images; you can, and one may be attached right now.
+- Documents: extracted document text in your context is labeled either "full text" (the complete
+  file) or "showing the N most relevant excerpts out of M total" (a partial, retrieval-trimmed
+  selection). When you were given excerpts, say so — "based on the visible excerpts" or similar —
+  never claim to have read the entire document when you were only shown a portion of it."""
 
 _GUIDELINES = """\
 Guidelines:
@@ -491,7 +525,10 @@ Guidelines:
 - Tailor complexity to the user's learning stage and stated interests.
 - Build on what this session has already covered: go deeper, don't re-explain; connect new questions to prior context.
 - Keep responses focused and avoid unnecessary repetition.
-- If the user asks about something outside your knowledge, say so honestly."""
+- If the user asks about something outside your knowledge, say so honestly.
+- Images and documents: if this turn includes an image, you genuinely see its actual visual
+  content — never claim you cannot process images. If a document is labeled as excerpted
+  ("showing the N most relevant excerpts"), represent it as a partial excerpt, not a full read."""
 
 _STRUCTURED_FORMAT_DIRECTIVE = """\
 OUTPUT FORMAT — MANDATORY:

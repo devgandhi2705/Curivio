@@ -96,9 +96,16 @@ _DIRECTIVE_BASE: dict[str, str] = {
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_learner_profile(session_id: str | None = None) -> dict:
+def build_learner_profile(session_id: str | None = None, user_id: str | None = None) -> dict:
     """
     Synthesise all available signals into a learner profile.
+
+    Chat-R7a: user_id scopes the user_preferences/research_sessions signals
+    (explicit_difficulty, difficulty_distribution, exploration_breadth,
+    avg_preference_score, topic_connections) to this user only. session_depth
+    stays session_id-scoped as before (chat_messages.session_id already
+    belongs to one user by construction). Missing user_id yields all-default
+    signals (empty/neutral), never another user's data.
 
     Return shape
     ------------
@@ -124,11 +131,11 @@ def build_learner_profile(session_id: str | None = None) -> dict:
       "topic_connections": list[str],   # recently-explored topics for grounding
     }
     """
-    signals         = _gather_signals(session_id)
+    signals         = _gather_signals(session_id, user_id)
     level_score     = _compute_level_score(signals)
     inferred_level  = _score_to_level(level_score)
     confidence      = _compute_confidence(signals)
-    topic_conns     = _get_topic_connections()
+    topic_conns     = _get_topic_connections(user_id=user_id)
     directive       = _build_directive(inferred_level, signals, topic_conns)
 
     return {
@@ -142,16 +149,16 @@ def build_learner_profile(session_id: str | None = None) -> dict:
     }
 
 
-def get_explanation_directive(session_id: str | None = None) -> str:
+def get_explanation_directive(session_id: str | None = None, user_id: str | None = None) -> str:
     """Convenience wrapper — returns only the directive string."""
-    return build_learner_profile(session_id)["directive"]
+    return build_learner_profile(session_id, user_id=user_id)["directive"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Signal gathering
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _gather_signals(session_id: str | None) -> dict:
+def _gather_signals(session_id: str | None, user_id: str | None = None) -> dict:
     signals: dict = {
         "explicit_difficulty":     None,
         "difficulty_distribution": {},
@@ -159,17 +166,21 @@ def _gather_signals(session_id: str | None) -> dict:
         "avg_preference_score":    0.0,
         "session_depth":           0,
     }
+    if not user_id:
+        return signals
 
     try:
         from ..utils.db import get_connection
         with get_connection() as conn:
             pref_rows = conn.execute(
                 "SELECT difficulty_preference, preference_score "
-                "FROM user_preferences"
+                "FROM user_preferences WHERE user_id = ?",
+                (user_id,),
             ).fetchall()
 
             breadth_row = conn.execute(
-                "SELECT COUNT(DISTINCT topic_key) AS n FROM research_sessions"
+                "SELECT COUNT(DISTINCT topic_key) AS n FROM research_sessions WHERE user_id = ?",
+                (user_id,),
             ).fetchone()
 
             if session_id and session_id.strip():
@@ -200,8 +211,10 @@ def _gather_signals(session_id: str | None) -> dict:
     return signals
 
 
-def _get_topic_connections(limit: int = 4) -> list[str]:
+def _get_topic_connections(limit: int = 4, user_id: str | None = None) -> list[str]:
     """Return the most-recently-explored topic names for grounding examples."""
+    if not user_id:
+        return []
     try:
         from ..utils.db import get_connection
         with get_connection() as conn:
@@ -209,11 +222,12 @@ def _get_topic_connections(limit: int = 4) -> list[str]:
                 """
                 SELECT   topic
                 FROM     research_sessions
+                WHERE    user_id = ?
                 GROUP BY topic_key
                 ORDER BY MAX(recorded_at) DESC
                 LIMIT    ?
                 """,
-                (limit,),
+                (user_id, limit),
             ).fetchall()
         return [r["topic"] for r in rows]
     except Exception:

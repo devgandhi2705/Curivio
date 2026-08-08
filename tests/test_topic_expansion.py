@@ -390,9 +390,15 @@ class TestListExpansions:
 class TestEndpointPost:
     @pytest.fixture
     def client(self):
+        # Chat-R7a: POST /topic-expansion now requires Depends(get_current_user)
+        # — it writes to research_sessions, scoped by user_id.
         from fastapi.testclient import TestClient
-        from backend.main import app
-        return TestClient(app)
+        from backend.main import app, get_current_user
+        app.dependency_overrides[get_current_user] = lambda: {"user_id": "test-user", "email": "test@example.com"}
+        try:
+            yield TestClient(app)
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
 
     def _stored(self, topic="Vector Databases"):
         return {**_good_expansion(), "topic": topic, "generated_at": "2026-05-15T10:00:00"}

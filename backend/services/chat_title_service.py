@@ -16,6 +16,7 @@ Public API (DB)
 save_session_title(session_id, title)    → None  (won't overwrite a manual rename)
 rename_session(session_id, title)        → None  (always overwrites)
 get_session_title(session_id)            → str | None
+get_session_owner(session_id)            → str | None  (user_id, or None if unowned/missing)
 list_sessions_with_titles(limit)         → list[dict]
 search_sessions(query, limit)            → list[dict]  (+ match_snippet field)
 """
@@ -228,6 +229,26 @@ def get_session_title(session_id: str) -> str | None:
         return row["title"] if row else None
     except Exception:
         return None
+
+
+def get_session_owner(session_id: str) -> str | None:
+    """
+    Return the recorded user_id for session_id, or None if the session doesn't
+    exist OR exists but predates per-session ownership tracking (Chat-R10d:
+    99 of 175 real rows have a NULL user_id — legacy/pre-auth sessions and
+    smoke-test fixtures). Callers must not distinguish those two cases from
+    the return value alone — that's deliberate, see require_session_access.
+
+    Unlike get_session_title, this does not swallow DB errors — an
+    authorization check must fail closed, not silently return "no owner".
+    """
+    from ..utils.db import get_connection
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM chat_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    return row["user_id"] if row else None
 
 
 def search_sessions(query: str, limit: int = 20, user_id: str | None = None) -> list[dict]:

@@ -57,7 +57,7 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
   const showSnippet  = query && session.match_snippet
 
   return (
-    <div className={`group relative rounded-lg transition-colors ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
+    <div className={`group relative rounded-lg transition-colors ${menuOpen ? "z-10" : ""} ${isActive ? "bg-white/[0.07]" : "hover:bg-white/[0.04]"}`}>
       <button onClick={() => onSelect(session)} className="w-full text-left px-3 py-2.5 pr-8 text-xs">
         <div className={`font-medium truncate ${isActive ? "text-slate-100" : "text-slate-300 hover:text-slate-100"}`}>
           <Highlight text={displayTitle} query={query} />

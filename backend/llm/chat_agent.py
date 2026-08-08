@@ -54,14 +54,20 @@ without touching any API.
 
 ask_chat_stream now yields dicts instead of plain strings so tool activity
 can be surfaced to the caller without disturbing chat_title_service's
-[TITLE: ...] parser, which only ever sees the "text" events' text:
-  {"type": "text", "text": "..."}
-  {"type": "thinking", "text": "..."}
+[TITLE: ...] parser, which only ever sees the "text" events' text. Every
+event below except the three one-shot gap notes also carries "seq" (a flat
+per-turn counter) and "block_id" (Chat-R10d — groups contiguous same-kind
+chunks into one logical block; a tool_start/tool_end pair for the same call
+shares one block_id) — see _stream_agent's _emit for the exact rule:
+  {"type": "text", "text": "...", "seq": int, "block_id": int}
+  {"type": "thinking", "text": "...", "seq": int, "block_id": int}
   {"type": "thinking_gap", "text": "..."}
-  {"type": "tool_start", "tool": "web_search" | "deep_research"}
-  {"type": "tool_end", "tool": "...", "sources": [{"title","url"}, ...]}
-  {"type": "code", "text": "<source>", "language": "python"}
-  {"type": "code_output", "text": "<stdout>", "success": true}
+  {"type": "extended_thinking_gap", "text": "..."}
+  {"type": "code_execution_gap", "text": "..."}
+  {"type": "tool_start", "tool": "web_search" | "deep_research", "query": str | None, "seq": int, "block_id": int}
+  {"type": "tool_end", "tool": "...", "sources": [{"title","url"}, ...], "seq": int, "block_id": int}
+  {"type": "code", "text": "<source>", "language": "python", "seq": int, "block_id": int}
+  {"type": "code_output", "text": "<stdout>", "success": true, "seq": int, "block_id": int}
 
 Chat-6 — native thinking
 -------------------------
@@ -132,9 +138,7 @@ neither guessable from the docs:
 1. Combining code_execution with a custom function-calling tool (web_search/
    deep_research) in the same request 400s ("Please enable
    tool_config.include_server_side_tool_invocations to use Built-in tools
-   with Function calling") unless that tool_config flag is set — so this
-   middleware sets it on every Gemini call, not just ones that end up using
-   code execution.
+   with Function calling") unless that tool_config flag is set.
 2. ChatGroq.bind_tools([{"code_execution": {}}]) raises a client-side
    ValueError ("Unsupported function") before any network call — Groq's
    convert_to_openai_tool has no concept of a provider built-in tool dict.
@@ -150,6 +154,33 @@ ModelFallbackMiddleware (outer) and ModelRetryMiddleware (inner) — see
 _build_agent — so by the time it runs, request.model already reflects
 whichever leg is being attempted for this call.
 
+Chat-R2 — leg-aware gating (was: unconditional on every Gemini call)
+----------------------------------------------------------------------
+Originally the middleware set the tool_config flag on every Gemini leg once
+any tools were bound. Confirmed live (and in Google's own docs — ai.google.dev/
+gemini-api/docs/tool-combination: "supported for Gemini 3 models only") that
+combining a built-in tool with function calling is a Gemini-3-only capability
+— gemini-2.5-flash 400s even with the flag correctly set, with a distinct,
+model-specific error ("Tool call context circulation is not enabled for
+models/gemini-2.5-flash"), not the generic "flag missing" error Gemini 3 legs
+give without it. That's a hard generation gate, not a fixable config gap: no
+alternate flag/config makes 2.5 accept the combination. This meant every
+tool-enabled turn burned 2 pooled gemini-2.5-flash keys x _RETRY_ATTEMPTS
+guaranteed-fail calls before falling through to the one Gemini leg
+(gemini-3.1-flash-lite) that accepts the flag — see docs/chat-reliability/
+chat-r1-recon.md Step 3 for the real timings this cost.
+
+Fix: wrap_model_call now also checks _is_gemini_3_plus(request.model.model)
+(model_provider's existing helper, already used elsewhere in this module)
+before adding code_execution/the tool_config override — Gemini 2.5 legs skip
+the override entirely and proceed with just their agent-bound custom tools
+(web_search/deep_research), confirmed live to work fine standalone since
+they're plain function-calling tools with no built-in-tool conflict.
+code_execution is simply unavailable on 2.5 legs as a result — not a
+fallback trigger, not degraded, just absent for that leg (mirrors Chat-7's
+Groq soft-degrade, same reasoning: code execution isn't structurally
+required to answer).
+
 _split_content_chunks gained two new block kinds for this: Gemini streams
 code execution as its own list-item types ("executable_code" /
 "code_execution_result", raw dict keys — NOT surfaced via tool_call_chunks
@@ -159,14 +190,38 @@ like text), interleaved before the model's own follow-up prose. Google's own
 client warns this shape "may vary each run" (execution_result can be absent
 even when code ran) — a documented upstream quirk, not a bug here.
 
+Chat-R4 — task-based routing (chat_router.py + model_priority.py)
+--------------------------------------------------------------------
+chat_service.chat_stream() runs an LLM classifier (chat_router.classify_message,
+model_priority task_type "routing") ONLY for chat_mode=="normal" turns with no
+attachments — an explicit web_search/deep_research toggle always wins outright
+(R1: proven 10/10 explicit-toggle hit rate; the classifier targets the
+"normal"-mode gap R1 measured at 2/10), and has_attachments turns never
+consult it (vision hard gate, Chat-5, untouched). The classification maps to
+a task_type (chat_router.map_to_task_type) threaded through ask_chat_stream's
+new task_type param -> _get_agent (cache key gained a 4th element) ->
+_build_agent, which calls model_provider.build_pooled_legs(model_priority.
+get_model_priority_list(task_type), streaming=True, thinking=True, ...)
+instead of _build_raw_models() — same bare-legs shape, so it plugs into the
+identical ModelFallbackMiddleware/ModelRetryMiddleware construction below.
+task_type=None (layman/explicit-toggle/vision/no-classification) uses the
+default fixed chain, byte-identical to pre-R4 behavior.
+
+_MODE_HINTS became build_mode_hint(tool_name, shaped_query="") — same static
+text for the explicit-toggle path (shaped_query defaults to "", producing the
+old byte-identical string); the router additionally passes its own
+shaped_query to bias which search terms the model uses, not just which tool.
+
 Public API
 ----------
 resolve_tools_and_hint(chat_mode) -> (bool, str | None)
+build_mode_hint(tool_name, shaped_query="") -> str | None
 ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False,
-                 extended_thinking=False) -> Iterator[dict]
+                 extended_thinking=False, task_type=None) -> Iterator[dict]
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from langchain.agents import create_agent
@@ -175,7 +230,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import GEMINI_MODEL as MODEL_NAME
 from .call_logger import LLMCallLogger
-from .model_provider import _build_raw_models, _is_gemini_3_plus, _RETRY_ATTEMPTS
+from .model_provider import (
+    _build_raw_models,
+    _is_daily_quota_exhausted,
+    _is_gemini_3_plus,
+    _is_gemini_leg,
+    _RETRY_ATTEMPTS,
+    build_pooled_legs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +252,9 @@ class VisionUnavailableError(RuntimeError):
     """
 
 
-_agent_cache: dict[tuple[bool, bool, bool], object] = {}
+_agent_cache: dict[tuple[bool, bool, bool, str | None], object] = {}
 
-_MODE_HINTS: dict[str, str] = {
+_MODE_HINT_TEMPLATES: dict[str, str] = {
     "web_search": (
         "[MODE HINT] The user has Web Search mode active for this turn — prefer "
         "calling the web_search tool for this question unless it is already "
@@ -207,6 +269,23 @@ _MODE_HINTS: dict[str, str] = {
 }
 
 
+def build_mode_hint(tool_name: str | None, shaped_query: str = "") -> str | None:
+    """
+    Bias text for the model toward a specific tool this turn. tool_name is
+    either an explicit chat_mode toggle ("web_search"/"deep_research") or the
+    Chat-R4 router's classified tool_name — same hint either way. shaped_query
+    (router only) appends a suggested, search-ready query; empty for the
+    explicit-toggle path, which stays byte-identical to the old static
+    _MODE_HINTS text.
+    """
+    base = _MODE_HINT_TEMPLATES.get(tool_name or "")
+    if base is None:
+        return None
+    if shaped_query:
+        base = f"{base} Suggested search query: {shaped_query!r}."
+    return base
+
+
 def resolve_tools_and_hint(chat_mode: str) -> tuple[bool, str | None]:
     """
     Translate chat_mode into (tools_enabled, hint_or_None) for one chat turn.
@@ -215,27 +294,43 @@ def resolve_tools_and_hint(chat_mode: str) -> tuple[bool, str | None]:
                                       just discouraged in the prompt.
     web_search /
     deep_research  -> (True, hint)   tools bound; hint biases which one, the
-                                      model still decides.
+                                      model still decides. Explicit toggle —
+                                      Chat-R4's router is never consulted here.
     normal (or
-    anything else) -> (True, None)   tools bound, no bias, model decides freely.
+    anything else) -> (True, None)   tools bound, no bias by default; Chat-R4's
+                                      router (chat_service.chat_stream) may
+                                      still layer a hint on top for this mode.
     """
     if chat_mode == "layman":
         return False, None
-    return True, _MODE_HINTS.get(chat_mode)
+    return True, build_mode_hint(chat_mode)
 
 
 class CodeExecutionToolMiddleware(AgentMiddleware):
-    """Adds Gemini's code_execution tool to Gemini legs only — see Chat-7 in
-    this module's docstring for why (Groq crashes client-side on the dict
+    """Adds Gemini's code_execution tool to Gemini 3+ legs only — see Chat-7
+    in this module's docstring for why (Groq crashes client-side on the dict
     form, and combining it with a custom tool needs an explicit tool_config
-    flag)."""
+    flag), and Chat-R2 for why it's gated to Gemini 3+ specifically:
+    combining a built-in tool with function calling is a Gemini-3-only
+    capability (confirmed live and in Google's own docs — ai.google.dev/
+    gemini-api/docs/tool-combination: "supported for Gemini 3 models only").
+    Gemini 2.5 legs 400 with a model-specific error ("Tool call context
+    circulation is not enabled for models/gemini-2.5-flash") even with the
+    flag set — a hard generation gate, not a config mistake. Skipping the
+    override on 2.5 legs leaves web_search/deep_research untouched (plain
+    function-calling tools, verified live to work fine on 2.5-flash alone)
+    and simply omits code_execution for that leg, not a fallback trigger."""
 
     def __init__(self, enabled: bool = True) -> None:
         super().__init__()
         self._enabled = enabled
 
     def wrap_model_call(self, request, handler):
-        if not self._enabled or not isinstance(request.model, ChatGoogleGenerativeAI):
+        if (
+            not self._enabled
+            or not isinstance(request.model, ChatGoogleGenerativeAI)
+            or not _is_gemini_3_plus(request.model.model)
+        ):
             return handler(request)
         return handler(request.override(
             tools=[*request.tools, {"code_execution": {}}],
@@ -246,20 +341,45 @@ class CodeExecutionToolMiddleware(AgentMiddleware):
         ))
 
 
-def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = False):
-    pairs = _build_raw_models(
-        streaming=True, legs="gemini" if vision_only else "all",
-        thinking=True, extended_thinking=extended_thinking,
-    )
-    if vision_only:
-        pairs = pairs[:1]  # primary Gemini key only — see module docstring
+def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = False, task_type: str | None = None):
+    if vision_only or task_type is None:
+        # Default fixed chain — unchanged for layman/explicit-toggle/vision
+        # turns and for any caller that doesn't pass a task_type.
+        pairs = _build_raw_models(
+            streaming=True, legs="gemini" if vision_only else "all",
+            thinking=True, extended_thinking=extended_thinking,
+        )
+        if vision_only:
+            pairs = pairs[:1]  # primary Gemini key only — see module docstring
+    else:
+        # Chat-R4: task-routed chain — model priority list per model_priority.
+        # get_model_priority_list(task_type), keys-within-model before
+        # model-drop (model_provider.build_pooled_legs). Same bare-legs shape
+        # as _build_raw_models() above, so it plugs into the identical
+        # ModelFallbackMiddleware/ModelRetryMiddleware construction below.
+        from .model_priority import get_model_priority_list
+        pairs = build_pooled_legs(
+            get_model_priority_list(task_type),
+            streaming=True, thinking=True, extended_thinking=extended_thinking,
+        )
     primary, *fallback_models = [m for m, _ in pairs]
-    retry_on = tuple({exc for _, exc_types in pairs for exc in exc_types})
+    retry_on_types = tuple({exc for _, exc_types in pairs for exc in exc_types})
+
+    def _retry_on(exc: Exception) -> bool:
+        # Same quota-aware exclusion as model_provider._QuotaAwareRetry: a
+        # confirmed daily-quota exhaustion can't recover between attempts, so
+        # ModelRetryMiddleware's should_retry_exception() returning False here
+        # skips straight to re-raising (on_failure="error") with NO backoff
+        # sleep at all — immediate fallthrough to the next leg via
+        # ModelFallbackMiddleware. Genuine transient errors (RPM/TPM, network)
+        # keep the normal exponential backoff below, unchanged.
+        return isinstance(exc, retry_on_types) and not _is_daily_quota_exhausted(exc)
+
     middleware = [
         CodeExecutionToolMiddleware(enabled=tools is not None),
         ModelRetryMiddleware(
             max_retries=_RETRY_ATTEMPTS - 1,
-            retry_on=retry_on,
+            retry_on=_retry_on,
             on_failure="error",
         ),
     ]
@@ -282,14 +402,16 @@ def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = Fal
     return agent.with_config(callbacks=[LLMCallLogger()])
 
 
-def _get_agent(tools_enabled: bool, vision_only: bool = False, extended_thinking: bool = False):
-    key = (tools_enabled, vision_only, extended_thinking)
+def _get_agent(tools_enabled: bool, vision_only: bool = False, extended_thinking: bool = False, task_type: str | None = None):
+    key = (tools_enabled, vision_only, extended_thinking, task_type)
     if key not in _agent_cache:
         tools = None
         if tools_enabled:
             from .chat_tools import web_search, deep_research
             tools = [web_search, deep_research]
-        _agent_cache[key] = _build_agent(tools, vision_only=vision_only, extended_thinking=extended_thinking)
+        _agent_cache[key] = _build_agent(
+            tools, vision_only=vision_only, extended_thinking=extended_thinking, task_type=task_type,
+        )
     return _agent_cache[key]
 
 
@@ -373,7 +495,7 @@ def _split_content_chunks(content):
 
 def ask_chat_stream(
     messages: list[dict], metadata: dict | None = None, tools_enabled: bool = True,
-    has_attachments: bool = False, extended_thinking: bool = False,
+    has_attachments: bool = False, extended_thinking: bool = False, task_type: str | None = None,
 ):
     """
     Streaming version of the chat turn, answered by the Gemini-primary /
@@ -398,9 +520,19 @@ def ask_chat_stream(
     `extended_thinking=True` is the "think harder" toggle (Chat-6) — deeper
     reasoning budget/level per Gemini leg, off by default. Baseline (visible)
     thinking is always on regardless of this flag; see model_provider._thinking_kwargs.
+
+    `task_type` (Chat-R4) selects a model-priority chain from model_priority.
+    get_model_priority_list() instead of the default fixed chain — None uses
+    the default chain unchanged. Forced to None whenever has_attachments=True
+    regardless of what's passed: the vision hard gate (Chat-5) is never
+    subject to task-based routing.
     """
     _preflight_check(messages)
-    agent = _get_agent(tools_enabled, vision_only=has_attachments, extended_thinking=extended_thinking)
+    effective_task_type = None if has_attachments else task_type
+    agent = _get_agent(
+        tools_enabled, vision_only=has_attachments, extended_thinking=extended_thinking,
+        task_type=effective_task_type,
+    )
 
     # LLMCallLogger is baked onto the agent itself, not passed here — see
     # _build_agent's comment for why a per-call callbacks= config breaks
@@ -410,7 +542,11 @@ def ask_chat_stream(
         config["metadata"] = metadata
 
     try:
-        yield from _stream_agent(agent, messages, config)
+        yield from _stream_agent(
+            agent, messages, config,
+            extended_thinking=extended_thinking, task_type=effective_task_type,
+            has_attachments=has_attachments,
+        )
     except Exception as exc:
         if has_attachments:
             raise VisionUnavailableError(
@@ -425,10 +561,85 @@ _THINKING_GAP_TEXT = (
     "billed), it just can't be shown."
 )
 
+# Chat-R5b — two more one-shot notes, same ls_model_name detection point as
+# _THINKING_GAP_TEXT above, opposite direction each: this one fires when the
+# leg ISN'T Gemini at all (extended_thinking has no config path on Groq,
+# see model_provider._build_pooled_leg's thinking branch — a pure no-op,
+# unlike the Gemini 3+ case above where reasoning genuinely runs and bills).
+_EXTENDED_THINKING_GAP_TEXT = (
+    "Extended reasoning was requested for this response, but the model that "
+    "answered has no native reasoning step — nothing ran."
+)
 
-def _stream_agent(agent, messages: list[dict], config: dict):
+# Fires when task_type=="coding" but the leg isn't Gemini 3+ (every
+# coding-capable leg exhausted, or landed on Gemini 2.5's write-only tier) —
+# CodeExecutionToolMiddleware only adds code_execution on Gemini 3+ legs (see
+# this module's Chat-7/Chat-R2 sections). Not an error — the model still
+# answered, it just couldn't run the code it wrote.
+_CODE_EXECUTION_GAP_TEXT = (
+    "Code execution wasn't available for this response — the model wrote "
+    "code but couldn't run it. The code below is unexecuted."
+)
+
+
+_TOOL_QUERY_ARG_KEYS = {
+    # tc["args"] key holding the actual query text, per chat_tools.py's real
+    # per-tool parameter name (web_search(query: str) vs deep_research(topic: str)
+    # — confirmed live, NOT the same key across tools, so this can't be hardcoded).
+    "web_search":    "query",
+    "deep_research": "topic",
+}
+
+
+def _stream_agent(
+    agent, messages: list[dict], config: dict, *,
+    extended_thinking: bool = False, task_type: str | None = None,
+    has_attachments: bool = False,
+):
     seen_tool_call_ids: set[str] = set()
     thinking_gap_sent = False
+    if has_attachments:
+        yield {"type": "status", "text": "Reading attachment…"}
+    elif task_type == "deep_research":
+        yield {"type": "status", "text": "Analyzing results…"}
+    extended_thinking_gap_sent = False
+    code_execution_gap_sent = False
+
+    # Chat-R10d — explicit ordering for blocks[] reconstruction downstream
+    # (chat_service.py folds thinking/tool_call/text runs using these).
+    # seq is a flat per-event counter across the whole turn (excludes the
+    # three one-shot gap-note events, which stay untouched/exempt). block_id
+    # groups contiguous same-kind chunks into one logical block, advancing
+    # on every kind change — a tool_start/tool_end pair for the SAME call
+    # shares one block_id (matched via tool_call_id), confirmed live to
+    # arrive as one complete chunk each (not token-streamed), so no
+    # cross-chunk args accumulation is needed on the Gemini leg this was
+    # verified against; Groq-fallback tool calls that stream args
+    # incrementally across multiple chunks would see an incomplete/empty
+    # query on this first-sight extraction — a soft degrade (query=None),
+    # not a crash, same tradeoff class as Chat-7's Groq code_execution gap.
+    _seq = 0
+    _block_id = -1
+    _last_kind: str | None = None
+    _tool_call_blocks: dict[str, int] = {}
+
+    def _emit(kind: str, event: dict, tool_call_id: str | None = None) -> dict:
+        nonlocal _seq, _block_id, _last_kind
+        _seq += 1
+        if tool_call_id is not None and tool_call_id in _tool_call_blocks:
+            bid = _tool_call_blocks[tool_call_id]
+        elif kind == _last_kind and kind != "tool_call":
+            bid = _block_id
+        else:
+            _block_id += 1
+            bid = _block_id
+            if tool_call_id is not None:
+                _tool_call_blocks[tool_call_id] = bid
+        _last_kind = kind
+        event["seq"] = _seq
+        event["block_id"] = bid
+        return event
+
     for msg_chunk, meta in agent.stream(
         {"messages": messages}, stream_mode="messages", config=config,
     ):
@@ -439,9 +650,22 @@ def _stream_agent(agent, messages: list[dict], config: dict):
         # limitation, not fixable here (see module docstring) — so tell the
         # user once, as early as possible, instead of a panel that just never
         # appears. Gemini 2.5 legs (thinking_budget) are unaffected.
-        if not thinking_gap_sent and _is_gemini_3_plus(meta.get("ls_model_name") or ""):
+        model_name = meta.get("ls_model_name") or ""
+        if not thinking_gap_sent and _is_gemini_3_plus(model_name):
             thinking_gap_sent = True
             yield {"type": "thinking_gap", "text": _THINKING_GAP_TEXT}
+        if (
+            extended_thinking and not extended_thinking_gap_sent
+            and model_name and not _is_gemini_leg(model_name)
+        ):
+            extended_thinking_gap_sent = True
+            yield {"type": "extended_thinking_gap", "text": _EXTENDED_THINKING_GAP_TEXT}
+        if (
+            task_type == "coding" and not code_execution_gap_sent
+            and model_name and not _is_gemini_3_plus(model_name)
+        ):
+            code_execution_gap_sent = True
+            yield {"type": "code_execution_gap", "text": _CODE_EXECUTION_GAP_TEXT}
 
         tool_call_chunks = getattr(msg_chunk, "tool_call_chunks", None)
         if tool_call_chunks:
@@ -450,18 +674,35 @@ def _stream_agent(agent, messages: list[dict], config: dict):
                 name  = tc.get("name")
                 if name and tc_id and tc_id not in seen_tool_call_ids:
                     seen_tool_call_ids.add(tc_id)
-                    yield {"type": "tool_start", "tool": name}
+                    query = None
+                    try:
+                        args = json.loads(tc.get("args") or "{}")
+                        query = args.get(_TOOL_QUERY_ARG_KEYS.get(name, ""))
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        pass
+                    status_text = {
+                        "web_search": "Searching…",
+                        "deep_research": "Analyzing results…",
+                    }.get(name, f"Running {name}…")
+                    yield _emit(
+                        "tool_call", {"type": "tool_start", "tool": name, "query": query, "status_text": status_text},
+                        tool_call_id=tc_id,
+                    )
 
         if type(msg_chunk).__name__ == "ToolMessage":
-            yield {
-                "type":    "tool_end",
-                "tool":    getattr(msg_chunk, "name", None),
-                "sources": getattr(msg_chunk, "artifact", None) or [],
-            }
+            yield _emit(
+                "tool_call", {
+                    "type":    "tool_end",
+                    "tool":    getattr(msg_chunk, "name", None),
+                    "sources": getattr(msg_chunk, "artifact", None) or [],
+                    "status_text": "Reviewing results…",
+                },
+                tool_call_id=getattr(msg_chunk, "tool_call_id", None),
+            )
             continue
 
         for kind, text, meta in _split_content_chunks(getattr(msg_chunk, "content", "")):
             event = {"type": kind, "text": text}
             if meta:
                 event.update(meta)
-            yield event
+            yield _emit(kind, event)

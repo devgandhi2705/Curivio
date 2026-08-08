@@ -54,10 +54,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai.errors import ClientError as GeminiClientError
+from groq import BadRequestError as GroqBadRequestError
 from groq import RateLimitError as GroqRateLimitError
+from langchain_core.runnables.retry import RunnableRetry
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from langchain_groq import ChatGroq
+from tenacity import retry_if_exception
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -78,11 +81,21 @@ def _gemini_keys() -> list[str]:
     return keys
 
 
+def _groq_keys() -> list[str]:
+    """GROQ_API_KEYS (comma-separated pool), falling back to single GROQ_API_KEY — same
+    shape as _gemini_keys(), backward-compatible with every existing GROQ_API_KEY-only .env."""
+    raw = os.getenv("GROQ_API_KEYS", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    if keys:
+        return keys
+    single = os.getenv("GROQ_API_KEY")
+    if single:
+        return [single]
+    raise RuntimeError("GROQ_API_KEYS or GROQ_API_KEY environment variable is not set")
+
+
 def _groq_key() -> str:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY environment variable is not set")
-    return api_key
+    return _groq_keys()[0]
 
 
 def upload_attachment(file_bytes: bytes, mime_type: str, filename: str) -> dict:
@@ -127,6 +140,14 @@ def upload_attachment(file_bytes: bytes, mime_type: str, filename: str) -> dict:
 def _is_gemini_3_plus(model_name: str) -> bool:
     """Gemini 3+ models use thinking_level; Gemini 2.5 uses thinking_budget (verified live, see chat_agent.py)."""
     return "gemini-3" in (model_name or "").lower().replace("models/", "")
+
+
+def _is_gemini_leg(model_name: str) -> bool:
+    """True for any Gemini leg (2.5 or 3+); False means Groq — the only other
+    provider in this pool. Same ls_model_name signal _is_gemini_3_plus reads
+    (Chat-R5b: extended_thinking has zero config on Groq regardless of
+    generation, see _build_pooled_leg's thinking branch below)."""
+    return "gemini" in (model_name or "").lower()
 
 
 def _thinking_kwargs(model_name: str, extended: bool) -> dict:
@@ -235,11 +256,63 @@ def extract_text(response) -> str:
     return pairs
 
 
+def _is_daily_quota_exhausted(exc: BaseException) -> bool:
+    """
+    Distinguishes a DAILY quota exhaustion (can't recover within any backoff
+    window — waiting before retrying/falling through is pure wasted latency)
+    from a genuine short-term RPM/TPM rate limit (worth waiting out).
+
+    Gemini: confirmed live (real 429s hit this session) that the error body's
+    QuotaFailure.violations[].quotaId names the exact window hit, e.g.
+    'GenerateRequestsPerDayPerProjectPerModel-FreeTier' for the daily
+    free-tier cap — "PerDay" is Google's own stable substring. A genuine
+    RPM/TPM limit would show "...PerMinute..." instead (not seen live this
+    session — every real 429 hit was the daily cap).
+
+    Groq: NOT live-verified this session (only ever hit BadRequestError, the
+    unrelated schema quirk — see _build_pooled_leg — never a real
+    RateLimitError). Best-effort per Groq's documented OpenAI-compatible
+    rate-limit message convention (names RPD/TPD for daily caps, RPM/TPM for
+    per-minute). Unmatched text keeps today's backoff behavior — a false
+    negative here just retries as before; it can never falsely skip backoff
+    on a still-recoverable case.
+    """
+    text = str(exc)
+    return "PerDay" in text or "RPD" in text or "TPD" in text or "per day" in text.lower()
+
+
+class _QuotaAwareRetry(RunnableRetry):
+    """
+    Same as RunnableRetry, but the retry predicate additionally excludes
+    confirmed daily-quota-exhaustion errors (_is_daily_quota_exhausted) — a
+    daily cap can't recover between attempts, let alone within a backoff
+    window, so retrying it at all (waiting or not) is pure waste; this skips
+    straight to _handle_failure/re-raise, no sleep, immediate fallthrough to
+    the next fallback leg. Genuine transient errors (RPM/TPM rate limits,
+    network hiccups) keep today's exponential-jitter backoff and full retry
+    budget, completely unchanged.
+    """
+
+    @property
+    def _kwargs_retrying(self) -> dict:
+        kwargs = super()._kwargs_retrying
+        retry_types = self.retry_exception_types
+
+        def _should_retry(exc: BaseException) -> bool:
+            return isinstance(exc, retry_types) and not _is_daily_quota_exhausted(exc)
+
+        kwargs["retry"] = retry_if_exception(_should_retry)
+        return kwargs
+
+
 def _with_retry(runnable, retry_exception_types: tuple):
-    return runnable.with_retry(
-        retry_if_exception_type=retry_exception_types,
+    return _QuotaAwareRetry(
+        bound=runnable,
+        kwargs={},
+        config={},
+        retry_exception_types=retry_exception_types,
         wait_exponential_jitter=True,
-        stop_after_attempt=_RETRY_ATTEMPTS,
+        max_attempt_number=_RETRY_ATTEMPTS,
     )
 
 
@@ -280,5 +353,148 @@ def get_structured_chat_model(schema, model: str | None = None, legs: str = "all
         for m, exc_types in _build_raw_models(model=model, legs=legs)
     ]
     primary, *fallbacks = legs_built
+    chain = primary.with_fallbacks(fallbacks) if fallbacks else primary
+    return chain.with_config(callbacks=[LLMCallLogger()])
+
+
+# ── Task-based model priority pool (Chat-R3/R4) ──────────────────────────────
+# R4 wires this live: chat_agent._build_agent() calls build_pooled_legs()
+# directly (bare legs, for its ModelFallbackMiddleware/ModelRetryMiddleware
+# construction) when a turn has a task_type; get_chat_model()/
+# get_structured_chat_model() above (and every existing caller: Feed's
+# writer/journey-planner/retrieval-planner services) are untouched — they
+# never pass through this section.
+#
+# Deliberately NOT sharing _build_raw_models()'s per-leg construction: that
+# function bakes in this file's one fixed chain ("last Gemini key uses the
+# fallback-tier model" special case) which stays exactly as-is for every
+# existing caller. _build_pooled_leg() below is a smaller, separate
+# leg-builder for an arbitrary (provider, model_name, key) triple — accepting
+# a little duplication of the kwargs dict over risking any change to the
+# proven chain above. streaming/thinking/extended_thinking kwargs mirror
+# _build_raw_models()'s signature so a task-routed leg behaves identically
+# (real per-token deltas, Gemini native thinking) to the default chain's legs.
+
+def _keys_for_provider(provider: str) -> list[str]:
+    if provider == "gemini":
+        return _gemini_keys()
+    if provider == "groq":
+        return _groq_keys()
+    raise ValueError(f"Unknown provider {provider!r}")
+
+
+def _build_pooled_leg(
+    provider: str, model_name: str, key: str, *,
+    streaming: bool = False, thinking: bool = False, extended_thinking: bool = False,
+) -> tuple:
+    """One (model_instance, retry_exception_types) leg for a single provider/model/key."""
+    if provider == "gemini":
+        gem_kwargs = dict(
+            model=model_name, api_key=key, temperature=_TEMPERATURE,
+            max_retries=0, streaming=streaming,
+        )
+        if thinking:
+            gem_kwargs.update(_thinking_kwargs(model_name, extended_thinking))
+        model = ChatGoogleGenerativeAI(**gem_kwargs)
+        return model, (ChatGoogleGenerativeAIError, GeminiClientError)
+    if provider == "groq":
+        model = ChatGroq(
+            model=model_name, api_key=key, temperature=_TEMPERATURE,
+            max_retries=0, streaming=streaming,
+        )
+        # groq.BadRequestError: confirmed live (Chat-R4 recon) that small/fast
+        # Groq models occasionally stringify a boolean in a structured-output
+        # tool call ("false" not false) — Groq's own server-side schema
+        # validator 400s before the response reaches LangChain at all (~50% of
+        # routing-classifier calls on llama-3.1-8b-instant in the recon
+        # sample). Retrying the SAME leg gives the model another generation
+        # attempt instead of paying for a fallback leg that (also confirmed
+        # live) classifies less reliably for this task.
+        return model, (GroqRateLimitError, GroqBadRequestError)
+    raise ValueError(f"Unknown provider {provider!r}")
+
+
+def build_pooled_legs(
+    model_priority_list: list[tuple[str, str]], *,
+    streaming: bool = False, thinking: bool = False, extended_thinking: bool = False,
+) -> list[tuple]:
+    """
+    Flatten a (provider, model_name) priority list (see model_priority.
+    get_model_priority_list()) into fallback legs, keys-within-model before
+    model-drop: every key in a model's pool becomes its own leg, in pool
+    order, before the next model in the list contributes any legs. Each leg
+    still gets its own retry budget via _with_retry() — a model is only
+    "dropped" once every one of its keys has exhausted retries.
+    """
+    legs = []
+    for provider, model_name in model_priority_list:
+        for key in _keys_for_provider(provider):
+            legs.append(_build_pooled_leg(
+                provider, model_name, key,
+                streaming=streaming, thinking=thinking, extended_thinking=extended_thinking,
+            ))
+    return legs
+
+
+def get_chat_model_for_task(task_type: str):
+    """
+    Build the model-priority chain for task_type (see model_priority.
+    get_model_priority_list()), rotating every key of a model before falling
+    to the next model. Same _with_retry()/.with_fallbacks()/LLMCallLogger
+    composition as get_chat_model() — admin panel logging and call-tree
+    grouping work identically, no new logging code needed.
+    """
+    from .model_priority import get_model_priority_list
+
+    legs = build_pooled_legs(get_model_priority_list(task_type))
+    built = [_with_retry(m, exc_types) for m, exc_types in legs]
+    primary, *fallbacks = built
+    chain = primary.with_fallbacks(fallbacks) if fallbacks else primary
+    return chain.with_config(callbacks=[LLMCallLogger()])
+
+
+_GROQ_BAD_REQUEST_RETRY_ATTEMPTS = 2  # confirmed live (Chat-R4 verify), see below
+
+
+def get_structured_chat_model_for_task(schema, task_type: str, *, streaming: bool = False):
+    """
+    Same as get_chat_model_for_task() but each leg bound to a typed schema —
+    mirrors get_structured_chat_model()'s pattern. Used by chat_router.py's
+    classifier.
+
+    Groq legs get a SHORTER, separate retry budget for GroqBadRequestError
+    than for GroqRateLimitError, with NO exponential backoff: confirmed live
+    (real timestamp gaps, not just latency_ms sums) that the stringified-
+    boolean schema quirk (see _build_pooled_leg) is often systematic per
+    message, not transient, AND that with_retry()'s default
+    wait_exponential_jitter=True inserts a real ~2-3s sleep before each retry
+    — irrelevant for a generation quirk (no server-side reason to wait) and
+    the dominant cost, not the extra attempt itself. Real session data: the
+    original 3-attempt/backoff-on version cost ~7s wall-clock in the worst
+    case (attempts summed to ~700ms, backoff gaps ~5s) before still falling
+    through to Gemini; 1 retry with backoff still cost ~3.6-4s; 1 retry with
+    NO backoff (this version) keeps the ~600-900ms win for transient cases
+    and caps the worst case at roughly attempt+attempt+gemini-leg, no
+    multi-second sleep in between. GroqRateLimitError (real quota exhaustion)
+    keeps the standard _RETRY_ATTEMPTS budget WITH backoff — genuinely
+    transient and worth waiting out.
+    """
+    from .model_priority import get_model_priority_list
+
+    legs = build_pooled_legs(get_model_priority_list(task_type), streaming=streaming)
+    built = []
+    for m, exc_types in legs:
+        structured = m.with_structured_output(schema)
+        if GroqBadRequestError in exc_types:
+            structured = structured.with_retry(
+                retry_if_exception_type=(GroqBadRequestError,),
+                wait_exponential_jitter=False,
+                stop_after_attempt=_GROQ_BAD_REQUEST_RETRY_ATTEMPTS,
+            )
+            exc_types = tuple(t for t in exc_types if t is not GroqBadRequestError)
+        if exc_types:
+            structured = _with_retry(structured, exc_types)
+        built.append(structured)
+    primary, *fallbacks = built
     chain = primary.with_fallbacks(fallbacks) if fallbacks else primary
     return chain.with_config(callbacks=[LLMCallLogger()])

@@ -26,7 +26,7 @@ DIFFICULTY_LEVELS = ["beginner", "intermediate", "advanced"]
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def update_preference_score(topic: str, feedback: str) -> dict:
+def update_preference_score(topic: str, feedback: str, user_id: str) -> dict:
     """
     Apply a feedback signal to a topic and return the updated scoring state.
 
@@ -42,11 +42,11 @@ def update_preference_score(topic: str, feedback: str) -> dict:
 
     Returns scoring-relevant fields only (not a full preference row).
     """
-    row = record_feedback(topic, feedback)
+    row = record_feedback(topic, feedback, user_id)
     return _score_fields(row)
 
 
-def get_top_user_interests(limit: int = 5) -> list[dict]:
+def get_top_user_interests(limit: int = 5, user_id: str | None = None) -> list[dict]:
     """
     Return the highest-scoring topics to prioritise in the next feed.
 
@@ -58,8 +58,12 @@ def get_top_user_interests(limit: int = 5) -> list[dict]:
 
     Each entry contains: topic, preference_score, difficulty_preference,
                          times_recommended.
+
+    Chat-R7a: user_id is optional (default None = unscoped, Feed's existing
+    behavior, unchanged) — chat's context-building path passes a real
+    user_id; no other caller is modified by this fix.
     """
-    rows = list_preferences(order_by="preference_score", limit=100)
+    rows = list_preferences(order_by="preference_score", limit=100, user_id=user_id)
 
     filtered = [
         _interest_fields(r)
@@ -70,12 +74,12 @@ def get_top_user_interests(limit: int = 5) -> list[dict]:
     return filtered[:limit]
 
 
-def get_suppressed_topics(limit: int = 10) -> list[str]:
+def get_suppressed_topics(limit: int = 10, user_id: str | None = None) -> list[str]:
     """
     Return topic names the user has negatively rated (score <= SUPPRESS_THRESHOLD).
     Used to tell the AI what to avoid recommending.
     """
-    rows = list_preferences(order_by="preference_score", limit=100)
+    rows = list_preferences(order_by="preference_score", limit=100, user_id=user_id)
     return [
         r["topic"]
         for r in rows
@@ -83,12 +87,12 @@ def get_suppressed_topics(limit: int = 10) -> list[str]:
     ][:limit]
 
 
-def get_overall_difficulty_preference() -> str:
+def get_overall_difficulty_preference(user_id: str | None = None) -> str:
     """
     Return the user's general preferred difficulty inferred from all liked topics.
     Falls back to 'intermediate' when no history exists yet.
     """
-    all_rows = list_preferences(order_by="preference_score", limit=100)
+    all_rows = list_preferences(order_by="preference_score", limit=100, user_id=user_id)
     liked_diffs = [
         r["difficulty_preference"]
         for r in all_rows
@@ -102,7 +106,7 @@ def get_overall_difficulty_preference() -> str:
     return max(counts, key=lambda d: counts[d])
 
 
-def get_learning_stage() -> str:
+def get_learning_stage(user_id: str | None = None) -> str:
     """
     Infer how far the user has progressed based on distinct positively-rated topics.
 
@@ -113,7 +117,7 @@ def get_learning_stage() -> str:
 
     Used by the prompt to set the 4-topic difficulty distribution.
     """
-    rows = list_preferences(order_by="preference_score", limit=100)
+    rows = list_preferences(order_by="preference_score", limit=100, user_id=user_id)
     liked_count = sum(1 for r in rows if r["preference_score"] > 0)
 
     if liked_count <= 3:

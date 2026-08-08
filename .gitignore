@@ -72,9 +72,11 @@ frontend/.vite/
 *.pid.lock
 .eslintcache
 .stylelintcache
+tools/
 
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
 .claude/
 # Added by graphify
 graphify-out/
+.playwright-mcp/

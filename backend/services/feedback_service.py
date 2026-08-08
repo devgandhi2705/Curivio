@@ -9,7 +9,7 @@ FEEDBACK_LABELS = {
 }
 
 
-def process_feedback(topic: str, feedback: str) -> dict:
+def process_feedback(topic: str, feedback: str, user_id: str) -> dict:
     """
     Apply a feedback signal to a topic and return the updated preference state.
 
@@ -18,7 +18,7 @@ def process_feedback(topic: str, feedback: str) -> dict:
         preference_score, difficulty_preference,
         times_liked, times_disliked, times_recommended, last_updated
     """
-    updated = record_feedback(topic, feedback)
+    updated = record_feedback(topic, feedback, user_id)
 
     return {
         "topic":                updated["topic"],

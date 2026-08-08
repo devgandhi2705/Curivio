@@ -5,6 +5,7 @@ import { getToken } from "../api/auth.js"
 import { articleKeyFromTitle } from "../api/feed.js"
 import InsightCard from "../components/feed/InsightCard.jsx"
 import ChatMessage from "../components/chat/ChatMessage.jsx"
+import FilesPanel, { FilesIcon } from "../components/chat/FilesPanel.jsx"
 import LoadingState from "../components/LoadingState.jsx"
 import LearningCalendar from "../components/feed/LearningCalendar.jsx"
 import {
@@ -159,6 +160,7 @@ function ChatShare({ token, messages }) {
   const navigate = useNavigate()
   const [forking, setForking] = useState(false)
   const [forkError, setForkError] = useState(false)
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false)
   const errorTimerRef = useRef(null)
 
   useEffect(() => () => clearTimeout(errorTimerRef.current), [])
@@ -187,9 +189,25 @@ function ChatShare({ token, messages }) {
         <Wordmark />
       </div>
 
+      {/* Files panel toggle — same fixed top-right convention as ChatWorkspace's
+          desktop icon; this page has no mobile overflow menu to fall back to,
+          so it's always visible here rather than hidden md:block. */}
+      {messages.length > 0 && (
+        <div className="fixed top-3.5 right-3.5 z-50">
+          <button
+            onClick={() => setFilesPanelOpen(true)}
+            title="Files"
+            aria-label="Files"
+            className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
+          >
+            <FilesIcon />
+          </button>
+        </div>
+      )}
+
       <div className="space-y-4">
         {messages.map((msg, i) => (
-          <ChatMessage key={i} message={msg} msgIndex={i} />
+          <ChatMessage key={i} message={msg} msgIndex={i} shareToken={token} />
         ))}
       </div>
 
@@ -205,6 +223,10 @@ function ChatShare({ token, messages }) {
           <p className="mt-2 text-xs text-red-400">Something went wrong. Try again.</p>
         )}
       </div>
+
+      {filesPanelOpen && (
+        <FilesPanel messages={messages} shareToken={token} onClose={() => setFilesPanelOpen(false)} />
+      )}
     </div>
   )
 }

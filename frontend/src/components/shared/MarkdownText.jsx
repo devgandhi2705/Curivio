@@ -1,3 +1,36 @@
+import { useState } from "react"
+
+// Copy icon component
+function CopyIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z" />
+      <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z" />
+    </svg>
+  )
+}
+
+// Code block copy button
+function CodeBlockCopyButton({ code }) {
+  const [copied, setCopied] = useState(false)
+  function handleCopy() {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy code"
+      className="flex items-center gap-1 px-2 py-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors text-xs"
+    >
+      <CopyIcon />
+      {copied && <span className="text-[10px]">Copied!</span>}
+    </button>
+  )
+}
+
 // Inline parser: bold (**text**), links ([text](url)), inline code (`text`)
 export function renderInline(text) {
   const parts = []
@@ -48,8 +81,18 @@ export function renderInline(text) {
 }
 
 // Line-by-line markdown renderer
-export default function MarkdownText({ text }) {
+export default function MarkdownText({ text, variant = "default", className = "" }) {
   const lines = text.split("\n")
+  const isThinking = variant === "thinking"
+  const headingClass = isThinking
+    ? "text-slate-400 text-[13px] sm:text-[14px] leading-[1.6] sm:leading-[1.7]"
+    : "text-[16px] sm:text-[18px] font-bold text-slate-50 mt-6 sm:mt-8 mb-2.5 sm:mb-3 first:mt-0 leading-tight tracking-tight"
+  const subheadingClass = isThinking
+    ? "font-medium text-slate-400 text-[13px] sm:text-[14px] leading-[1.6] sm:leading-[1.7]"
+    : "font-semibold text-slate-100 text-[14px] sm:text-[15px] mt-5 sm:mt-6 mb-2 sm:mb-2.5 first:mt-0 leading-snug"
+  const paragraphClass = isThinking
+    ? "text-slate-400 text-[13px] sm:text-[14px] leading-[1.6] sm:leading-[1.7]"
+    : "text-slate-300 leading-[1.72] sm:leading-[1.78] text-[14px] sm:text-[15px]"
   const elements = []
   let i = 0
 
@@ -58,7 +101,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("### ")) {
       elements.push(
-        <h3 key={i} className="text-[11px] sm:text-[11.5px] font-semibold text-slate-400 mt-5 sm:mt-6 mb-1.5 sm:mb-2 first:mt-0 uppercase tracking-widest">
+        <h3 key={i} className={isThinking ? "text-slate-400 text-[13px] sm:text-[14px] leading-[1.6] sm:leading-[1.7] mt-3 sm:mt-4 mb-1 first:mt-0" : "text-[11px] sm:text-[11.5px] font-semibold text-slate-400 mt-5 sm:mt-6 mb-1.5 sm:mb-2 first:mt-0 uppercase tracking-widest"}>
           {renderInline(line.slice(4))}
         </h3>
       )
@@ -68,7 +111,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("## ")) {
       elements.push(
-        <h2 key={i} className="text-[14.5px] sm:text-[15.5px] font-semibold text-slate-100 mt-5 sm:mt-7 mb-2 sm:mb-2.5 first:mt-0 leading-snug tracking-tight">
+        <h2 key={i} className={isThinking ? "text-slate-400 text-[13px] sm:text-[14px] leading-[1.6] sm:leading-[1.7] mt-3 sm:mt-4 mb-1 first:mt-0" : "text-[14.5px] sm:text-[15.5px] font-semibold text-slate-100 mt-5 sm:mt-7 mb-2 sm:mb-2.5 first:mt-0 leading-snug tracking-tight"}>
           {renderInline(line.slice(3))}
         </h2>
       )
@@ -78,7 +121,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("# ")) {
       elements.push(
-        <h1 key={i} className="text-[16px] sm:text-[18px] font-bold text-slate-50 mt-6 sm:mt-8 mb-2.5 sm:mb-3 first:mt-0 leading-tight tracking-tight">
+        <h1 key={i} className={headingClass}>
           {renderInline(line.slice(2))}
         </h1>
       )
@@ -94,13 +137,17 @@ export default function MarkdownText({ text }) {
         codeLines.push(lines[i])
         i++
       }
+      const codeContent = codeLines.join("\n")
       elements.push(
-        <pre key={i} className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-x-scroll-touch my-4">
-          <div className="px-4 pt-3 pb-3">
-            {lang && <div className="text-slate-500 text-[10.5px] mb-2.5 font-medium uppercase tracking-widest">{lang}</div>}
-            <code className="text-[13px] font-mono text-slate-200 leading-[1.68] block whitespace-pre">{codeLines.join("\n")}</code>
+        <div key={i} className="bg-slate-900 border border-slate-700/60 rounded-xl overflow-hidden my-4">
+          <div className="flex items-center justify-between px-4 pt-3">
+            {lang && <div className="text-slate-500 text-[10.5px] font-medium uppercase tracking-widest">{lang}</div>}
+            <CodeBlockCopyButton code={codeContent} />
           </div>
-        </pre>
+          <pre className="px-4 pb-3 pt-1 overflow-x-scroll-touch">
+            <code className="text-[13px] font-mono text-slate-200 leading-[1.68] block whitespace-pre">{codeContent}</code>
+          </pre>
+        </div>
       )
       i++
       continue
@@ -108,7 +155,7 @@ export default function MarkdownText({ text }) {
 
     if (line.startsWith("**") && line.endsWith("**") && !line.slice(2, -2).includes("**")) {
       elements.push(
-        <p key={i} className="font-semibold text-slate-100 text-[14px] sm:text-[15px] mt-5 sm:mt-6 mb-2 sm:mb-2.5 first:mt-0 leading-snug">
+        <p key={i} className={subheadingClass}>
           {line.slice(2, -2)}
         </p>
       )
@@ -194,18 +241,18 @@ export default function MarkdownText({ text }) {
     }
 
     if (!line.trim()) {
-      elements.push(<div key={i} className="h-2.5 sm:h-4" />)
+      if (!isThinking) elements.push(<div key={i} className="h-1 sm:h-1.5" />)
       i++
       continue
     }
 
     elements.push(
-      <p key={i} className="text-slate-300 leading-[1.72] sm:leading-[1.78] text-[14px] sm:text-[15px]">
+      <p key={i} className={paragraphClass}>
         {renderInline(line)}
       </p>
     )
     i++
   }
 
-  return <div className="reading-text prose-wrap space-y-1.5">{elements}</div>
+  return <div className={`reading-text prose-wrap ${className || "space-y-1.5"}`}>{elements}</div>
 }

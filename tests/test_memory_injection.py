@@ -33,7 +33,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.database.schema import ALL_TABLES
+from backend.database.schema import ALL_TABLES, MIGRATIONS
 from backend.services.memory_injection_service import (
     build_conversation_memory,
     build_exploration_breadth,
@@ -59,6 +59,18 @@ def mem_db(monkeypatch):
     conn.execute("PRAGMA journal_mode=WAL")
     for stmt in ALL_TABLES:
         conn.execute(stmt)
+    # Chat-R7a: user_preferences/research_sessions only gain their user_id
+    # column via MIGRATIONS (matches real init_db()'s behavior — same
+    # pattern every other user_id-scoped table in this codebase already uses).
+    for migration in MIGRATIONS:
+        try:
+            if isinstance(migration, (list, tuple)):
+                for stmt in migration:
+                    conn.execute(stmt)
+            else:
+                conn.execute(migration)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
 
     @contextmanager
@@ -89,21 +101,24 @@ def _insert_chat(conn, session_id, role, content, topic_hint=None, ts="2025-01-0
     conn.commit()
 
 
-def _insert_session(conn, topic, activity, ts="2025-01-01 10:00:00"):
+_TEST_USER = "test-user-1"
+
+
+def _insert_session(conn, topic, activity, ts="2025-01-01 10:00:00", user_id=_TEST_USER):
     conn.execute(
-        "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at) "
-        "VALUES (?, ?, ?, ?)",
-        (topic, topic.lower().strip(), activity, ts),
+        "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at, user_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (topic, topic.lower().strip(), activity, ts, user_id),
     )
     conn.commit()
 
 
-def _insert_pref(conn, topic, score, liked=0, disliked=0, difficulty=None):
+def _insert_pref(conn, topic, score, liked=0, disliked=0, difficulty=None, user_id=_TEST_USER):
     conn.execute(
         """INSERT OR REPLACE INTO user_preferences
-           (topic, preference_score, times_liked, times_disliked, difficulty_preference)
-           VALUES (?, ?, ?, ?, ?)""",
-        (topic, score, liked, disliked, difficulty),
+           (topic, user_id, preference_score, times_liked, times_disliked, difficulty_preference)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (topic, user_id, score, liked, disliked, difficulty),
     )
     conn.commit()
 
@@ -196,14 +211,21 @@ class TestBuildConversationMemory:
 class TestBuildExplorationBreadth:
 
     def test_empty_db_returns_zeros(self, mem_db):
-        result = build_exploration_breadth()
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert result["total_explored"] == 0
         assert result["all_topics"] == []
         assert result["recently_explored"] == []
 
-    def test_single_topic_appears(self, mem_db):
+    def test_missing_user_id_returns_zeros_even_with_data(self, mem_db):
+        # Chat-R7a: no user_id must never fall back to global/other-user data.
         _insert_session(mem_db, "RAG Pipelines", "deep_research")
         result = build_exploration_breadth()
+        assert result["total_explored"] == 0
+        assert result["all_topics"] == []
+
+    def test_single_topic_appears(self, mem_db):
+        _insert_session(mem_db, "RAG Pipelines", "deep_research")
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert "RAG Pipelines" in result["all_topics"]
         assert result["total_explored"] == 1
 
@@ -211,7 +233,7 @@ class TestBuildExplorationBreadth:
         _insert_session(mem_db, "RAG Pipelines", "deep_research",  "2025-01-03 10:00:00")
         _insert_session(mem_db, "LoRA",           "topic_expansion","2025-01-02 10:00:00")
         _insert_session(mem_db, "Diffusion",      "learning_path",  "2025-01-01 10:00:00")
-        result = build_exploration_breadth()
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert result["total_explored"] == 3
         assert len(result["all_topics"]) == 3
 
@@ -219,27 +241,33 @@ class TestBuildExplorationBreadth:
         topics = ["T1", "T2", "T3", "T4", "T5", "T6"]
         for i, t in enumerate(topics):
             _insert_session(mem_db, t, "deep_research", f"2025-01-0{i+1} 10:00:00")
-        result = build_exploration_breadth()
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert len(result["recently_explored"]) == 5
         assert result["recently_explored"][0] == "T6"
 
     def test_deep_dived_topics_filtered(self, mem_db):
         _insert_session(mem_db, "RAG", "deep_research",  "2025-01-02")
         _insert_session(mem_db, "LoRA", "topic_expansion","2025-01-01")
-        result = build_exploration_breadth()
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert "RAG" in result["deep_dived_topics"]
         assert "LoRA" not in result["deep_dived_topics"]
 
     def test_limit_respected(self, mem_db):
         for i in range(10):
             _insert_session(mem_db, f"Topic{i}", "deep_research", f"2025-01-1{i} 10:00:00")
-        result = build_exploration_breadth(limit=5)
+        result = build_exploration_breadth(limit=5, user_id=_TEST_USER)
         assert len(result["all_topics"]) <= 5
+
+    def test_other_user_activity_not_visible(self, mem_db):
+        _insert_session(mem_db, "Other User Topic", "deep_research", user_id="other-user")
+        result = build_exploration_breadth(user_id=_TEST_USER)
+        assert result["total_explored"] == 0
+        assert "Other User Topic" not in result["all_topics"]
 
     def test_graceful_on_db_error(self, monkeypatch):
         import backend.utils.db as _db
         monkeypatch.setattr(_db, "get_connection", MagicMock(side_effect=RuntimeError))
-        result = build_exploration_breadth()
+        result = build_exploration_breadth(user_id=_TEST_USER)
         assert result["total_explored"] == 0
 
 
@@ -250,61 +278,72 @@ class TestBuildExplorationBreadth:
 class TestBuildPreferenceSnapshot:
 
     def test_empty_db_returns_empty_lists(self, mem_db):
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["liked_topics"] == []
         assert result["disliked_topics"] == []
         assert result["engagement_level"] == "new"
 
+    def test_missing_user_id_returns_empty_even_with_data(self, mem_db):
+        # Chat-R7a: no user_id must never fall back to global/other-user data.
+        _insert_pref(mem_db, "RAG", 1.5, liked=3)
+        result = build_preference_snapshot()
+        assert result["liked_topics"] == []
+
     def test_liked_topics_extracted(self, mem_db):
         _insert_pref(mem_db, "RAG",  1.5, liked=3)
         _insert_pref(mem_db, "LoRA", 0.5, liked=1)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert "RAG"  in result["liked_topics"]
         assert "LoRA" in result["liked_topics"]
 
     def test_disliked_topics_extracted(self, mem_db):
         _insert_pref(mem_db, "Boring Topic", -0.5, disliked=2)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert "Boring Topic" in result["disliked_topics"]
 
     def test_neutral_topics_not_in_disliked(self, mem_db):
         _insert_pref(mem_db, "Neutral", 0.0)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert "Neutral" not in result["disliked_topics"]
 
     def test_liked_capped_at_eight(self, mem_db):
         for i in range(12):
             _insert_pref(mem_db, f"Topic{i}", float(i), liked=i)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert len(result["liked_topics"]) <= 8
 
     def test_difficulty_preference_from_most_common(self, mem_db):
         _insert_pref(mem_db, "T1", 1.0, difficulty="intermediate")
         _insert_pref(mem_db, "T2", 0.5, difficulty="intermediate")
         _insert_pref(mem_db, "T3", 0.2, difficulty="beginner")
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["difficulty_preference"] == "intermediate"
 
     def test_engagement_level_high(self, mem_db):
         _insert_pref(mem_db, "T1", 1.0, liked=8, disliked=1)
         _insert_pref(mem_db, "T2", 0.5, liked=5, disliked=0)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["engagement_level"] == "high"
 
     def test_engagement_level_low(self, mem_db):
         _insert_pref(mem_db, "T1", -0.8, liked=1, disliked=10)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["engagement_level"] == "low"
 
     def test_engagement_level_new_with_no_signals(self, mem_db):
         _insert_pref(mem_db, "T1", 0.0, liked=0, disliked=0)
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["engagement_level"] == "new"
+
+    def test_other_user_preferences_not_visible(self, mem_db):
+        _insert_pref(mem_db, "Other User Topic", 2.0, liked=5, user_id="other-user")
+        result = build_preference_snapshot(user_id=_TEST_USER)
+        assert result["liked_topics"] == []
 
     def test_graceful_on_db_error(self, monkeypatch):
         import backend.utils.db as _db
         monkeypatch.setattr(_db, "get_connection", MagicMock(side_effect=RuntimeError))
-        result = build_preference_snapshot()
+        result = build_preference_snapshot(user_id=_TEST_USER)
         assert result["liked_topics"] == []
 
 
@@ -342,7 +381,7 @@ class TestInjectMemory:
 
     def test_inject_memory_passes_topic_hint_to_base(self):
         captured = {}
-        def mock_base(topic):
+        def mock_base(topic, user_id=None):
             captured["topic"] = topic
             return self._mock_base()
 
@@ -489,9 +528,11 @@ class TestExplorationBreadthPrompt:
         assert "connect" in section.lower() or "studied" in section.lower()
 
     def test_full_prompt_includes_breadth_section(self):
-        # exploration_breadth only renders in structured modes — "normal" (the
-        # default) is deliberately minimal, see build_system_prompt's docstring.
+        # Chat-R7b: structured rendering now gates on a genuine Feed link
+        # (context["feed_linked"]), not mode — exploration_breadth only
+        # renders in the structured prompt, so feed_linked must be set here.
         context = {
+            "feed_linked": True,
             "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
                              "top_interests": [], "suppressed_topics": []},
             "research": {"topic": None}, "session": {"topic": None},
@@ -564,9 +605,11 @@ class TestPreferenceSnapshotPrompt:
         assert "focused" in section.lower() or "practical" in section.lower()
 
     def test_full_prompt_includes_pref_section(self):
-        # preference_snapshot only renders in structured modes — "normal" (the
-        # default) is deliberately minimal, see build_system_prompt's docstring.
+        # Chat-R7b: structured rendering now gates on a genuine Feed link
+        # (context["feed_linked"]), not mode — preference_snapshot only
+        # renders in the structured prompt, so feed_linked must be set here.
         context = {
+            "feed_linked": True,
             "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
                              "top_interests": [], "suppressed_topics": []},
             "research": {"topic": None}, "session": {"topic": None},

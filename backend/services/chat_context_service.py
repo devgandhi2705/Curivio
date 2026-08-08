@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_user_profile_context() -> dict:
+def build_user_profile_context(user_id: str | None = None) -> dict:
     """
     Return a snapshot of what the agent knows about the user's learning profile.
 
@@ -34,6 +34,10 @@ def build_user_profile_context() -> dict:
       "top_interests":          list[str],      # up to 5 topic names
       "suppressed_topics":      list[str],
     }
+
+    Chat-R7a: user_id scopes every signal to this user only — None returns an
+    empty/neutral profile rather than falling back to global data (no other
+    caller of this function exists repo-wide, confirmed).
     """
     from .recommendation_service import (
         get_top_user_interests,
@@ -42,17 +46,25 @@ def build_user_profile_context() -> dict:
         get_learning_stage,
     )
 
+    if not user_id:
+        return {
+            "learning_stage":        "beginner",
+            "difficulty_preference": None,
+            "top_interests":         [],
+            "suppressed_topics":     [],
+        }
+
     try:
-        top_interests    = [t["topic"] for t in get_top_user_interests(limit=5)]
+        top_interests    = [t["topic"] for t in get_top_user_interests(limit=5, user_id=user_id)]
         # get_suppressed_topics() already returns list[str] (topic names extracted
         # internally) — unlike get_top_user_interests()'s list[dict]. Re-indexing
         # with ["topic"] here raised on every turn with any suppressed topic
         # (TypeError: string indices must be integers), which the except below
         # silently caught and collapsed the WHOLE profile to defaults — including
         # top_interests, which does reach the system prompt.
-        suppressed       = get_suppressed_topics()
-        difficulty_pref  = get_overall_difficulty_preference()
-        stage            = get_learning_stage()
+        suppressed       = get_suppressed_topics(user_id=user_id)
+        difficulty_pref  = get_overall_difficulty_preference(user_id=user_id)
+        stage            = get_learning_stage(user_id=user_id)
     except Exception:
         logger.exception("build_user_profile_context failed; returning empty profile")
         top_interests   = []
@@ -172,7 +184,7 @@ def build_session_context(topic: str | None) -> dict:
         }
 
 
-def build_full_context(topic: str | None) -> dict:
+def build_full_context(topic: str | None, user_id: str | None = None) -> dict:
     """
     Combine user profile + research + session context into one dict.
 
@@ -181,9 +193,14 @@ def build_full_context(topic: str | None) -> dict:
       "research":        {...},
       "session":         {...},
     }
+
+    Chat-R7a: user_id scopes user_profile only (the personal-signal leak).
+    research/session stay topic-keyed and unscoped by design — a shared
+    "has this topic been researched" cache, same category as deep_research/
+    learning_paths content, not the personalization leak this fix targets.
     """
     return {
-        "user_profile": build_user_profile_context(),
+        "user_profile": build_user_profile_context(user_id),
         "research":     build_research_context(topic),
         "session":      build_session_context(topic),
     }

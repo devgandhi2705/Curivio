@@ -473,11 +473,12 @@ class TestContinuityPromptSection:
 
 class TestContinuityInSystemPrompt:
     def test_section_appears_in_prompt(self):
-        # continuity only renders in structured modes — "normal" (the
-        # default) is deliberately minimal, see build_system_prompt's docstring.
+        # Chat-R7b: continuity renders in the structured prompt, which now
+        # gates on a genuine Feed link (context["feed_linked"]), not mode.
         from backend.services.chat_prompt_service import build_system_prompt
         ctx = {
             **_base_ctx(),
+            "feed_linked": True,
             "continuity": {
                 "topic": "Vector Databases",
                 "explained_concepts": ["Embeddings", "HNSW"],

@@ -109,9 +109,9 @@ def build_conversation_memory(session_id: str, limit: int = 20) -> dict:
     }
 
 
-def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT) -> dict:
+def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT, user_id: str | None = None) -> dict:
     """
-    Return all topics the user has explored in this app, most-recent first.
+    Return topics *user_id* has explored in this app, most-recent first.
 
     Return shape
     ------------
@@ -121,6 +121,11 @@ def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT) -> dict:
       "recently_explored": list[str],              # last 5
       "deep_dived_topics": list[str],              # topics with deep_research
     }
+
+    Chat-R7a: user_id is required (no default fallback to global data) —
+    confirmed live as the exact source of the cross-user leak (a brand-new
+    user_id previously got back another user's total_explored count). Missing
+    user_id returns the empty shape, never someone else's activity.
     """
     empty = {
         "total_explored":    0,
@@ -128,6 +133,8 @@ def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT) -> dict:
         "recently_explored": [],
         "deep_dived_topics": [],
     }
+    if not user_id:
+        return empty
 
     try:
         from ..utils.db import get_connection
@@ -138,15 +145,17 @@ def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT) -> dict:
                          MAX(recorded_at)                AS last_activity_at,
                          GROUP_CONCAT(DISTINCT activity) AS activities_done
                 FROM     research_sessions
+                WHERE    user_id = ?
                 GROUP BY topic_key
                 ORDER BY last_activity_at DESC
                 LIMIT    ?
                 """,
-                (limit,),
+                (user_id, limit),
             ).fetchall()
 
             total_row = conn.execute(
-                "SELECT COUNT(DISTINCT topic_key) AS n FROM research_sessions"
+                "SELECT COUNT(DISTINCT topic_key) AS n FROM research_sessions WHERE user_id = ?",
+                (user_id,),
             ).fetchone()
     except Exception:
         logger.exception("build_exploration_breadth DB error")
@@ -171,9 +180,9 @@ def build_exploration_breadth(limit: int = _BREADTH_TOPIC_LIMIT) -> dict:
     }
 
 
-def build_preference_snapshot() -> dict:
+def build_preference_snapshot(user_id: str | None = None) -> dict:
     """
-    Return liked / disliked topics and overall difficulty signals.
+    Return liked / disliked topics and overall difficulty signals for user_id.
 
     Return shape
     ------------
@@ -183,6 +192,10 @@ def build_preference_snapshot() -> dict:
       "difficulty_preference": str | None,
       "engagement_level": str,        # "high" | "moderate" | "low" | "new"
     }
+
+    Chat-R7a: user_id is required — no default fallback to global data.
+    Missing user_id returns the empty/neutral shape, never someone else's
+    preferences.
     """
     empty = {
         "liked_topics":          [],
@@ -190,6 +203,8 @@ def build_preference_snapshot() -> dict:
         "difficulty_preference": None,
         "engagement_level":      "new",
     }
+    if not user_id:
+        return empty
 
     try:
         from ..utils.db import get_connection
@@ -199,9 +214,11 @@ def build_preference_snapshot() -> dict:
                 SELECT topic, preference_score, times_liked, times_disliked,
                        difficulty_preference
                 FROM   user_preferences
+                WHERE  user_id = ?
                 ORDER  BY preference_score DESC
                 LIMIT  40
                 """,
+                (user_id,),
             ).fetchall()
     except Exception:
         logger.exception("build_preference_snapshot DB error")
@@ -238,7 +255,7 @@ def build_preference_snapshot() -> dict:
     }
 
 
-def inject_memory(session_id: str, topic_hint: str | None = None) -> dict:
+def inject_memory(session_id: str, topic_hint: str | None = None, user_id: str | None = None) -> dict:
     """
     Build a memory-injected context dict for one chat turn.
 
@@ -249,7 +266,13 @@ def inject_memory(session_id: str, topic_hint: str | None = None) -> dict:
       pref snapshot    — liked/disliked topics and difficulty
       learner profile  — inferred level + explanation-style directive
 
-    This is the primary entry-point used by chat_service.chat().
+    This is the primary entry-point used by chat_service.chat_stream().
+
+    Chat-R7a: user_id scopes user_profile/exploration_breadth/
+    preference_snapshot/learner_profile — the four functions confirmed live
+    to leak cross-user data with no scope at all. Missing user_id (no other
+    real caller exists repo-wide — confirmed) returns the empty/neutral shape
+    from each, never silently falling back to global data.
 
     Return shape
     ------------
@@ -268,11 +291,11 @@ def inject_memory(session_id: str, topic_hint: str | None = None) -> dict:
     from .continuity_service import get_continuity_context
     from .conversation_state_service import get_state as get_knowledge_state
 
-    base       = build_full_context(topic_hint)
+    base       = build_full_context(topic_hint, user_id=user_id)
     conv       = build_conversation_memory(session_id)
-    breadth    = build_exploration_breadth()
-    prefs      = build_preference_snapshot()
-    learner    = build_learner_profile(session_id)
+    breadth    = build_exploration_breadth(user_id=user_id)
+    prefs      = build_preference_snapshot(user_id=user_id)
+    learner    = build_learner_profile(session_id, user_id=user_id)
     continuity = get_continuity_context(topic_hint, session_id) if topic_hint else {}
     knowledge  = get_knowledge_state(session_id)
 

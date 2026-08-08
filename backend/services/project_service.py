@@ -129,6 +129,23 @@ def get_project(project_id: str) -> dict | None:
     return _project_row(row) if row else None
 
 
+def get_project_owner(project_id: str) -> str | None:
+    """
+    Return the recorded user_id for project_id, or None if the project
+    doesn't exist OR exists but predates per-project ownership tracking
+    (Chat-R10e: 6 of 8 real rows have a NULL user_id — legacy/pre-auth
+    projects). Same semantics as chat_title_service.get_session_owner —
+    does not swallow DB errors, an authorization check must fail closed.
+    """
+    from ..utils.db import get_connection
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM learning_projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+    return row["user_id"] if row else None
+
+
 def update_project(project_id: str, **fields) -> dict | None:
     allowed = {"name", "description", "keywords", "difficulty", "color", "daily_core_article_count"}
     updates = {k: v for k, v in fields.items() if k in allowed}

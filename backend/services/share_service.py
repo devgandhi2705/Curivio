@@ -5,11 +5,13 @@ Public API
 ----------
 create_share_link(type_, resource_id, created_by, scheme, netloc) -> dict
 resolve_share_link(token) -> dict | None
+resolve_chat_session_id(token) -> str | None   Chat-R15a — token -> session_id, chat links only.
 fork_chat(token, new_owner_id) -> str | None
 """
 
 from __future__ import annotations
 
+import json
 import secrets
 import uuid
 
@@ -60,10 +62,21 @@ def resolve_share_link(token: str) -> dict | None:
         session_id = row["resource_id"]
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC",
+                "SELECT role, content, created_at, attachments FROM chat_messages "
+                "WHERE session_id = ? ORDER BY id ASC",
                 (session_id,),
             ).fetchall()
-        messages = [{"role": r["role"], "content": r["content"], "created_at": r["created_at"]} for r in rows]
+        messages = [
+            {
+                "role": r["role"],
+                "content": r["content"],
+                "created_at": r["created_at"],
+                # Chat-R15a: same convention as chat_service.get_history —
+                # raw stored list or None, no filtering/expiry check here.
+                "attachments": json.loads(r["attachments"]) if r["attachments"] else None,
+            }
+            for r in rows
+        ]
         return {"type": "chat", "messages": messages, "resource_id": session_id}
 
     if row["type"] == "dashboard":
@@ -86,6 +99,20 @@ def resolve_share_link(token: str) -> dict | None:
     if not package or package.get("project_id") != project_id:
         return None
     return {"type": "feed", "package": package, "resource_id": resource_id}
+
+
+def resolve_chat_session_id(token: str) -> str | None:
+    """token -> session_id for chat share links only; None if token is
+    invalid or points to a non-chat resource. Same lookup fork_chat below
+    already does — Chat-R15a's share-scoped attachment endpoint reuses this
+    rather than re-deriving session_id its own way."""
+    from ..utils.db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT resource_id FROM share_links WHERE id = ? AND type = 'chat'", (token,)
+        ).fetchone()
+    return row["resource_id"] if row else None
 
 
 def fork_chat(token: str, new_owner_id: str) -> str | None:

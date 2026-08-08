@@ -114,7 +114,7 @@ class TestChatContextService:
             patch("backend.services.recommendation_service.get_overall_difficulty_preference", return_value="intermediate"),
             patch("backend.services.recommendation_service.get_learning_stage", return_value="intermediate"),
         ):
-            result = build_user_profile_context()
+            result = build_user_profile_context(user_id="test-user")
         assert result["learning_stage"] == "intermediate"
         assert result["top_interests"] == ["RAG Pipelines"]
         assert result["suppressed_topics"] == []
@@ -132,7 +132,7 @@ class TestChatContextService:
             patch("backend.services.recommendation_service.get_overall_difficulty_preference", return_value=None),
             patch("backend.services.recommendation_service.get_learning_stage", return_value="beginner"),
         ):
-            result = build_user_profile_context()
+            result = build_user_profile_context(user_id="test-user")
         assert result["suppressed_topics"] == ["Crypto Trading"]
         assert result["top_interests"] == ["RAG Pipelines"]  # profile must not collapse to defaults
 
@@ -279,10 +279,11 @@ class TestChatPromptService:
         assert "RAG Pipelines" in prompt
 
     def test_build_system_prompt_includes_research_summary(self):
-        # research/session dumps only render in structured modes (web_search/
-        # deep_research/...) — "normal" (the default) is deliberately minimal,
-        # see build_system_prompt's docstring.
+        # Chat-R7b: research/session dumps render in the structured prompt,
+        # which now gates on a genuine Feed link (context["feed_linked"]),
+        # not mode.
         ctx = self._empty_context()
+        ctx["feed_linked"] = True
         ctx["research"]["topic"] = "RAG Pipelines"
         ctx["research"]["has_deep_research"] = True
         ctx["research"]["deep_research"] = {"summary": "RAG is about retrieval augmented generation"}
@@ -291,6 +292,7 @@ class TestChatPromptService:
 
     def test_build_system_prompt_includes_session_memory(self):
         ctx = self._empty_context()
+        ctx["feed_linked"] = True
         ctx["session"] = {
             "topic": "LoRA",
             "times_explored": 2,
@@ -436,6 +438,47 @@ class TestChatServiceEdgeCases:
         assert isinstance(row_id, int)
         assert row_id > 0
 
+    def test_save_message_persists_thinking(self, mem_db):
+        _save_message("s1", "assistant", "answer", None, "2025-01-01 10:00:00", thinking="reasoning trace")
+        result = get_history("s1")
+        assert result[0]["thinking"] == "reasoning trace"
+
+    def test_get_history_thinking_defaults_none(self, mem_db):
+        _insert_message(mem_db, "s1", "user", "hello")
+        result = get_history("s1")
+        assert result[0]["thinking"] is None
+
+    def test_load_history_messages_excludes_thinking(self, mem_db):
+        # Reasoning scratch must never be re-injected as LLM context — only
+        # role/content (or media parts) belong in the OpenAI-format payload.
+        _save_message("s1", "assistant", "answer", None, "2025-01-01 10:00:00", thinking="reasoning trace")
+        msgs = _load_history_messages("s1", limit=10)
+        assert all("thinking" not in m for m in msgs)
+
+    def test_save_message_persists_blocks(self, mem_db):
+        blocks = [
+            {"type": "thinking", "text": "pre-tool reasoning"},
+            {"type": "tool_call", "tool": "web_search", "query": "today's headline", "sources": [{"title": "a", "url": "b"}]},
+            {"type": "thinking", "text": "post-tool reasoning"},
+            {"type": "text", "text": "final answer"},
+        ]
+        _save_message("s1", "assistant", "final answer", None, "2025-01-01 10:00:00", blocks=blocks)
+        result = get_history("s1")
+        assert result[0]["blocks"] == blocks
+
+    def test_get_history_blocks_defaults_none(self, mem_db):
+        _insert_message(mem_db, "s1", "user", "hello")
+        result = get_history("s1")
+        assert result[0]["blocks"] is None
+
+    def test_load_history_messages_excludes_blocks(self, mem_db):
+        # Same exclusion as thinking (Chat-R10d): blocks[] is a persistence/
+        # display structure, never re-injected as LLM context.
+        blocks = [{"type": "text", "text": "answer"}]
+        _save_message("s1", "assistant", "answer", None, "2025-01-01 10:00:00", blocks=blocks)
+        msgs = _load_history_messages("s1", limit=10)
+        assert all("blocks" not in m for m in msgs)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. TopicHintDetection
@@ -501,26 +544,94 @@ class TestChatEndpoints:
             app.dependency_overrides.pop(get_current_user, None)
 
     def test_get_chat_history_returns_200(self, client):
-        with patch("backend.main.get_chat_history", return_value=[
-            {"id": 1, "session_id": "s1", "role": "user", "content": "hi", "topic_hint": None, "created_at": "2025-01-01"}
-        ]):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value=None), \
+             patch("backend.main.get_chat_history", return_value=[
+                {"id": 1, "session_id": "s1", "role": "user", "content": "hi", "topic_hint": None, "created_at": "2025-01-01"}
+             ]):
             resp = client.get("/chat/history/s1")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
     def test_get_chat_history_empty(self, client):
-        with patch("backend.main.get_chat_history", return_value=[]):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value=None), \
+             patch("backend.main.get_chat_history", return_value=[]):
             resp = client.get("/chat/history/no-session")
         assert resp.status_code == 200
         assert resp.json() == []
 
     def test_delete_chat_history_returns_200(self, client):
-        with patch("backend.main.clear_chat_history", return_value=4):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value=None), \
+             patch("backend.main.clear_chat_history", return_value=4):
             resp = client.delete("/chat/history/s1")
         assert resp.status_code == 200
         body = resp.json()
         assert body["deleted_count"] == 4
         assert body["session_id"] == "s1"
+
+    # ── Chat-R10d: session ownership gate ──────────────────────────────────
+    # Every session-scoped endpoint routes through _require_session_access.
+    # "test-user" is this fixture's authenticated identity (see client()
+    # above); "someone-else" simulates a different real owner.
+
+    def test_get_chat_history_blocks_other_owner_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.main.get_chat_history") as mock_history:
+            resp = client.get("/chat/history/s1")
+        assert resp.status_code == 404
+        mock_history.assert_not_called()
+
+    def test_get_chat_history_allows_real_owner(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.main.get_chat_history", return_value=[]):
+            resp = client.get("/chat/history/s1")
+        assert resp.status_code == 200
+
+    def test_get_chat_history_allows_null_owner_legacy(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value=None), \
+             patch("backend.main.get_chat_history", return_value=[]):
+            resp = client.get("/chat/history/s1")
+        assert resp.status_code == 200
+
+    def test_delete_chat_history_blocks_other_owner_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.main.clear_chat_history") as mock_clear:
+            resp = client.delete("/chat/history/s1")
+        assert resp.status_code == 404
+        mock_clear.assert_not_called()
+
+    def test_rename_session_blocks_other_owner_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.services.chat_title_service.rename_session") as mock_rename:
+            resp = client.put("/chat/sessions/s1/title", json={"title": "New title"})
+        assert resp.status_code == 404
+        mock_rename.assert_not_called()
+
+    def test_delete_session_blocks_other_owner_404(self, client):
+        # delete_session_endpoint does `from .utils.db import get_connection`
+        # at call time — the source module is the real patch target (see
+        # feedback_patch_targets memory: deferred imports patch at source,
+        # not the calling module).
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.utils.db.get_connection") as mock_gc:
+            resp = client.delete("/chat/sessions/s1")
+        assert resp.status_code == 404
+        mock_gc.assert_not_called()
+
+    def test_delete_last_turn_blocks_other_owner_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.utils.db.get_connection") as mock_gc:
+            resp = client.delete("/chat/sessions/s1/last_turn")
+        assert resp.status_code == 404
+        mock_gc.assert_not_called()
+
+    def test_chat_stream_blocks_other_owner_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.services.chat_title_service.ensure_session_owner") as mock_ensure, \
+             patch("backend.main.chat_stream_generator") as mock_gen:
+            resp = client.post("/chat/stream", json={"session_id": "s1", "message": "hi"})
+        assert resp.status_code == 404
+        mock_ensure.assert_not_called()
+        mock_gen.assert_not_called()
 
     def test_get_sessions_returns_200(self, client):
         with patch("backend.main.list_chat_sessions", return_value=[

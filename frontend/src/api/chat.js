@@ -31,10 +31,14 @@ async function del(path) {
 }
 
 /**
- * Upload an image/PDF to Gemini's Files API (via our backend) and get back a
- * URI reference — upload once, then attach that reference to sendMessageStream.
- * Never re-uploads the bytes on later turns; the backend persists only this
- * metadata against the message, not the file itself.
+ * Upload an attachment and get back a URI reference — upload once, then
+ * attach that reference to sendMessageStream. Never re-uploads the bytes on
+ * later turns; the backend persists only this metadata against the message,
+ * not the file itself.
+ *
+ * Images go to Gemini's Files API. Documents (pdf/docx/csv/text/code,
+ * Chat-R6a) are text-extracted server-side instead — the uri comes back as
+ * "doc://<id>", never a Gemini file reference.
  */
 export async function uploadAttachment(file) {
   if (USE_MOCK) {
@@ -58,7 +62,17 @@ export async function uploadAttachment(file) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || `Upload failed: ${res.status}`)
   }
-  return res.json()
+  // Chat-R19c: response is now NDJSON ({"t":"stage",...} progress lines,
+  // then a final {"t":"done",...}/{"t":"error",...}) — only the last line
+  // carries the real outcome. Stage lines are ignored here; R19c-frontend
+  // will consume them for a progress UI.
+  const text = await res.text()
+  const lines = text.trim().split("\n")
+  const { t, ...last } = JSON.parse(lines[lines.length - 1])
+  if (t === "error") {
+    throw new Error(last.message || "Upload failed")
+  }
+  return last
 }
 
 // Per-session AbortControllers — auto-cancel previous stream when a new one starts
@@ -79,20 +93,27 @@ export function cancelStream(sessionId) {
  * @param {string}   sessionId
  * @param {string}   message
  * @param {object}   callbacks
- * @param {function} callbacks.onChunk       - called with each text string
- * @param {function} callbacks.onThinking    - called with each Gemini reasoning string (Chat-6)
+ * @param {function} callbacks.onChunk       - called with (text, seq, blockId) for each text delta (Chat-R10d ordering)
+ * @param {function} callbacks.onThinking    - called with (text, seq, blockId) for each reasoning delta (Chat-6; ordering Chat-R10d)
  * @param {function} callbacks.onThinkingGap - called once with an honest note when reasoning ran
  *                                              but can't stream on this turn's model (Chat-6 followup)
+ * @param {function} callbacks.onExtendedThinkingGap - called once when extended_thinking was
+ *                                              requested but the leg answering has no reasoning
+ *                                              step at all — nothing ran (Chat-R5b)
+ * @param {function} callbacks.onCodeExecutionGap - called once when task_type=="coding" but the
+ *                                              leg answering can't run code_execution (Chat-R5b)
  * @param {function} callbacks.onCode        - called with (source, language) when Gemini executes code (Chat-7)
  * @param {function} callbacks.onCodeOutput  - called with (output, success) for that code's result (Chat-7)
  * @param {function} callbacks.onDone        - called with the final metadata object
  * @param {function} callbacks.onError       - called with an error string
- * @param {function} callbacks.onStatus      - called with status update strings
+ * @param {function} callbacks.onStatus      - called with (text, seq, blockId, tool, query, sources) for status
+ *                                              updates; tool/query/sources are only set on the two tool-derived
+ *                                              lines (tool_start has query, tool_end has sources — Chat-R10e)
  * @param {function} callbacks.onTitle       - called with the auto-generated session title
  * @param {boolean}  extendedThinking        - "think harder" toggle (Chat-6), off by default
  * @returns {function} abort
  */
-export function sendMessageStream(sessionId, message, { onChunk, onThinking, onThinkingGap, onCode, onCodeOutput, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null, attachments = null, extendedThinking = false) {
+export function sendMessageStream(sessionId, message, { onChunk, onThinking, onThinkingGap, onExtendedThinkingGap, onCodeExecutionGap, onCode, onCodeOutput, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null, attachments = null, extendedThinking = false) {
   if (USE_MOCK) {
     ;(async () => {
       const mock = selectMockResponse(message, sessionId)
@@ -186,13 +207,20 @@ export function sendMessageStream(sessionId, message, { onChunk, onThinking, onT
           if (!line.trim()) continue
           try {
             const obj = JSON.parse(line)
-            if      (obj.t === "chunk")        onChunk(obj.v)
-            else if (obj.t === "thinking")     onThinking?.(obj.v)
+            if      (obj.t === "chunk")        onChunk(obj.v, obj.seq, obj.block_id)
+            else if (obj.t === "thinking")     onThinking?.(obj.v, obj.seq, obj.block_id)
             else if (obj.t === "thinking_gap") onThinkingGap?.(obj.v)
+            else if (obj.t === "extended_thinking_gap") onExtendedThinkingGap?.(obj.v)
+            else if (obj.t === "code_execution_gap")    onCodeExecutionGap?.(obj.v)
             else if (obj.t === "code")         onCode?.(obj.v, obj.language)
             else if (obj.t === "code_output")  onCodeOutput?.(obj.v, obj.success)
             else if (obj.t === "title")        onTitle?.(obj.v)
-            else if (obj.t === "status")    onStatus?.(obj.v)
+            // Chat-R10e: tool/query (tool_start) or tool/sources (tool_end) are
+            // present only on the two tool-derived status lines — see
+            // chat_service.chat_stream's docstring. Plain status pings (the
+            // initial "Generating response…", the stall-timer's "Still working
+            // on it…") carry none of this, so `tool` stays undefined for those.
+            else if (obj.t === "status")    onStatus?.(obj.v, obj.seq, obj.block_id, obj.tool, obj.query, obj.sources)
             else if (obj.t === "heartbeat") { /* keepalive — no-op */ }
             else if (obj.t === "done")      onDone(obj)
             else if (obj.t === "error")     onError(obj.message || "Stream error")
@@ -227,12 +255,90 @@ export function sendMessageStream(sessionId, message, { onChunk, onThinking, onT
   }
 }
 
+/**
+ * Full extracted text for a document attachment (Chat-R10 preview/download).
+ * Permanent — no expiry, unlike the original file (see ChatAttachment on the
+ * backend, and fetchAttachmentBlob below for the original bytes).
+ *
+ * Chat-R15b: pass shareToken when previewing inside a share view (no JWT
+ * exists there) — skips getAuthHeaders() entirely and hits the share-scoped
+ * endpoint instead, mirroring share.js's { auth } flag pattern.
+ */
+export async function fetchDocumentText(attachmentId, shareToken = null) {
+  if (USE_MOCK) {
+    await mockDelay(200)
+    return { text: "Mock document text." }
+  }
+  if (shareToken) {
+    const res = await fetch(
+      `${API_URL}/share/${encodeURIComponent(shareToken)}/attachment/document/${encodeURIComponent(attachmentId)}`,
+    )
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `Request failed: ${res.status}`)
+    }
+    return res.json()
+  }
+  return get(`/chat/attachment/document/${encodeURIComponent(attachmentId)}`)
+}
+
+/**
+ * Chat-R14b: real original bytes for any R2-backed attachment, as a same-
+ * origin blob: URL — usable directly as an <img>/<iframe> src, or with
+ * downloadUrl() for a real (non-renamed) download. One helper for all three
+ * types since GET /chat/attachment/file/{id}/{filename} needs auth via
+ * getAuthHeaders() (Bearer token, not cookies) — a bare <iframe src=...>/
+ * <img src=...> pointed straight at the endpoint can't attach that header,
+ * so every native embed/download must go through this fetch-then-blob path
+ * instead (same proven shape as fetchDocumentText above).
+ *
+ * Picks the right id per type: images use their R2 dual-write id
+ * (r2_attachment_id, Chat-R14a — never Gemini's own uri, which isn't R2-
+ * reachable at all); documents/"other" files use the id embedded in uri
+ * (doc://<id> or file://<id>).
+ *
+ * Chat-R15b: pass shareToken when previewing inside a share view (no JWT
+ * exists there) — skips getAuthHeaders() entirely and hits R15a's share-
+ * scoped endpoint instead, mirroring share.js's { auth } flag pattern.
+ */
+export async function fetchAttachmentBlob(attachment, shareToken = null) {
+  if (USE_MOCK) {
+    await mockDelay(200)
+    return attachment.previewUrl ?? `mock://attachment-blob/${attachment.filename}`
+  }
+  const isImage = attachment.mime_type?.startsWith("image/")
+  const id = isImage ? attachment.r2_attachment_id : attachment.uri.replace(/^(doc|file):\/\//, "")
+  const path = shareToken
+    ? `/share/${encodeURIComponent(shareToken)}/attachment/${encodeURIComponent(id)}/${encodeURIComponent(attachment.filename)}`
+    : `/chat/attachment/file/${encodeURIComponent(id)}/${encodeURIComponent(attachment.filename)}`
+  const res = await fetch(`${API_URL}${path}`, { headers: { ...(shareToken ? {} : getAuthHeaders()) } })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Request failed: ${res.status}`)
+  }
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 export async function fetchHistory(sessionId, limit = 50) {
   if (USE_MOCK) {
     await mockDelay(200)
     return []
   }
   return get(`/chat/history/${encodeURIComponent(sessionId)}?limit=${limit}`)
+}
+
+/**
+ * Chat-R16 files panel: every attachment across the whole session, unbounded
+ * — deliberately not fetchHistory, which caps at 50 messages (ChatWorkspace's
+ * in-memory state) and would pull full content/thinking/blocks for nothing.
+ */
+export async function fetchSessionAttachments(sessionId) {
+  if (USE_MOCK) {
+    await mockDelay(200)
+    return []
+  }
+  return get(`/chat/attachments/${encodeURIComponent(sessionId)}`)
 }
 
 export async function fetchSessions(limit = 20) {

@@ -117,6 +117,19 @@ def delete_collection(collection_id: str) -> bool:
     return cur.rowcount > 0
 
 
+def get_collection_owner(collection_id: str) -> str | None:
+    """
+    Return the recorded user_id for collection_id, or None if the collection
+    doesn't exist OR predates per-collection ownership tracking (Chat-R10e:
+    3 of 5 real rows have a NULL user_id). Fails closed — DB errors propagate.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM bookmark_collections WHERE collection_id=?", (collection_id,)
+        ).fetchone()
+    return row["user_id"] if row else None
+
+
 # ── Bookmarks ─────────────────────────────────────────────────────────────────
 
 def list_bookmarks(
@@ -257,3 +270,21 @@ def delete_bookmark(bookmark_id: str) -> bool:
     with get_connection() as conn:
         cur = conn.execute("DELETE FROM bookmarks WHERE bookmark_id=?", (bookmark_id,))
     return cur.rowcount > 0
+
+
+def get_bookmark_owner(bookmark_id: str) -> str | None:
+    """
+    Return the user_id that owns bookmark_id's collection, or None if the
+    bookmark doesn't exist OR its collection is legacy/unclaimed (NULL
+    user_id — bookmarks have no owner column of their own, ownership is
+    always derived through bookmark_collections). Fails closed.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT bc.user_id
+               FROM bookmarks b
+               JOIN bookmark_collections bc ON bc.collection_id = b.collection_id
+               WHERE b.bookmark_id = ?""",
+            (bookmark_id,),
+        ).fetchone()
+    return row["user_id"] if row else None

@@ -13,7 +13,7 @@ Tracked activities
 
 Public API
 ----------
-record_activity(topic, activity) -> int
+record_activity(topic, activity, user_id) -> int
     Append one activity event for *topic* and return the new row ID.
 
 get_topic_memory(topic) -> dict | None
@@ -45,10 +45,17 @@ ACTIVITY_TYPES: frozenset[str] = frozenset(
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def record_activity(topic: str, activity: str) -> int:
+def record_activity(topic: str, activity: str, user_id: str) -> int:
     """
     Append an activity event for *topic* and return the new row ID.
-    Raises ValueError for an empty topic or unknown activity type.
+    Raises ValueError for an empty topic, unknown activity type, or missing user_id.
+
+    Chat-R7a: user_id is required and stored on the row — this is the write
+    side of build_exploration_breadth's personal-signal query (COUNT DISTINCT
+    topic_key WHERE user_id=?). Topic-keyed lookups elsewhere in this module
+    (get_topic_memory, is_activity_recorded, get_research_context) stay
+    unscoped by design — a shared "has this topic been researched" cache,
+    not the personalization leak this fix targets.
     """
     topic = (topic or "").strip()
     if not topic:
@@ -57,15 +64,17 @@ def record_activity(topic: str, activity: str) -> int:
         raise ValueError(
             f"unknown activity {activity!r}; must be one of {sorted(ACTIVITY_TYPES)}"
         )
+    if not user_id:
+        raise ValueError("user_id must not be empty")
 
     topic_key = _topic_key(topic)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at) "
-            "VALUES (?, ?, ?, ?)",
-            (topic, topic_key, activity, now),
+            "INSERT INTO research_sessions (topic, topic_key, activity, recorded_at, user_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (topic, topic_key, activity, now, user_id),
         )
         return cur.lastrowid
 

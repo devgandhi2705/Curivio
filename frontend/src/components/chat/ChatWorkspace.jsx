@@ -9,6 +9,7 @@ import ChatMessage from "./ChatMessage.jsx"
 import ChatInput from "./ChatInput.jsx"
 import { SessionListContent } from "./SessionList.jsx"
 import ShareButton from "../ShareButton.jsx"
+import FilesPanel, { FilesIcon } from "./FilesPanel.jsx"
 
 function RenameModal({ heading, initialValue, onConfirm, onClose }) {
   const [value, setValue] = useState(initialValue)
@@ -56,6 +57,8 @@ function apiMessageToLocal(msg) {
     recommendations: null,
     contextUsed: null,
     attachments: msg.attachments ?? null, // no previewUrl — history has no bytes, see ChatMessage's expiry chip
+    thinking: msg.thinking ?? null,
+    blocks: msg.blocks ?? null, // Chat-R10e: ordered thinking/tool_call/text segments; null for pre-R10d rows
   }
 }
 
@@ -184,9 +187,14 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       id:              streamId,
       role:            "assistant",
       content:         "",
+      statusMsg:       "",
       thinking:        "",
       thinkingGap:     null,
+      extendedThinkingGap: null,
+      codeExecutionGap:    null,
+      searchStatus:    null,
       codeBlocks:      [],
+      blocks:          [],
       streaming:       true,
       action:          null,
       recommendations: null,
@@ -201,27 +209,66 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     let accumulated = ""
     let thinkingAccumulated = ""
     let thinkingGapText = null
+    let extendedThinkingGapText = null
+    let codeExecutionGapText = null
     let codeBlocksAccumulated = []
+    let toolStatusText = null
+    let sawFirstStatus = false // chat_service always yields a generic "Generating response…" ping first (chat_service.py:295), then real tool_start labels — skip only that first one
+
+    // Chat-R10e: live ordered blocks[], built from R10d's seq/block_id-tagged
+    // events as they stream — mirrors chat_service.py's own _block_entry fold
+    // (same block_id = same contiguous run; a tool_start/tool_end pair for
+    // one call shares a block_id). Kept alongside thinkingAccumulated/
+    // codeBlocksAccumulated above, not replacing them, for backward compat
+    // this phase. Events with no block_id (the two non-tool status pings)
+    // are skipped — nothing to fold them into.
+    let blocksAccumulated = []
+    const blockIndexById = new Map()
+    function upsertBlock(blockId, factory, mutate) {
+      if (blockId == null) return
+      let idx = blockIndexById.get(blockId)
+      if (idx === undefined) {
+        idx = blocksAccumulated.length
+        blockIndexById.set(blockId, idx)
+        blocksAccumulated = [...blocksAccumulated, mutate(factory())]
+      } else {
+        blocksAccumulated = blocksAccumulated.map((b, i) => i === idx ? mutate(b) : b)
+      }
+    }
 
     streamAbortRef.current = sendMessageStream(sessionId, text, {
-      onChunk(chunk) {
+      onChunk(chunk, seq, blockId) {
         accumulated += chunk
+        upsertBlock(blockId, () => ({ type: "text", text: "" }), b => ({ ...b, text: b.text + chunk }))
         setStatusMsg(null)
         setMessages(prev =>
-          prev.map(m => m.id === streamId ? { ...m, content: accumulated } : m)
+          prev.map(m => m.id === streamId ? { ...m, content: accumulated, blocks: blocksAccumulated } : m)
         )
       },
-      onThinking(chunk) {
+      onThinking(chunk, seq, blockId) {
         thinkingAccumulated += chunk
+        upsertBlock(blockId, () => ({ type: "thinking", text: "" }), b => ({ ...b, text: b.text + chunk }))
         setStatusMsg(null)
         setMessages(prev =>
-          prev.map(m => m.id === streamId ? { ...m, thinking: thinkingAccumulated } : m)
+          prev.map(m => m.id === streamId ? { ...m, thinking: thinkingAccumulated, blocks: blocksAccumulated } : m)
         )
       },
       onThinkingGap(text) {
         thinkingGapText = text
         setMessages(prev =>
           prev.map(m => m.id === streamId ? { ...m, thinkingGap: text } : m)
+        )
+      },
+      onExtendedThinkingGap(text) {
+        extendedThinkingGapText = text
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, extendedThinkingGap: text } : m)
+        )
+      },
+      onCodeExecutionGap(text) {
+        codeExecutionGapText = text
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, codeExecutionGap: text } : m)
         )
       },
       onCode(source, language) {
@@ -255,9 +302,41 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
           return [{ session_id: sessionId, title, message_count: 0, last_active_at: new Date().toISOString() }, ...prev]
         })
       },
-      onStatus(msg) {
+      onStatus(msg, seq, blockId, tool, query, sources) {
         setStatusMsg(msg)
         setStatusHistory(prev => [...prev, msg])
+        setMessages(prev =>
+          prev.map(m => m.id === streamId ? { ...m, statusMsg: msg } : m)
+        )
+        // Real tool signal (e.g. "Searching the web…") — persist onto the message
+        // itself so it survives past the first content chunk, unlike statusMsg
+        // above which TypingIndicator clears on first token.
+        if (sawFirstStatus) {
+          toolStatusText = msg
+          setMessages(prev =>
+            prev.map(m => m.id === streamId ? { ...m, searchStatus: msg } : m)
+          )
+        }
+        sawFirstStatus = true
+        // Chat-R10e: tool is only set on the two tool-derived status lines
+        // (tool_start carries query, tool_end carries sources — same block_id,
+        // see chat_service.chat_stream's docstring) — the plain status pings
+        // have no tool and are skipped here, same as upsertBlock(null, ...).
+        if (tool) {
+          upsertBlock(
+            blockId,
+            () => ({ type: "tool_call", tool, query: query ?? null, sources: [] }),
+            b => ({
+              ...b,
+              tool,
+              query:   query   !== undefined ? query   : b.query,
+              sources: sources !== undefined ? sources : b.sources,
+            }),
+          )
+          setMessages(prev =>
+            prev.map(m => m.id === streamId ? { ...m, blocks: blocksAccumulated } : m)
+          )
+        }
       },
       onDone(meta) {
         setStatusMsg(null)
@@ -278,9 +357,14 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
                   id:                  `asst-${meta.message_id ?? Date.now()}`,
                   role:                "assistant",
                   content:             accumulated,
+                  statusMsg:           "",
                   thinking:            thinkingAccumulated || null,
                   thinkingGap:         thinkingGapText,
+                  extendedThinkingGap: extendedThinkingGapText,
+                  codeExecutionGap:    codeExecutionGapText,
+                  searchStatus:        toolStatusText,
                   codeBlocks:          codeBlocksAccumulated.length ? codeBlocksAccumulated : null,
+                  blocks:              blocksAccumulated.length ? blocksAccumulated : null,
                   streaming:           false,
                   action:              meta.action          ?? null,
                   recommendations:     meta.recommendations ?? null,
@@ -415,10 +499,26 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     handleSend(newText, userMsg?.attachments || [])
   }, [handleSend, messages])
 
+  // sendMessageStream's abort() short-circuits before onDone/onError fire
+  // (AbortError is swallowed on purpose there), so the streaming placeholder
+  // never gets finalized on its own — do it here, keeping whatever partial
+  // content already streamed in instead of discarding it.
+  const handleStop = useCallback(() => {
+    streamAbortRef.current?.()
+    streamAbortRef.current = null
+    setStatusMsg(null)
+    setStatusHistory([])
+    setIsLoading(false)
+    setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m))
+  }, [])
+
   // Context menu — rename modal state
   const [showRenameModal,   setShowRenameModal]   = useState(false)
   const [renameDraft,       setRenameDraft]       = useState('')
   const [renamingSessionId, setRenamingSessionId] = useState(null)
+
+  // Chat-R16 files panel
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false)
 
   // Register contextual ⋮ actions for the chat view
   const { setViewActions, clearViewActions } = useContextMenu()
@@ -434,6 +534,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         },
       },
       { label: 'New chat', onClick: handleNewChat },
+      { label: 'Files', onClick: () => setFilesPanelOpen(true) },
       {
         label: 'Copy share link',
         onClick: async () => {
@@ -487,11 +588,24 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         />
       )}
 
-      {/* Share current thread — desktop only; mobile users get "Copy share link" in the overflow menu */}
+      {/* Files panel toggle + share current thread — desktop only; mobile users get
+          "Files" / "Copy share link" in the overflow menu */}
       {messages.length > 0 && (
-        <div className="hidden md:block fixed top-3.5 right-3.5 z-50">
+        <div className="hidden md:flex items-center gap-1.5 fixed top-3.5 right-3.5 z-50">
+          <button
+            onClick={() => setFilesPanelOpen(true)}
+            title="Files"
+            aria-label="Files"
+            className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
+          >
+            <FilesIcon />
+          </button>
           <ShareButton type="chat" resourceId={sessionId} shareTitle="Check out this conversation on Curivio" />
         </div>
+      )}
+
+      {filesPanelOpen && (
+        <FilesPanel sessionId={sessionId} onClose={() => setFilesPanelOpen(false)} />
       )}
 
       {/* Feed context header */}
@@ -522,15 +636,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
             )
           })}
 
-          {isLoading && (
-            <TypingIndicator
-              statusMsg={statusMsg}
-              statusHistory={statusHistory}
-              chatMode={chatMode}
-              isLayman={conversationMode === "layman" || chatMode === "layman"}
-            />
-          )}
-
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-950/40 border border-red-900/50 rounded-xl text-red-300 text-sm">
               <span className="flex-shrink-0">⚠</span>
@@ -547,6 +652,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         <div className="max-w-4xl mx-auto">
           <ChatInput
             onSend={handleSend}
+            onStop={handleStop}
             disabled={isLoading}
             chatMode={conversationMode === "layman" ? "layman" : chatMode}
             onModeChange={(mode) => {
@@ -623,97 +729,6 @@ function FeedContextHeader({ ctx, onDismiss }) {
   )
 }
 
-function CheckIcon() {
-  return (
-    <svg className="w-3 h-3 text-violet-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 6l3 3 5-5" />
-    </svg>
-  )
-}
-
-function SpinRing() {
-  return (
-    <span className="w-3 h-3 flex-shrink-0">
-      <svg className="w-3 h-3 animate-spin text-violet-400" viewBox="0 0 24 24" fill="none">
-        <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-        <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-    </span>
-  )
-}
-
-function DeepResearchProgress({ steps, currentStep }) {
-  return (
-    <div className="flex flex-col gap-1.5 px-4 py-3 bg-slate-900/80 border border-violet-900/40 rounded-2xl rounded-tl-sm min-w-[220px]">
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-violet-500/80 select-none">
-          Deep research
-        </span>
-      </div>
-      <div className="flex flex-col gap-1">
-        {steps.map((step, i) => {
-          const isDone    = i < steps.length - 1 || !currentStep
-          const isCurrent = i === steps.length - 1 && !!currentStep
-          return (
-            <div key={i} className="flex items-center gap-2">
-              <span className="w-3 h-3 flex items-center justify-center flex-shrink-0">
-                {isDone && !isCurrent ? <CheckIcon /> : isCurrent ? <SpinRing /> : null}
-              </span>
-              <span className={`text-xs leading-snug transition-colors ${
-                isCurrent
-                  ? "text-slate-200"
-                  : "text-slate-500"
-              }`}>
-                {step}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function TypingIndicator({ statusMsg, statusHistory, chatMode, isLayman }) {
-  const isDeep = chatMode === "deep_research"
-
-  return (
-    <div className="flex gap-3 max-w-4xl">
-      <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center shadow-md ${
-        isLayman
-          ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-950/50"
-          : isDeep
-            ? "bg-gradient-to-br from-violet-600 to-purple-700 shadow-violet-950/50"
-            : "bg-gradient-to-br from-blue-500 to-violet-600 shadow-violet-950/50"
-      }`}>
-        <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
-        </svg>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        {isDeep && statusHistory.length > 0 ? (
-          <DeepResearchProgress
-            steps={statusHistory}
-            currentStep={statusMsg}
-          />
-        ) : (
-          <>
-            {statusMsg && !isDeep && (
-              <p className="text-xs text-blue-400/80 px-1 animate-pulse">{statusMsg}</p>
-            )}
-            <div className="flex items-center gap-1.5 px-4 py-3 bg-slate-900 border border-slate-800 rounded-2xl rounded-tl-sm">
-              <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-              <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-              <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" />
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 const SUGGESTIONS = [
   { text: "Compare Indian vs Chinese pharma exports",         hint: "auto-compare"   },

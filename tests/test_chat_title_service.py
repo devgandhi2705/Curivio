@@ -273,6 +273,42 @@ class TestGetSessionTitle:
 # Stream integration — auto-title only on first message (history empty)
 # ─────────────────────────────────────────────────────────────────────────────
 
+class TestGetSessionOwner:
+    def test_returns_owner_when_set(self):
+        from backend.services.chat_title_service import get_session_owner
+        row = MagicMock()
+        row.__getitem__ = lambda s, k: "user-abc" if k == "user_id" else None
+        conn = _make_conn(rows=[row])
+        with patch("backend.utils.db.get_connection", return_value=conn):
+            result = get_session_owner("sess-1")
+        assert result == "user-abc"
+
+    def test_returns_none_for_null_owner(self):
+        # Legacy/pre-auth session row — exists, but user_id was never set.
+        from backend.services.chat_title_service import get_session_owner
+        row = MagicMock()
+        row.__getitem__ = lambda s, k: None
+        conn = _make_conn(rows=[row])
+        with patch("backend.utils.db.get_connection", return_value=conn):
+            result = get_session_owner("sess-1")
+        assert result is None
+
+    def test_returns_none_when_session_missing(self):
+        from backend.services.chat_title_service import get_session_owner
+        conn = _make_conn(rows=[])
+        with patch("backend.utils.db.get_connection", return_value=conn):
+            result = get_session_owner("no-such-session")
+        assert result is None
+
+    def test_does_not_swallow_db_errors(self):
+        # Unlike get_session_title, an authorization check must fail closed —
+        # a DB error must propagate, not be interpreted as "no owner".
+        from backend.services.chat_title_service import get_session_owner
+        with patch("backend.utils.db.get_connection", side_effect=RuntimeError("db down")):
+            with pytest.raises(RuntimeError):
+                get_session_owner("sess-1")
+
+
 class TestAutoTitleIntegration:
     """Verify title extraction wires into chat_stream correctly."""
 

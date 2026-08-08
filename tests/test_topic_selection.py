@@ -15,10 +15,21 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.main import app
+from backend.main import app, get_current_user
 
 client = TestClient(app)
 BASE = "backend.main.process_feedback"
+
+
+@pytest.fixture(autouse=True)
+def _auth_override():
+    # Chat-R7a: /select-topics now requires Depends(get_current_user) — it
+    # writes to user_preferences, which process_feedback scopes by user_id
+    # (the fix for the cross-user personalization leak). Same
+    # dependency-override pattern as test_chat.py's authenticated client.
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "test-user", "email": "test@example.com"}
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def _feedback_row(topic, times_liked=1):
@@ -109,8 +120,8 @@ class TestFeedbackDelegation:
         with patch(BASE, side_effect=[_feedback_row("RAG"), _feedback_row("LLMs")]) as mock_fn:
             client.post("/select-topics", json={"topics": ["RAG", "LLMs"]})
         mock_fn.assert_has_calls([
-            call("RAG",  "liked"),
-            call("LLMs", "liked"),
+            call("RAG",  "liked", "test-user"),
+            call("LLMs", "liked", "test-user"),
         ])
 
     def test_calls_process_feedback_exactly_once_per_topic(self):

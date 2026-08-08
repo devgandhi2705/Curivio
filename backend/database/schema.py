@@ -203,7 +203,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     content      TEXT    NOT NULL,
     topic_hint   TEXT,
     created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    attachments  TEXT
+    attachments  TEXT,
+    thinking     TEXT,
+    blocks       TEXT
 );
 """
 
@@ -216,6 +218,22 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session
 # Gemini Files API URI only, never the file bytes. NULL/absent for plain-text turns.
 MIGRATE_ADD_CHAT_MESSAGES_ATTACHMENTS = (
     "ALTER TABLE chat_messages ADD COLUMN attachments TEXT"
+)
+
+# Assistant's raw reasoning text (Chat-R10c) — NULL for user messages, gap turns,
+# and legs that never streamed thinking. Never fed back as LLM context, see
+# _load_history_messages, only surfaced to the API/frontend via get_history.
+MIGRATE_ADD_CHAT_MESSAGES_THINKING = (
+    "ALTER TABLE chat_messages ADD COLUMN thinking TEXT"
+)
+
+# JSON-encoded ordered list of {type: "thinking"|"tool_call"|"text", ...}
+# segments (Chat-R10d) — coexists with the flat `thinking` column above
+# (still populated unchanged for existing consumers), NULL for user messages
+# and turns with no segments. Same exclusion as `thinking`: never fed back
+# as LLM context, see _load_history_messages.
+MIGRATE_ADD_CHAT_MESSAGES_BLOCKS = (
+    "ALTER TABLE chat_messages ADD COLUMN blocks TEXT"
 )
 
 CREATE_CONCEPT_MEMORY = """
@@ -829,6 +847,51 @@ MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE = [
     "PRAGMA foreign_keys=ON",
 ]
 
+# Chat-R7a — user_preferences and research_sessions were never scoped by
+# user_id: reads had no WHERE clause, writes never populated the column.
+# Confirmed live: a brand-new user_id got back another user's
+# interests_count/total_topics_explored via memory_injection_service's chain.
+#
+# user_preferences additionally has UNIQUE(topic) alone — adding a WHERE
+# user_id=? filter on top of that as-is would still let two different users'
+# INSERT ... ON CONFLICT(topic) collide on the same row (silently merging
+# their preference signals), so this needs UNIQUE(topic, user_id), which
+# SQLite can only apply via table recreation (same pattern as
+# MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE above).
+MIGRATE_USER_PREFERENCES_ADD_USER_ID_SCOPE = [
+    "PRAGMA foreign_keys=OFF",
+    """CREATE TABLE IF NOT EXISTS user_preferences_v2 (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic                  TEXT    NOT NULL,
+        user_id                TEXT    REFERENCES users(user_id),
+        preference_score       REAL    NOT NULL DEFAULT 0.0,
+        times_recommended      INTEGER NOT NULL DEFAULT 0,
+        times_liked            INTEGER NOT NULL DEFAULT 0,
+        times_disliked         INTEGER NOT NULL DEFAULT 0,
+        difficulty_preference  TEXT    CHECK(difficulty_preference IN ('beginner', 'intermediate', 'advanced')) DEFAULT NULL,
+        last_updated           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(topic, user_id)
+    )""",
+    """INSERT OR IGNORE INTO user_preferences_v2
+           (id, topic, preference_score, times_recommended, times_liked,
+            times_disliked, difficulty_preference, last_updated)
+       SELECT id, topic, preference_score, times_recommended, times_liked,
+              times_disliked, difficulty_preference, last_updated
+       FROM   user_preferences""",
+    "DROP TABLE IF EXISTS user_preferences",
+    "ALTER TABLE user_preferences_v2 RENAME TO user_preferences",
+    "PRAGMA foreign_keys=ON",
+]
+
+# research_sessions has no such uniqueness constraint — a plain ADD COLUMN
+# covers the personal-breadth-signal queries (build_exploration_breadth,
+# adaptive_explanation_service). Topic-keyed "has this been researched"
+# lookups (get_research_context/get_topic_memory) stay unscoped by design —
+# same shared-by-topic cache category as deep_research/learning_paths content.
+MIGRATE_ADD_USER_ID_RESEARCH_SESSIONS = (
+    "ALTER TABLE research_sessions ADD COLUMN user_id TEXT REFERENCES users(user_id)"
+)
+
 CREATE_CONVERSATION_MEMORY_VEC = """
 CREATE VIRTUAL TABLE IF NOT EXISTS conversation_memory_vec USING vec0(
     embedding   float[3072],
@@ -837,6 +900,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversation_memory_vec USING vec0(
     +topic      TEXT,
     +entry_text TEXT,
     +created_at TEXT
+);
+"""
+
+# Chat-R6a — document text chunks for uploaded PDF/docx/csv/text/code attachments.
+# Scoped by attachment_id (minted at /chat/upload time), not session_id: the
+# upload endpoint runs before the message is sent, so session_id isn't known yet.
+CREATE_DOCUMENT_CHUNKS_VEC = """
+CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
+    embedding      float[3072],
+    +attachment_id TEXT,
+    +filename      TEXT,
+    +chunk_index   TEXT,
+    +chunk_text    TEXT,
+    +created_at    TEXT
+);
+"""
+
+# Chat-R15c — permanent attachment_id -> session_id record for document (doc://)
+# attachments, written once at message-save time (chat_service._save_message,
+# the first point session_id and attachments co-occur). Exists because
+# chat_messages.attachments JSON is NOT permanent for this attachment type —
+# sweep_expired_attachments drops the whole entry once the original file
+# expires — while document_chunks_vec's extracted text (and therefore its
+# owner's access to it) must survive forever per R13. A plain table, not a
+# vec0 column: vec0 virtual tables have no ALTER TABLE support.
+CREATE_DOCUMENT_ATTACHMENT_SESSIONS = """
+CREATE TABLE IF NOT EXISTS document_attachment_sessions (
+    attachment_id TEXT PRIMARY KEY,
+    session_id    TEXT NOT NULL
 );
 """
 
@@ -866,6 +958,10 @@ MIGRATIONS = [
     MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM,
     MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE,
     MIGRATE_ADD_CHAT_MESSAGES_ATTACHMENTS,
+    MIGRATE_USER_PREFERENCES_ADD_USER_ID_SCOPE,
+    MIGRATE_ADD_USER_ID_RESEARCH_SESSIONS,
+    MIGRATE_ADD_CHAT_MESSAGES_THINKING,
+    MIGRATE_ADD_CHAT_MESSAGES_BLOCKS,
 ]
 
 ALL_TABLES = [
@@ -943,4 +1039,6 @@ ALL_TABLES = [
     CREATE_LLM_CALL_LOG,
     CREATE_LLM_CALL_LOG_IDX,
     CREATE_CONVERSATION_MEMORY_VEC,
+    CREATE_DOCUMENT_CHUNKS_VEC,
+    CREATE_DOCUMENT_ATTACHMENT_SESSIONS,
 ]

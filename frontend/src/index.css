@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes chat-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.chat-stream-cursor {
+  animation: chat-cursor-blink 1s step-end infinite;
+  color: var(--dk-accent);
+}
+
 /* ============================================================
    MOBILE BASELINE
    Prevents horizontal overflow, enables smooth scroll,

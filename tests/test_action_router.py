@@ -446,10 +446,11 @@ class TestActionPromptSection:
         assert result == "Hello world"
 
     def test_section_in_system_prompt(self):
-        # action_result only renders in structured modes — "normal" (the
-        # default) is deliberately minimal, see build_system_prompt's docstring.
+        # Chat-R7b: action_result renders in the structured prompt, which now
+        # gates on a genuine Feed link (context["feed_linked"]), not mode.
         from backend.services.chat_prompt_service import build_system_prompt
         ctx = {
+            "feed_linked": True,
             "user_profile": {}, "research": {}, "session": {},
             "conversation_memory": {}, "exploration_breadth": {},
             "preference_snapshot": {}, "learner_profile": {},

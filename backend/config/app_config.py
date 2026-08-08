@@ -13,7 +13,11 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 # unpack-feature-spec.md. Groq's free-tier lineup churns; re-check
 # https://console.groq.com/docs/deprecations before changing GROQ_UNPACK_MODEL.
 GROQ_UNPACK_MODEL   = "openai/gpt-oss-120b"
-GEMINI_UNPACK_MODEL = "models/gemini-2.5-flash-lite"
+# Was "models/gemini-2.5-flash-lite" — confirmed live 404 "no longer available
+# to new users" for at least one pooled key/project (real, per-project access
+# restriction, not a universal deprecation — model metadata still resolves
+# fine). "-latest" confirmed live-reachable across all 3 pooled keys.
+GEMINI_UNPACK_MODEL = "models/gemini-flash-lite-latest"
 
 # ── LangChain provider layer (backend/llm/) ─────────────────────────────────────
 # Additive, parallel to the existing hand-rolled Groq/Gemini call sites above —
@@ -23,6 +27,32 @@ GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-3.1-fl
 # Same model as GROQ_MODEL today; decoupled so this leg can change independently.
 GROQ_FALLBACK_MODEL   = os.getenv("GROQ_FALLBACK_MODEL", GROQ_MODEL)
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
+
+# Task-based model priority registry (backend/llm/model_priority.py, Chat-R3).
+# Lightweight Gemini tier for high-volume/low-stakes tasks (routing) — same
+# model family as GEMINI_UNPACK_MODEL but a separate knob so routing and
+# unpack can be tuned independently.
+# Was "models/gemini-2.5-flash-lite" — confirmed live 404 "no longer available
+# to new users" for at least one pooled key/project (see GEMINI_UNPACK_MODEL
+# above, same underlying issue). "-latest" confirmed live-reachable.
+GEMINI_LITE_MODEL = os.getenv("GEMINI_LITE_MODEL", "models/gemini-flash-lite-latest")
+# Groq's fastest/cheapest on-demand model — 20,000 tpm vs 12,000 tpm for
+# llama-3.3-70b-versatile (see backend/services/model_registry.py tier_limits).
+GROQ_FAST_MODEL       = os.getenv("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
+
+# ── Attachment storage (Chat-R13/R14a) ───────────────────────────────────────
+# Original-bytes retention window for R2-backed chat attachments (raw file
+# bytes only — extracted text/embeddings in document_chunks_vec are permanent
+# and untouched by this). One knob for every type, editable here or via env,
+# no R2 dashboard/lifecycle-rule dependency (R12: this credential can't manage
+# lifecycle config anyway — see r2_storage_service.py).
+ATTACHMENT_RETENTION_DAYS = int(os.getenv("ATTACHMENT_RETENTION_DAYS", "30"))
+
+# App-level cap on /chat/upload, well under Gemini's own 2GB Files API ceiling
+# (that ceiling only applies to images anyway — R2-backed types have no such
+# limit). Raised from a hardcoded 20MB (R6a/R12) to int-from-env so it's a
+# one-line change without a redeploy.
+CHAT_UPLOAD_MAX_BYTES = int(os.getenv("CHAT_UPLOAD_MAX_BYTES", str(50 * 1024 * 1024)))
 
 # ── Rate limits ───────────────────────────────────────────────────────────────
 # Format: "count/period"  — period: second, minute, hour, day
@@ -82,4 +112,4 @@ PACKAGE_VALIDATION_ENABLED: bool = True
 # These differ between local dev and production — override via environment variable.
 # HF Spaces: set APP_URL and CORS_ORIGINS in the Spaces settings (not as secrets).
 APP_URL      = os.getenv("APP_URL",      "http://localhost:5173")
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS") or "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174"

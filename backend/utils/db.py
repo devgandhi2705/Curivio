@@ -112,29 +112,40 @@ def upsert_preference(topic: str, difficulty: str | None = None) -> dict:
 _DIFFICULTY_DOWN = {"advanced": "intermediate", "intermediate": "beginner",    "beginner": "beginner"}
 _DIFFICULTY_UP   = {"beginner": "intermediate", "intermediate": "advanced",    "advanced": "advanced"}
 
-def record_feedback(topic: str, feedback: str) -> dict:
+def record_feedback(topic: str, feedback: str, user_id: str) -> dict:
     """
-    Process one of four feedback signals for a topic.
+    Process one of four feedback signals for a topic, scoped to user_id.
 
     liked        → times_liked++,    score = (liked - disliked) / max(1, recommended)
     disliked     → times_disliked++, score = (liked - disliked) / max(1, recommended)
     too_advanced → step difficulty_preference down one level (advanced→intermediate→beginner)
     too_basic    → step difficulty_preference up one level   (beginner→intermediate→advanced)
 
-    Auto-creates the row if the topic has not been tracked before.
+    Auto-creates the row if this user hasn't tracked this topic before.
+
+    Chat-R7a: user_id is required, not optional — this is the write side of
+    the personalization-context leak (memory_injection_service read this
+    table with no scope; every existing row had a NULL user_id because
+    nothing ever wrote one). Table uniqueness is (topic, user_id), not topic
+    alone (migrated in schema.py), so two users liking the same topic no
+    longer collide on the same row via ON CONFLICT.
     """
     if feedback not in {"liked", "disliked", "too_advanced", "too_basic"}:
         raise ValueError(f"Unknown feedback type: '{feedback}'")
+    if not user_id:
+        raise ValueError("user_id must not be empty")
 
     with get_connection() as conn:
         # Ensure the row exists before we try to update it
         conn.execute(
-            "INSERT OR IGNORE INTO user_preferences (topic) VALUES (?)", (topic,)
+            "INSERT OR IGNORE INTO user_preferences (topic, user_id) VALUES (?, ?)",
+            (topic, user_id),
         )
 
         row = dict(
             conn.execute(
-                "SELECT * FROM user_preferences WHERE topic = ?", (topic,)
+                "SELECT * FROM user_preferences WHERE topic = ? AND user_id = ?",
+                (topic, user_id),
             ).fetchone()
         )
 
@@ -144,8 +155,8 @@ def record_feedback(topic: str, feedback: str) -> dict:
             conn.execute(
                 """UPDATE user_preferences
                    SET times_liked = ?, preference_score = ?, last_updated = CURRENT_TIMESTAMP
-                   WHERE topic = ?""",
-                (new_liked, round(new_score, 4), topic),
+                   WHERE topic = ? AND user_id = ?""",
+                (new_liked, round(new_score, 4), topic, user_id),
             )
 
         elif feedback == "disliked":
@@ -154,8 +165,8 @@ def record_feedback(topic: str, feedback: str) -> dict:
             conn.execute(
                 """UPDATE user_preferences
                    SET times_disliked = ?, preference_score = ?, last_updated = CURRENT_TIMESTAMP
-                   WHERE topic = ?""",
-                (new_disliked, round(new_score, 4), topic),
+                   WHERE topic = ? AND user_id = ?""",
+                (new_disliked, round(new_score, 4), topic, user_id),
             )
 
         else:  # too_advanced | too_basic
@@ -165,13 +176,14 @@ def record_feedback(topic: str, feedback: str) -> dict:
             conn.execute(
                 """UPDATE user_preferences
                    SET difficulty_preference = ?, last_updated = CURRENT_TIMESTAMP
-                   WHERE topic = ?""",
-                (new_diff, topic),
+                   WHERE topic = ? AND user_id = ?""",
+                (new_diff, topic, user_id),
             )
 
         return dict(
             conn.execute(
-                "SELECT * FROM user_preferences WHERE topic = ?", (topic,)
+                "SELECT * FROM user_preferences WHERE topic = ? AND user_id = ?",
+                (topic, user_id),
             ).fetchone()
         )
 
@@ -185,19 +197,32 @@ def get_preference(topic: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_preferences(order_by: str = "preference_score", limit: int = 20) -> list[dict]:
+def list_preferences(order_by: str = "preference_score", limit: int = 20, user_id: str | None = None) -> list[dict]:
     """
-    Return all tracked topics sorted by the given column (descending).
+    Return tracked topics sorted by the given column (descending).
     Safe columns: preference_score, times_recommended, times_liked, last_updated.
+
+    Chat-R7a: user_id is optional and defaults to None (unchanged, global
+    behavior) — this function is shared by Feed's recommendation/timeline
+    reads (out of this fix's scope, left exactly as before) and chat's
+    personalization context (which always passes a real user_id now, never
+    silently omitting it). No global fallback on the chat code path — only
+    callers that don't pass user_id at all get the old unscoped behavior.
     """
     allowed = {"preference_score", "times_recommended", "times_liked", "last_updated"}
     if order_by not in allowed:
         raise ValueError(f"order_by must be one of {allowed}")
     with get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM user_preferences ORDER BY {order_by} DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                f"SELECT * FROM user_preferences WHERE user_id = ? ORDER BY {order_by} DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT * FROM user_preferences ORDER BY {order_by} DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
     return [dict(r) for r in rows]
 
 
