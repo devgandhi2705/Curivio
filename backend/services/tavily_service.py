@@ -56,10 +56,13 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 _API_KEY = os.getenv("TAVILY_API_KEY", "")
 _MOCK    = os.getenv("MOCK_RETRIEVAL", "").lower() == "true"
 
-if not _MOCK and not _API_KEY:
-    raise EnvironmentError("TAVILY_API_KEY is not set in the environment.")
-
-_client = TavilyClient(api_key=_API_KEY) if not _MOCK else None
+# Don't raise at import: this module is imported at main.py top level, so an
+# import-time raise takes down the ENTIRE app (502 everything) when the key is
+# missing — not just search. A missing key must degrade Tavily search only.
+# _client stays None; the raw functions below surface a clear error at call
+# time via their existing try/except, which callers already catch non-fatally.
+# ponytail: None-check lives in _client access, not per-caller — one guard.
+_client = TavilyClient(api_key=_API_KEY) if (_API_KEY and not _MOCK) else None
 
 logger = logging.getLogger(__name__)
 
