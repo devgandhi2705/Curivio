@@ -115,6 +115,25 @@ async def lifespan(_app: FastAPI):
     if _missing:
         logger.warning("[startup] Missing env vars: %s — some features will not work", _missing)
 
+    # Diagnostic: what secrets does the *running container* actually see?
+    # Logs name -> trimmed length only (never the value). A length of 0 means
+    # the secret is absent or empty/whitespace in this container, regardless of
+    # what the HF settings panel shows.
+    _secret_names = (
+        "GEMINI_API_KEYS", "GEMINI_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY",
+        "GOOGLE_TRANSLATE_API_KEY", "GOOGLE_TTS_API_KEY", "GEMINI_WRITER_API_KEY",
+    )
+    logger.info(
+        "[startup] secret presence (name->trimmed len): %s",
+        {n: len((os.getenv(n) or "").strip()) for n in _secret_names},
+    )
+    # Also dump the actual env var NAMES the container sees that look key-related,
+    # so a misnamed secret (trailing space, wrong case) is visible. Names only.
+    logger.info(
+        "[startup] key-like env var names present: %s",
+        sorted(k for k in os.environ if any(t in k.upper() for t in ("GEMINI", "GROQ", "GOOGLE", "API_KEY"))),
+    )
+
     # Ensure temp and data directories exist
     Path("/tmp/curivio").mkdir(parents=True, exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
