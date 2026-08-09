@@ -74,10 +74,13 @@ _TEMPERATURE = 0.7
 
 
 def _gemini_keys() -> list[str]:
-    raw = os.getenv("GEMINI_API_KEYS", "")
+    # Accept GEMINI_API_KEYS (comma-separated pool) or single GEMINI_API_KEY —
+    # mirrors _groq_keys() so one secret name works everywhere (HF Spaces set
+    # both because the resolvers disagreed; they no longer do).
+    raw = os.getenv("GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEY", "")
     keys = [k.strip() for k in raw.split(",") if k.strip()]
     if not keys:
-        raise RuntimeError("GEMINI_API_KEYS environment variable is not set")
+        raise RuntimeError("GEMINI_API_KEYS or GEMINI_API_KEY environment variable is not set")
     return keys
 
 

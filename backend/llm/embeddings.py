@@ -53,10 +53,12 @@ logger = logging.getLogger(__name__)
 
 
 def _gemini_key() -> str:
-    raw = os.getenv("GEMINI_API_KEYS", "")
+    # Accept GEMINI_API_KEYS (pool) or single GEMINI_API_KEY — matches
+    # model_provider._gemini_keys() so one secret name works app-wide.
+    raw = os.getenv("GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEY", "")
     keys = [k.strip() for k in raw.split(",") if k.strip()]
     if not keys:
-        raise RuntimeError("GEMINI_API_KEYS environment variable is not set")
+        raise RuntimeError("GEMINI_API_KEYS or GEMINI_API_KEY environment variable is not set")
     return keys[0]
 
 

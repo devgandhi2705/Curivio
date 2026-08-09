@@ -60,9 +60,12 @@ def _get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
         from openai import OpenAI
-        api_key = os.getenv("GEMINI_API_KEY")
+        # Accept GEMINI_API_KEY or first key of the GEMINI_API_KEYS pool —
+        # same secret name works for chat, embeddings, and unpack.
+        raw = os.getenv("GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEY", "")
+        api_key = next((k.strip() for k in raw.split(",") if k.strip()), None)
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is not set")
+            raise RuntimeError("GEMINI_API_KEYS or GEMINI_API_KEY environment variable is not set")
         _gemini_client = OpenAI(api_key=api_key, base_url=_GEMINI_API_URL, timeout=_LLM_TIMEOUT_S, max_retries=0)
     return _gemini_client
 
