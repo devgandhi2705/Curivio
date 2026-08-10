@@ -121,7 +121,7 @@ async def lifespan(_app: FastAPI):
     # what the HF settings panel shows.
     _secret_names = (
         "GEMINI_API_KEYS", "GEMINI_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY",
-        "GOOGLE_TRANSLATE_API_KEY", "GOOGLE_TTS_API_KEY", "GEMINI_WRITER_API_KEY",
+        "DEEPL_TRANSLATE_API_KEY", "DEEPGRAM_TTS_API_KEY", "GEMINI_WRITER_API_KEY",
     )
     logger.info(
         "[startup] secret presence (name->trimmed len): %s",
@@ -1595,7 +1595,7 @@ async def unpack_translate_endpoint(
     data: UnpackTranslateRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Translate a selected term via Google Cloud Translation API. Plain JSON — no streaming."""
+    """Translate a selected term via the DeepL API. Plain JSON — no streaming."""
     try:
         return translate_term(data.term, data.target_language)
     except ValueError as exc:
@@ -1612,7 +1612,7 @@ async def unpack_read_aloud_endpoint(
     data: UnpackReadAloudRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Synthesize speech for a selected term/phrase via Google Cloud TTS. Plain JSON — no streaming."""
+    """Synthesize speech for a selected term/phrase via Deepgram Aura. Plain JSON — no streaming."""
     try:
         return synthesize_speech(data.term)
     except ValueError as exc:
