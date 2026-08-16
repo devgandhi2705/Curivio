@@ -18,6 +18,10 @@ import sqlite_vec
 logger = logging.getLogger(__name__)
 
 from ..database.schema import ALL_TABLES, MIGRATIONS
+# Feed v2 owns its DDL in feed_v2/schema.py (kept out of database/schema.py so the
+# two feed generations never share table defs). It's a pure-SQL module — no
+# backend.services/backend.llm imports — so pulling it in here creates no cycle.
+from ..services.feed_v2.schema import run_v2_migrations
 
 # DB_PATH is configurable via environment variable for deployment portability.
 # HF Spaces: set DB_PATH=/data/curivio.db — /data is the only persistent volume.
@@ -57,6 +61,30 @@ def init_db() -> None:
             except Exception:
                 logger.error("Migration failed with unexpected error", exc_info=True)
                 raise
+
+        # Feed v2 tables (Phase 4 wire-in). Every statement is CREATE ... IF NOT
+        # EXISTS, so this is idempotent on repeat startup — same "already exists"
+        # guard as the legacy migrations above, reused not reinvented.
+        try:
+            run_v2_migrations(conn)
+        except sqlite3.OperationalError as exc:
+            if any(p in str(exc).lower() for p in ("already exists", "duplicate column", "no such column")):
+                logger.debug("v2 migration skipped (already applied): %s", exc)
+            else:
+                logger.error("v2 migration failed: %s", exc, exc_info=True)
+                raise
+
+    # Feed v2 reaper (Phase 7): after migrations (so mas_runs exists) and OUTSIDE the
+    # init connection, sweep any 'running' run whose lease expired — a crashed prior
+    # run left a stale 'running' row; this fails it so its (project,day) slot frees up.
+    # Lazy import keeps langgraph off the import path until startup. Non-fatal.
+    try:
+        from ..services.feed_v2.graph import reap_expired_runs
+        reaped = reap_expired_runs()
+        if reaped:
+            logger.info("v2 reaper: failed %d expired run(s) on startup", reaped)
+    except Exception:
+        logger.error("v2 reaper failed on startup", exc_info=True)
 
 
 def build_set_clause(keys) -> str:

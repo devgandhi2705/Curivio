@@ -22,6 +22,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
+from uuid import uuid4
 
 from ..utils.db import get_connection
 from . import r2_storage_service
@@ -52,6 +53,7 @@ def chat_stream(
     user_id:      str | None  = None,
     attachments:  list[dict] | None = None,
     extended_thinking: bool  = False,
+    is_test:      bool       = False,
 ):
     """
     Sync generator — yields NDJSON lines for a single conversational turn.
@@ -86,6 +88,14 @@ def chat_stream(
     if not message and not attachments:
         yield json.dumps({"t": "error", "message": "message must not be empty"}) + "\n"
         return
+
+    # Phase B1: one trace_id per turn, generated before either LLM call path
+    # (router classify, agent turn) so both — and any tool calls the agent
+    # makes — land in llm_call_log under the same group. Chat has no existing
+    # per-turn identifier that predates the LLM calls (message_id is only
+    # assigned after the stream finishes, see _save_message below), so this is
+    # always a fresh id, never reused from anywhere else.
+    trace_id = uuid4().hex
 
     # Chat-R6a: images stay on the existing Gemini vision/Files-API path
     # (has_attachments hard gate, Chat-5) — documents (pdf/docx/csv/text/code)
@@ -256,7 +266,11 @@ def chat_stream(
     task_type = None
     if chat_mode == "normal" and not image_attachments:
         from ..llm.chat_router import classify_message, map_to_task_type
-        _router_metadata = {"user_id": user_id} if user_id else None
+        _router_metadata = {
+            "trace_id": trace_id, "surface": "chat", "is_test": is_test,
+        }
+        if user_id:
+            _router_metadata["user_id"] = user_id
         decision = classify_message(message, metadata=_router_metadata)
         if decision is not None:
             task_type = map_to_task_type(decision)
@@ -342,7 +356,10 @@ def chat_stream(
 
     try:
         from ..llm.chat_agent import ask_chat_stream
-        _call_metadata: dict = {"call_type": "chat_turn"}
+        _call_metadata: dict = {
+            "call_type": "chat_turn",
+            "trace_id": trace_id, "surface": "chat", "is_test": is_test,
+        }
         if user_id:
             _call_metadata["user_id"] = user_id
         for event in ask_chat_stream(

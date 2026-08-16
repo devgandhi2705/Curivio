@@ -62,10 +62,13 @@ def _decode_token(token: str) -> str:
 
 def _row_to_user(row) -> dict:
     return {
-        "user_id":    row["user_id"],
-        "email":      row["email"],
-        "name":       row["name"],
-        "created_at": row["created_at"],
+        "user_id":      row["user_id"],
+        "email":        row["email"],
+        "name":         row["name"],
+        "created_at":   row["created_at"],
+        # Feed v2 (Phase 1) per-user toggle. Read side: surfaced here so /auth/me,
+        # login and register all carry it to the frontend + the /v2 route gate.
+        "feed_version": row["feed_version"] if "feed_version" in row.keys() else "legacy",
     }
 
 
@@ -108,7 +111,7 @@ def register_user(email: str, name: str, password: str) -> dict:
             (user_id, email, name.strip(), hashed_pw),
         )
     token = create_access_token(user_id)
-    user_dict = {"user_id": user_id, "email": email, "name": name.strip(), "created_at": None}
+    user_dict = {"user_id": user_id, "email": email, "name": name.strip(), "created_at": None, "feed_version": "legacy"}
     return {"access_token": token, "token_type": "bearer", "user": user_dict}
 
 
@@ -148,6 +151,27 @@ def update_profile(user_id: str, name: str | None, email: str | None) -> dict:
             (new_name, new_email, user_id),
         )
     return {"user_id": user_id, "email": new_email, "name": new_name}
+
+
+# ── Feed v2 toggle (Phase 1) ──────────────────────────────────────────────────
+
+def set_feed_version(user_id: str, feed_version: str) -> dict:
+    """Write side of the Feed v2 toggle. Sets users.feed_version for one user.
+
+    Returns the refreshed user dict (same shape as get_current_user) so callers
+    can hand it straight back to the frontend.
+    """
+    if feed_version not in ("legacy", "v2"):
+        raise HTTPException(status_code=422, detail="feed_version must be 'legacy' or 'v2'")
+    if not get_user_by_id(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET feed_version = ? WHERE user_id = ?",
+            (feed_version, user_id),
+        )
+    return _row_to_user(get_user_by_id(user_id))
 
 
 # ── Change password ───────────────────────────────────────────────────────────

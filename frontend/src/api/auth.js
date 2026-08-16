@@ -104,6 +104,15 @@ export async function updateProfile(name, email) {
   return user
 }
 
+export async function updateFeedVersion(feed_version) {
+  const user = await authFetch("/auth/me/feed-version", {
+    method: "PATCH",
+    body: JSON.stringify({ feed_version }),
+  })
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  return user
+}
+
 export async function changePassword(current_password, new_password) {
   return authFetch("/auth/me/password", {
     method: "PUT",

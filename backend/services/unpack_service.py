@@ -11,7 +11,7 @@ Translation API) — not part of this module.
 
 Public API
 ----------
-explain_stream(term, sentence, prev_sentence, next_sentence) -> generator[str]
+explain_stream(term, user_id, sentence, prev_sentence, next_sentence) -> generator[str]
     Yields NDJSON lines:
       {"t":"chunk","v":"<text>"}                        — incremental meaning_in_context text
       {"t":"done", term, definition_general,
@@ -26,6 +26,9 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from ..config import GROQ_BASE_URL, GROQ_UNPACK_MODEL, GEMINI_UNPACK_MODEL
 from .unpack_cache_service import build_unpack_key, get_cached_unpack, cache_unpack
@@ -183,8 +186,47 @@ def _done_line(result: dict, source: str, provider: str | None = None) -> str:
     )
 
 
+def _fmt_messages(messages: list[dict]) -> str:
+    return "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+
+
+def _log_explain(
+    trace_id: str, agent_name: str, provider: str, input_text: str, t0: float,
+    *, output: str | None, success: bool, user_id: str, error: Exception | None = None,
+) -> None:
+    """One row per real attempt (cache hit, each Groq/Gemini leg, dictionary
+    fallback) — mirrors how model_provider logs a leg per attempt rather than
+    only the final winner. Never routes through model_provider.py itself
+    (this stays on unpack_service's own OpenAI-SDK-direct/Groq-primary path,
+    unchanged) — this only observes it. Never raises.
+
+    Phase N-fix: user_id threaded from the route's authenticated caller —
+    previously never passed here at all (N-recon)."""
+    from ..llm.call_logger import write_call_row
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider=provider,
+        call_type="explain",
+        user_id=user_id,
+        input_text=input_text,
+        output=output,
+        success=success,
+        error_type=type(error).__name__ if error else None,
+        error_message=str(error) if error else None,
+        trace_id=trace_id,
+        agent_name=agent_name,
+        surface="explain",
+    )
+
+
 def explain_stream(
     term: str,
+    user_id: str,
     sentence: str = "",
     prev_sentence: str = "",
     next_sentence: str = "",
@@ -196,9 +238,14 @@ def explain_stream(
         yield _line("error", message="term must not be empty")
         return
 
+    trace_id = uuid4().hex
+
     key    = build_unpack_key(term, sentence, _ACTION, None)
+    t0     = time.monotonic()
     cached = get_cached_unpack(key)
     if cached:
+        _log_explain(trace_id, "cache", "cache", f"term={term!r} sentence={sentence!r}", t0,
+                    output=json.dumps(cached), success=True, user_id=user_id)
         yield _done_line(cached, source="cache")
         return
 
@@ -206,10 +253,13 @@ def explain_stream(
     # Every selection — single word, phrase, or sentence — goes through the LLM
     # with full surrounding context; no word-only dictionary fast path.
     messages = build_unpack_messages(term, sentence, prev_sentence, next_sentence)
+    _messages_input = _fmt_messages(messages)
 
     result: dict | None       = None
     provider_used: str | None = None
 
+    t_groq = time.monotonic()
+    _groq_retry_logged = False
     try:
         buffer   = ""
         sent_len = 0
@@ -221,31 +271,64 @@ def explain_stream(
                 sent_len = len(partial)
 
         parsed = _parse_response(buffer)
+        _log_explain(trace_id, "groq_stream", "groq", _messages_input, t_groq,
+                    output=buffer, success=parsed is not None, user_id=user_id)
         if parsed is None:
             # One retry with a stricter reminder, same provider, no streaming.
             strict_messages = build_unpack_messages(
                 term, sentence, prev_sentence, next_sentence, strict=True
             )
-            parsed = _parse_response(_call_groq_once(strict_messages))
+            t_retry = time.monotonic()
+            try:
+                retry_raw = _call_groq_once(strict_messages)
+                parsed = _parse_response(retry_raw)
+                _log_explain(trace_id, "groq_retry", "groq", _fmt_messages(strict_messages), t_retry,
+                            output=retry_raw, success=parsed is not None, user_id=user_id)
+            except Exception as retry_exc:
+                _groq_retry_logged = True
+                _log_explain(trace_id, "groq_retry", "groq", _fmt_messages(strict_messages), t_retry,
+                            output=None, success=False, user_id=user_id, error=retry_exc)
+                raise
         if parsed:
             result, provider_used = parsed, "groq"
     except Exception as exc:
+        if not _groq_retry_logged:
+            _log_explain(trace_id, "groq_stream", "groq", _messages_input, t_groq,
+                        output=None, success=False, user_id=user_id, error=exc)
         if _is_quota_error(exc):
             logger.warning("[unpack] Groq quota/rate-limit — falling back to Gemini: %s", exc)
         else:
             logger.warning("[unpack] Groq call failed — falling back to Gemini: %s", exc)
 
     if result is None:
+        t_gemini = time.monotonic()
+        _gemini_retry_logged = False
         try:
-            parsed = _parse_response(_call_gemini(messages))
+            gemini_raw = _call_gemini(messages)
+            parsed = _parse_response(gemini_raw)
+            _log_explain(trace_id, "gemini", "gemini", _messages_input, t_gemini,
+                        output=gemini_raw, success=parsed is not None, user_id=user_id)
             if parsed is None:
                 strict_messages = build_unpack_messages(
                     term, sentence, prev_sentence, next_sentence, strict=True
                 )
-                parsed = _parse_response(_call_gemini(strict_messages))
+                t_gemini_retry = time.monotonic()
+                try:
+                    gemini_retry_raw = _call_gemini(strict_messages)
+                    parsed = _parse_response(gemini_retry_raw)
+                    _log_explain(trace_id, "gemini_retry", "gemini", _fmt_messages(strict_messages), t_gemini_retry,
+                                output=gemini_retry_raw, success=parsed is not None, user_id=user_id)
+                except Exception as gemini_retry_exc:
+                    _gemini_retry_logged = True
+                    _log_explain(trace_id, "gemini_retry", "gemini", _fmt_messages(strict_messages), t_gemini_retry,
+                                output=None, success=False, user_id=user_id, error=gemini_retry_exc)
+                    raise
             if parsed:
                 result, provider_used = parsed, "gemini"
         except Exception as exc:
+            if not _gemini_retry_logged:
+                _log_explain(trace_id, "gemini", "gemini", _messages_input, t_gemini,
+                            output=None, success=False, user_id=user_id, error=exc)
             logger.warning("[unpack] Gemini call failed: %s", exc)
 
     if result:
@@ -254,10 +337,15 @@ def explain_stream(
         return
 
     # ── Total LLM failure: degrade to dictionary-only, never a blank error ──
+    t_dict   = time.monotonic()
     fallback = dictionary_lookup(term) if is_dictionary_fast_path_eligible(term) else None
     if fallback:
+        _log_explain(trace_id, "dictionary_fallback", "dictionary", f"term={term!r}", t_dict,
+                    output=json.dumps(fallback), success=True, user_id=user_id)
         yield _done_line(fallback, source="dictionary_fallback")
     else:
+        _log_explain(trace_id, "dictionary_fallback", "dictionary", f"term={term!r}", t_dict,
+                    output=None, success=False, user_id=user_id)
         yield _done_line(
             {"term": term, "definition_general": "", "meaning_in_context": None, "confidence": "low"},
             source="unavailable",

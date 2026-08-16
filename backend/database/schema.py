@@ -892,6 +892,74 @@ MIGRATE_ADD_USER_ID_RESEARCH_SESSIONS = (
     "ALTER TABLE research_sessions ADD COLUMN user_id TEXT REFERENCES users(user_id)"
 )
 
+# Feed v2 (Phase 1) — per-user toggle between the legacy feed and Feed v2.
+# Lives on `users` (one row per user, user_id PK), NOT user_preferences: that
+# table is keyed (topic, user_id) and holds zero rows for every current user,
+# so it can't store a per-user singleton. Additive/nullable-safe: NOT NULL with
+# a 'legacy' default so all 36 existing rows keep working unchanged.
+MIGRATE_ADD_USER_FEED_VERSION = (
+    "ALTER TABLE users ADD COLUMN feed_version TEXT NOT NULL DEFAULT 'legacy' "
+    "CHECK(feed_version IN ('legacy','v2'))"
+)
+
+# Feed v2 (Phase 3) — trace_id/agent_name/step_index/surface on llm_call_log so
+# a v2 multi-agent run's child calls can be grouped by trace_id and every row
+# tagged with its surface. Additive + nullable — legacy call_logger never sets
+# them, so its writes keep working untouched (see Phase 3 regression). This is
+# the ONLY existing table Phase 3 alters.
+MIGRATE_ADD_LLM_CALL_LOG_TRACE_ID   = "ALTER TABLE llm_call_log ADD COLUMN trace_id TEXT"
+MIGRATE_ADD_LLM_CALL_LOG_AGENT_NAME = "ALTER TABLE llm_call_log ADD COLUMN agent_name TEXT"
+MIGRATE_ADD_LLM_CALL_LOG_STEP_INDEX = "ALTER TABLE llm_call_log ADD COLUMN step_index INTEGER"
+MIGRATE_ADD_LLM_CALL_LOG_SURFACE    = "ALTER TABLE llm_call_log ADD COLUMN surface TEXT"
+
+# One-time backfill of the new surface column on existing rows. Guarded by
+# `surface IS NULL` so it only touches un-backfilled rows — idempotent and cheap
+# on every re-run after the first. feed_% call_types are legacy Feed; chat%
+# call_types are chat; everything else (smoke/verify/test/None) stays NULL.
+MIGRATE_BACKFILL_SURFACE_FEED = (
+    "UPDATE llm_call_log SET surface = 'feed_legacy' "
+    "WHERE surface IS NULL AND call_type LIKE 'feed_%'"
+)
+MIGRATE_BACKFILL_SURFACE_CHAT = (
+    "UPDATE llm_call_log SET surface = 'chat' "
+    "WHERE surface IS NULL AND call_type LIKE 'chat%'"
+)
+
+# Index the new trace_id — the v2 run -> child-calls JOIN is a hot path. Placed
+# in MIGRATIONS (not ALL_TABLES) because it references a column that only exists
+# after the ADD COLUMN above runs; ALL_TABLES runs before MIGRATIONS.
+MIGRATE_INDEX_LLM_CALL_LOG_TRACE_ID = (
+    "CREATE INDEX IF NOT EXISTS idx_llm_call_log_trace_id ON llm_call_log (trace_id)"
+)
+
+# Phase B1 (Admin-7) — real is_test flag, replacing the call_type-prefix naming
+# convention (_TEST_DATA_EXCLUSION) as the mechanism going forward. Every writer
+# (legacy call_logger, v2 call_logger, chat tool logging, explain/translate/tts)
+# now sets this explicitly; the admin query layer switching over to it is B2's
+# job, not this migration's.
+MIGRATE_ADD_LLM_CALL_LOG_IS_TEST = (
+    "ALTER TABLE llm_call_log ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0"
+)
+
+# One-time best-effort classification of PAST rows using the CURRENT
+# call_type-prefix heuristic (admin_service._TEST_DATA_EXCLUSION's inverse) —
+# NULL call_type or a 'smoke_test%' call_type. Deliberately not smarter than
+# that heuristic (e.g. the r4_/r5_/chat6_/verify_/smoke_r3_ ad-hoc dev
+# call_types Phase A found slipping past it stay is_test=0) — going forward,
+# real scripts set the flag themselves instead of leaning on naming.
+MIGRATE_BACKFILL_LLM_CALL_LOG_IS_TEST = (
+    "UPDATE llm_call_log SET is_test = 1 "
+    "WHERE call_type IS NULL OR call_type LIKE 'smoke_test%'"
+)
+
+# Phase B2 — translate_service previously only embedded target_language inside
+# the free-text `input` column (f"term={term!r} target_language={lang!r}"),
+# which the admin filter API can't query cleanly. Real column, nullable —
+# only translate's writer sets it; every other surface leaves it NULL.
+MIGRATE_ADD_LLM_CALL_LOG_TARGET_LANGUAGE = (
+    "ALTER TABLE llm_call_log ADD COLUMN target_language TEXT"
+)
+
 CREATE_CONVERSATION_MEMORY_VEC = """
 CREATE VIRTUAL TABLE IF NOT EXISTS conversation_memory_vec USING vec0(
     embedding   float[3072],
@@ -962,6 +1030,17 @@ MIGRATIONS = [
     MIGRATE_ADD_USER_ID_RESEARCH_SESSIONS,
     MIGRATE_ADD_CHAT_MESSAGES_THINKING,
     MIGRATE_ADD_CHAT_MESSAGES_BLOCKS,
+    MIGRATE_ADD_USER_FEED_VERSION,
+    MIGRATE_ADD_LLM_CALL_LOG_TRACE_ID,
+    MIGRATE_ADD_LLM_CALL_LOG_AGENT_NAME,
+    MIGRATE_ADD_LLM_CALL_LOG_STEP_INDEX,
+    MIGRATE_ADD_LLM_CALL_LOG_SURFACE,
+    MIGRATE_BACKFILL_SURFACE_FEED,
+    MIGRATE_BACKFILL_SURFACE_CHAT,
+    MIGRATE_INDEX_LLM_CALL_LOG_TRACE_ID,
+    MIGRATE_ADD_LLM_CALL_LOG_IS_TEST,
+    MIGRATE_BACKFILL_LLM_CALL_LOG_IS_TEST,
+    MIGRATE_ADD_LLM_CALL_LOG_TARGET_LANGUAGE,
 ]
 
 ALL_TABLES = [

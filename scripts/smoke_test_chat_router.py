@@ -50,6 +50,7 @@ def _run_turn(message: str, chat_mode: str = "normal", attachments=None) -> dict
     t0 = time.monotonic()
     for line in chat_service.chat_stream(
         session_id, message, chat_mode=chat_mode, user_id="smoke-r4-user", attachments=attachments,
+        is_test=True,
     ):
         import json
         events.append(json.loads(line))

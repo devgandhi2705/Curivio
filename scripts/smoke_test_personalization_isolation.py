@@ -128,7 +128,7 @@ def test_baseline_prompt_no_fabricated_context() -> None:
            "to learn ML, and I am not sure how to think about which one to actually "
            "commit to right now.")
     events = []
-    for line in chat_service.chat_stream("sess-baseline", msg, chat_mode="normal", user_id=fresh):
+    for line in chat_service.chat_stream("sess-baseline", msg, chat_mode="normal", user_id=fresh, is_test=True):
         events.append(json.loads(line))
     done = next((e for e in events if e["t"] == "done"), {})
     text = "".join(e["v"] for e in events if e["t"] == "chunk")

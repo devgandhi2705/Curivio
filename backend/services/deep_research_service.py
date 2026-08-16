@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 
@@ -108,7 +109,7 @@ class DeepResearchWorkflow:
         "persist",
     )
 
-    def __init__(self, topic: str) -> None:
+    def __init__(self, topic: str, meta: dict | None = None) -> None:
         self.topic = topic
         self.state: dict = {
             "topic":           topic,
@@ -118,6 +119,7 @@ class DeepResearchWorkflow:
             "viewpoints":      {},
             "result":          {},
             "research_id":     None,
+            "meta":            meta or {},
         }
 
     # ── Stage 1 ───────────────────────────────────────────────────────────────
@@ -205,7 +207,9 @@ class DeepResearchWorkflow:
         directly); this only changes what run() does with them. Stages 4-6
         are unchanged, called linearly exactly as before.
         """
-        self.state["queries"], self.state["articles"] = _run_research_act_subgraph(self.topic)
+        self.state["queries"], self.state["articles"] = _run_research_act_subgraph(
+            self.topic, meta=self.state.get("meta"),
+        )
         for stage in self.STAGES[3:]:
             getattr(self, stage)()
         return self.state["result"]
@@ -270,7 +274,7 @@ def list_research_topics(limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def run_deep_research(topic: str, project_id: str = "") -> dict:
+def run_deep_research(topic: str, project_id: str = "", meta: dict | None = None) -> dict:
     """
     Return deep research for a topic, running the full workflow on a cache miss.
 
@@ -279,6 +283,12 @@ def run_deep_research(topic: str, project_id: str = "") -> dict:
 
     project_id: optional — when present, injects shared learning context so the
                 research builds on what the user has already learned (Phase 4.6).
+    meta: optional trace_id/user_id/surface/is_test (Phase B1) — chat's
+          deep_research tool passes its parent turn's trace_id so the raw
+          pre-rank article capture (_act_node) and the TinyFish calls
+          underneath it (retrieval_router) all group under that turn. The
+          other two callers (main.py's auto-research trigger, /deep-research)
+          omit it and get ungrouped rows, unchanged from before this phase.
     """
     cached = get_stored_research(topic)
     if cached is not None:
@@ -286,7 +296,7 @@ def run_deep_research(topic: str, project_id: str = "") -> dict:
         return cached
 
     logger.info("[deep_research] starting workflow for topic %r", topic)
-    wf = DeepResearchWorkflow(topic)
+    wf = DeepResearchWorkflow(topic, meta=meta)
     if project_id:
         wf.state["project_id"] = project_id
     return wf.run()
@@ -317,7 +327,7 @@ def _expand_queries(topic: str) -> list[str]:
         ][: DEEP_RESEARCH_SEARCH_COUNT + 1]
 
 
-def _fetch_research_articles(queries: list[str]) -> list[dict]:
+def _fetch_research_articles(queries: list[str], meta: dict | None = None) -> list[dict]:
     """
     Retrieve articles across all query angles via the retrieval router.
 
@@ -332,6 +342,7 @@ def _fetch_research_articles(queries: list[str]) -> list[dict]:
         topic,
         mode             = "deep_research",
         override_queries = queries,
+        meta             = meta,
     )
 
 
@@ -385,6 +396,7 @@ class _ActState(TypedDict):
     raw_articles: list[dict]   # accumulated pre-rank articles across attempts
     ranked:       list[dict]   # latest rank_articles() output
     attempt:      int
+    meta:         dict         # Phase B1: trace_id/user_id/surface/is_test, threaded to logging
 
 
 def _plan_node(state: _ActState) -> dict:
@@ -393,8 +405,41 @@ def _plan_node(state: _ActState) -> dict:
     return {"queries": queries}
 
 
+def _log_raw_articles(topic: str, queries: list[str], new_raw: list[dict], attempt: int, t0: float, meta: dict) -> None:
+    """Phase B1 / Admin-3: the real filtering step deep_research has —
+    _rank_research_articles (source_ranker.rank_articles, min_score=0.1,
+    top_n=6) — cuts new_raw down to a scored top-N. This is the raw point
+    right before that cut, one row per act-node attempt (up to
+    _MAX_RESEARCH_ATTEMPTS). Never raises."""
+    from uuid import uuid4
+    from ..llm.call_logger import write_call_row
+
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider="tinyfish",
+        call_type="chat_deep_research_raw",
+        user_id=meta.get("user_id"),
+        input_text=f"topic={topic!r} attempt={attempt} queries={queries}",
+        output=json.dumps({"raw_count": len(new_raw), "raw_articles": new_raw}),
+        success=True,
+        trace_id=meta.get("trace_id"),
+        agent_name="deep_research",
+        surface=meta.get("surface", "chat"),
+        is_test=bool(meta.get("is_test", False)),
+    )
+
+
 def _act_node(state: _ActState) -> dict:
-    new_raw      = _fetch_research_articles(state["queries"])
+    import time
+    t0 = time.monotonic()
+    meta = state.get("meta") or {}
+    new_raw      = _fetch_research_articles(state["queries"], meta=meta)
+    _log_raw_articles(state["topic"], state["queries"], new_raw, state["attempt"], t0, meta)
     combined_raw = state["raw_articles"] + new_raw
     ranked       = _rank_research_articles(combined_raw, state["topic"])
     return {"raw_articles": combined_raw, "ranked": ranked, "attempt": state["attempt"] + 1}
@@ -420,10 +465,11 @@ _act_graph.add_conditional_edges("act", _should_replan, {"plan": "plan", END: EN
 _compiled_act_graph = _act_graph.compile()
 
 
-def _run_research_act_subgraph(topic: str) -> tuple[list[str], list[dict]]:
+def _run_research_act_subgraph(topic: str, meta: dict | None = None) -> tuple[list[str], list[dict]]:
     """Run the plan->act->replan subgraph; returns (last queries used, ranked articles)."""
     result = _compiled_act_graph.invoke({
         "topic": topic, "queries": [], "raw_articles": [], "ranked": [], "attempt": 0,
+        "meta": meta or {},
     })
     return result["queries"], result["ranked"]
 

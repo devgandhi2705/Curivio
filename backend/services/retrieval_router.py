@@ -269,12 +269,16 @@ def _select_operations(
 
 # ── Plan execution ────────────────────────────────────────────────────────────
 
-def execute_plan(plan: RetrievalPlan) -> list[dict]:
+def execute_plan(plan: RetrievalPlan, meta: dict | None = None) -> list[dict]:
     """
     Execute a RetrievalPlan and return a URL-deduplicated article list.
 
     Each article has: title, url, content.
     Partial operation failures are logged and skipped; never raised.
+
+    `meta`, when given, is passed through to tinyfish_service so its raw-
+    response llm_call_log row (Phase B1) carries the caller's trace_id/
+    user_id/project_id/surface — otherwise those TinyFish calls log ungrouped.
     """
     if _MOCK_RETRIEVAL:
         return _mock_execute(plan)
@@ -296,7 +300,7 @@ def execute_plan(plan: RetrievalPlan) -> list[dict]:
         if op == "search":
             for query in plan.search_queries:
                 try:
-                    _merge(tinyfish_search(query))
+                    _merge(tinyfish_search(query, meta=meta))
                 except Exception as exc:
                     logger.warning(
                         "[retrieval_router] search failed for %r: %s", query[:60], exc
@@ -304,7 +308,7 @@ def execute_plan(plan: RetrievalPlan) -> list[dict]:
 
         elif op == "extract" and plan.extract_urls:
             try:
-                _merge(fetch_as_articles(plan.extract_urls))
+                _merge(fetch_as_articles(plan.extract_urls, meta=meta))
             except Exception as exc:
                 logger.warning("[retrieval_router] extract failed: %s", exc)
 
@@ -334,6 +338,7 @@ def route(
     mode:              str             = "chat",
     override_queries:  list[str] | None = None,
     preferred_domains: list[str] | None = None,
+    meta:              dict | None      = None,
 ) -> list[dict]:
     """
     Classify, plan, and execute retrieval in one call.
@@ -345,6 +350,10 @@ def route(
     override_queries  Optional explicit search queries (bypasses template expansion).
     preferred_domains Trusted domain hints injected into Tavily include_domains.
                       Biases results toward these domains without restricting broader search.
+    meta              Optional trace_id/user_id/project_id/surface/is_test — forwarded
+                      to tinyfish_service's raw-capture logging (Phase B1). Every
+                      caller (legacy feed, chat's web_search, deep_research) may pass
+                      it; omitted, TinyFish calls still log, just ungrouped.
 
     Returns a list of article dicts.  Never raises — errors return an empty list.
     """
@@ -355,7 +364,7 @@ def route(
             override_queries  = override_queries,
             preferred_domains = preferred_domains,
         )
-        return execute_plan(plan)
+        return execute_plan(plan, meta=meta)
     except Exception as exc:
         logger.exception(
             "[retrieval_router] route failed for %r (mode=%s): %s", query[:60], mode, exc

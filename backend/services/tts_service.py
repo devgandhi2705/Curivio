@@ -8,7 +8,7 @@ Output is requested as MP3 so the base64 the frontend plays back
 
 Public API
 ----------
-synthesize_speech(text) -> dict
+synthesize_speech(text, user_id) -> dict
     {"term", "language", "audio_base64", "source"}
     Cache-checked first (independent of the "explain"/"translate" cache
     entries); calls Deepgram on a miss.
@@ -19,6 +19,9 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import requests
 
@@ -60,7 +63,43 @@ def _call_deepgram_tts(text: str) -> str:
     return base64.b64encode(resp.content).decode("ascii")
 
 
-def synthesize_speech(text: str) -> dict:
+def _audio_marker(audio_base64: str) -> str:
+    """Design decision (Phase B1 / Admin-6): llm_call_log.output never holds the
+    base64 MP3 blob — a short marker instead. Byte count is the real decoded
+    size, not an estimate off the base64 string length."""
+    return f"[MP3 audio, {len(base64.b64decode(audio_base64))} bytes]"
+
+
+def _log_tts(input_text: str, t0: float, *, output: str | None, success: bool, user_id: str, error: Exception | None = None) -> None:
+    """Non-LLM row (Phase B1 / Admin-6): provider='deepgram', no model/token
+    fields — this is a direct speech-synthesis REST call, not an LLM
+    completion. Never raises.
+
+    Phase N-fix: user_id threaded from the route's authenticated caller —
+    previously never passed here at all (N-recon)."""
+    from ..llm.call_logger import write_call_row
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider="deepgram",
+        call_type="tts",
+        user_id=user_id,
+        input_text=input_text,
+        output=output,
+        success=success,
+        error_type=type(error).__name__ if error else None,
+        error_message=str(error) if error else None,
+        trace_id=uuid4().hex,
+        agent_name="read_aloud",
+        surface="tts",
+    )
+
+
+def synthesize_speech(text: str, user_id: str) -> dict:
     """
     Synthesize English speech for `text` via Deepgram Aura.
 
@@ -73,12 +112,22 @@ def synthesize_speech(text: str) -> dict:
     if not text:
         raise ValueError("text must not be empty")
 
+    t0 = time.monotonic()
+
     key    = build_unpack_key(text, "", _ACTION, _VOICE_MODEL)
     cached = get_cached_unpack(key)
     if cached:
+        marker = _audio_marker(cached["audio_base64"]) if cached.get("audio_base64") else None
+        _log_tts(text, t0, output=marker, success=True, user_id=user_id)
         return {**cached, "source": "cache"}
 
-    audio_base64 = _call_deepgram_tts(text)
+    try:
+        audio_base64 = _call_deepgram_tts(text)
+    except Exception as exc:
+        _log_tts(text, t0, output=None, success=False, user_id=user_id, error=exc)
+        raise
+    _log_tts(text, t0, output=_audio_marker(audio_base64), success=True, user_id=user_id)
+
     result = {"term": text, "language": _LANGUAGE, "audio_base64": audio_base64}
     cache_unpack(key, text, _VOICE_MODEL, result)
     return {**result, "source": "deepgram_tts"}

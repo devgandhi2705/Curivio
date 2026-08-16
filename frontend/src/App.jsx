@@ -154,10 +154,26 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 
 function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }) {
-  const { user, logout, updateProfile, changePassword, deleteAccount, verifyPassword } = useAuth()
+  const { user, logout, updateProfile, updateFeedVersion, changePassword, deleteAccount, verifyPassword } = useAuth()
 
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
+
+  const feedVersion = user?.feed_version || "legacy"
+  const [savingFeed, setSavingFeed]     = useState(false)
+  const [feedErr, setFeedErr]           = useState("")
+
+  async function handleSetFeedVersion(v) {
+    if (v === feedVersion || savingFeed) return
+    setSavingFeed(true); setFeedErr("")
+    try {
+      await updateFeedVersion(v)
+    } catch (err) {
+      setFeedErr(err.message || "Could not change feed version.")
+    } finally {
+      setSavingFeed(false)
+    }
+  }
 
   useEffect(() => {
     if (user?.name !== undefined) setProfileName(user.name)
@@ -340,6 +356,26 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
               className="w-full text-left px-2 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 rounded-lg transition-colors mt-0.5">
               Sign Out
             </button>
+          </div>
+
+          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Feed</p>
+            <div className="flex gap-1.5 bg-slate-950/60 border border-slate-800 rounded-lg p-1">
+              {[
+                { id: "legacy", label: "Legacy feed" },
+                { id: "v2",     label: "Feed v2"     },
+              ].map(({ id, label }) => (
+                <button key={id} onClick={() => handleSetFeedVersion(id)} disabled={savingFeed}
+                  className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${
+                    feedVersion === id
+                      ? "bg-blue-600 text-white"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {feedErr && <p className="text-xs text-red-400 mt-1.5">{feedErr}</p>}
           </div>
 
           <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
@@ -1464,7 +1500,7 @@ export default function AppLayout() {
         />
       )}
 
-      <UnpackListener />
+      {(view === 'chat' || view === 'feed') && <UnpackListener />}
     </div>
   )
 }

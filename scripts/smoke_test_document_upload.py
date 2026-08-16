@@ -54,6 +54,7 @@ def _run_turn(message: str, attachments=None, chat_mode: str = "normal") -> dict
     events = []
     for line in chat_service.chat_stream(
         session_id, message, chat_mode=chat_mode, user_id="smoke-r6a-user", attachments=attachments,
+        is_test=True,
     ):
         events.append(json.loads(line))
     done = next((e for e in events if e["t"] == "error" or e["t"] == "done"), {})

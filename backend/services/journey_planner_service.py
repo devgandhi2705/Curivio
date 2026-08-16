@@ -31,12 +31,13 @@ _GEMINI_PRIMARY  = "models/gemini-2.5-flash"
 # observed on fixed_sequence prompts during Phase 2a evaluation — do not reinstate without re-eval.
 
 
-def _call_llm(prompt: str, project_id: str, day_ref: int) -> str:
+def _call_llm(prompt: str, project_id: str, day_ref: int, trace_id: str | None = None) -> str:
     """Gemini-primary / Groq-fallback via the shared backend/llm factory."""
     from ..llm import get_chat_model, extract_text
     model = get_chat_model(model=_GEMINI_PRIMARY, json_mode=True)
     resp  = model.invoke(prompt, config={"metadata": {
         "call_type": "feed_journey_planner", "project_id": project_id, "day_ref": day_ref,
+        "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "journey_planner",
     }})
     return extract_text(resp)
 
@@ -202,6 +203,7 @@ def plan_journey(
     covered_concepts: list[str] | None = None,
     day_start:        int = 1,
     description_hash: str = "",
+    trace_id:         str | None = None,
 ) -> dict:
     """Call the LLM to plan a journey batch. Retries once on JSON parse failure.
     On double failure returns a minimal rotating_theme fallback derived from
@@ -236,14 +238,14 @@ def plan_journey(
 
     prompt = _build_prompt(intent_profile, keywords, covered_concepts, day_start, locked_shape=locked_shape)
     try:
-        text = _call_llm(prompt, project_id, day_start)
+        text = _call_llm(prompt, project_id, day_start, trace_id=trace_id)
         try:
             batch = _extract_json(text)
         except (json.JSONDecodeError, ValueError):
             logger.warning("[journey_planner] project=%r JSON parse failed — retrying once", project_id)
             text  = _call_llm(
                 prompt + "\n\nIMPORTANT: Return ONLY valid JSON, no other text.",
-                project_id, day_start,
+                project_id, day_start, trace_id=trace_id,
             )
             batch = _extract_json(text)
 
@@ -304,6 +306,7 @@ def get_today_plan(
     day_number:     int,
     intent_profile: dict | None      = None,
     keywords:       list[str] | None = None,
+    trace_id:       str | None       = None,
 ) -> dict:
     """Return the plan entry for day_number.
 
@@ -373,6 +376,7 @@ def get_today_plan(
             covered_concepts=covered_concepts,
             day_start=day_start,
             description_hash=desc_hash,
+            trace_id=trace_id,
         )
         save_journey_plan(project_id, batch, desc_hash)
         row = _fetch_batch(day_number)
@@ -383,6 +387,7 @@ def get_today_plan(
                 covered_concepts=covered_concepts,
                 day_start=day_number,
                 description_hash=desc_hash,
+                trace_id=trace_id,
             )
             save_journey_plan(project_id, batch, desc_hash)
             row = _fetch_batch(day_number)

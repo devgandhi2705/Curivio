@@ -93,6 +93,7 @@ def synthesize_package(
     day_number:         int,
     knowledge_state: dict | None = None,
     project_id:      str | None = None,
+    trace_id:        str | None = None,
 ) -> PackageSynthesisResult:
     """
     Generate package_headline, learning_thread, and action_item from completed cards.
@@ -120,7 +121,10 @@ def synthesize_package(
             prompt, prompt,
             call_type="feed_synthesis",
             json_mode=True,
-            metadata={"project_id": project_id, "day_ref": day_number} if project_id else None,
+            metadata={
+                "project_id": project_id, "day_ref": day_number,
+                "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "synthesizer",
+            },
         ),
         call_type="feed_synthesis",
     )

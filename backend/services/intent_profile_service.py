@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import re
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,15 @@ def generate_intent_profile(
     keywords:    list[str],
     difficulty:  str,
     project_id:  str | None = None,
+    trace_id:    str | None = None,
 ) -> dict:
-    """Call the LLM to extract a structured intent profile from project details."""
+    """Call the LLM to extract a structured intent profile from project details.
+
+    trace_id groups this call with the rest of a daily generation run when the
+    caller is generate_project_insight(); standalone callers (project
+    creation, backfill_intent_profiles) leave it unset and get a fresh id of
+    their own, so every row still lands in a real trace_id group."""
+    trace_id = trace_id or uuid4().hex
     kw_str = ", ".join(keywords) if keywords else "(none provided)"
 
     # < 10 words leaves too little signal for persona/industry_context extraction.
@@ -142,7 +150,10 @@ Return ONLY valid JSON matching this schema:
 
     try:
         from ..llm import get_chat_model, extract_text
-        _meta = {"call_type": "feed_persona", "project_id": project_id}
+        _meta = {
+            "call_type": "feed_persona", "project_id": project_id,
+            "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "persona",
+        }
         model = get_chat_model(json_mode=True)
         text  = extract_text(model.invoke(prompt, config={"metadata": _meta}))
         try:
@@ -277,7 +288,8 @@ def suggest_keywords(name: str, description: str, difficulty: str) -> list[str]:
     Internally generates an intent profile first so keyword selection is driven by
     learner persona and goal, not just topic name.
     """
-    profile = generate_intent_profile(name, description, [], difficulty)
+    trace_id = uuid4().hex
+    profile = generate_intent_profile(name, description, [], difficulty, trace_id=trace_id)
     persona          = profile.get("persona")          or "Learner"
     goal             = profile.get("goal")             or description[:120]
     search_lens      = profile.get("search_lens")      or "Educational"
@@ -384,7 +396,10 @@ Example:
         import json as _json
         import re as _re
         model = get_chat_model(json_mode=True)
-        text  = extract_text(model.invoke(prompt, config={"metadata": {"call_type": "feed_persona_keywords"}}))
+        text  = extract_text(model.invoke(prompt, config={"metadata": {
+            "call_type": "feed_persona_keywords",
+            "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "persona_keywords",
+        }}))
         m = _re.search(r"\[.*?\]", text, _re.DOTALL)
         if m:
             keywords = _json.loads(m.group(0))

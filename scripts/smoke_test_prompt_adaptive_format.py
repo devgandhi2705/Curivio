@@ -44,7 +44,7 @@ def _run_turn(session_id, message, user_id, chat_mode="normal", feed_context=Non
     events = []
     for line in chat_service.chat_stream(
         session_id, message, chat_mode=chat_mode, user_id=user_id,
-        feed_context=feed_context, attachments=attachments,
+        feed_context=feed_context, attachments=attachments, is_test=True,
     ):
         events.append(json.loads(line))
     done = next((e for e in events if e["t"] == "done"), {})

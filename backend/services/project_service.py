@@ -331,11 +331,11 @@ def _compute_next_display_label(project_id: str) -> tuple[str, str | None]:
 # Article retrieval — separate pipelines for core learning vs curiosity
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _search_articles(query: str) -> list[dict]:
+def _search_articles(query: str, trace_id: str | None = None) -> list[dict]:
     """Single retrieval call — broad search, no domain restriction. Never raises."""
     try:
         from .retrieval_router import route
-        return route(query, mode="feed")
+        return route(query, mode="feed", meta={"trace_id": trace_id, "surface": "feed_legacy"})
     except Exception as e:
         logger.warning("[project_service] retrieval failed for %r: %s", query, e)
         return []
@@ -360,6 +360,7 @@ def _fetch_core_articles(
     keywords: list[str],
     suggested_next_topics: list[str],
     retrieval_plan: dict | None = None,
+    trace_id: str | None = None,
 ) -> list[dict]:
     """Intent-driven retrieval for core learning cards (80% core + 10% adjacent)."""
     if retrieval_plan:
@@ -376,7 +377,7 @@ def _fetch_core_articles(
 
     results: list[dict] = []
     for q in queries:
-        for art in _search_articles(q):
+        for art in _search_articles(q, trace_id=trace_id):
             art.setdefault("retrieval_query", q)
             results.append(art)
     return _dedup_articles(results)
@@ -395,6 +396,7 @@ def _fetch_curiosity_articles(
     project_name: str,
     keywords: list[str],
     retrieval_plan: dict | None = None,
+    trace_id: str | None = None,
 ) -> list[dict]:
     """Serendipity retrieval for curiosity cards (10% surprising territory)."""
     if retrieval_plan and retrieval_plan.get("serendipity_queries"):
@@ -407,7 +409,7 @@ def _fetch_curiosity_articles(
 
     results: list[dict] = []
     for q in queries:
-        for art in _search_articles(q):
+        for art in _search_articles(q, trace_id=trace_id):
             art.setdefault("retrieval_query", q)
             results.append(art)
     return _dedup_articles(results)
@@ -438,7 +440,7 @@ def _package_text_for_judge(package: dict) -> str:
 
 
 def _judge_beginner_calibration(
-    package: dict, project_id: str, day_number: int,
+    package: dict, project_id: str, day_number: int, trace_id: str | None = None,
 ) -> _BeginnerCalibrationJudgment | None:
     """
     LLM judge: does this package read as beginner-appropriate? Replaces the old
@@ -470,6 +472,7 @@ def _judge_beginner_calibration(
         return judge.invoke(prompt, config={"metadata": {
             "call_type": "feed_beginner_calibration_judge",
             "project_id": project_id, "day_ref": day_number,
+            "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "calibration_judge",
         }})
     except Exception as exc:
         logger.warning(
@@ -500,6 +503,13 @@ def generate_project_insight(
     project = get_project(project_id)
     if not project:
         raise ValueError(f"Project {project_id!r} not found")
+
+    # Phase B1: group every llm_call_log row this run writes under one trace_id.
+    # Reuses the generating-stub id when one exists (the normal path — a stub is
+    # always created before generation starts, see _save_generating_stub); the
+    # scheduler path (generate_all_projects -> generate_project_insight(pid), no
+    # stub) falls back to a fresh id so a run is never left ungrouped.
+    trace_id = str(_stub_id) if _stub_id is not None else uuid.uuid4().hex
 
     if _precomputed_day_number is not None:
         day_number = _precomputed_day_number
@@ -555,7 +565,7 @@ def generate_project_insight(
             # Legacy project or profile generation failed at creation — generate now
             intent_profile = generate_intent_profile(
                 project["name"], project.get("description", ""), keywords, difficulty,
-                project_id=project_id,
+                project_id=project_id, trace_id=trace_id,
             )
             save_intent_profile(project_id, intent_profile)
     except Exception:
@@ -613,6 +623,7 @@ def generate_project_insight(
             day_number=day_number,
             intent_profile=intent_profile,
             keywords=keywords,
+            trace_id=trace_id,
         )
         logger.info(
             "[project_service] %s day=%d [journey_plan] shape_hint=%s",
@@ -629,6 +640,7 @@ def generate_project_insight(
         retrieval_plan = _plan_retrieval(
             intent_profile, _planning_ks, keywords, project["name"],
             today_plan=today_plan, project_id=project_id, day_ref=day_number,
+            trace_id=trace_id,
         )
         _planner_called    = True
         _queries_generated = (
@@ -662,9 +674,9 @@ def generate_project_insight(
     )
 
     core_articles = _fetch_core_articles(
-        project["name"], keywords, suggested_next_topics, retrieval_plan,
+        project["name"], keywords, suggested_next_topics, retrieval_plan, trace_id=trace_id,
     )
-    curiosity_articles = _fetch_curiosity_articles(project["name"], keywords, retrieval_plan)
+    curiosity_articles = _fetch_curiosity_articles(project["name"], keywords, retrieval_plan, trace_id=trace_id)
 
     # ── Supplementary trusted-domain search (rotating_theme only) ─────────────
     # Fires 1-2 additional targeted searches restricted to today_plan.trusted_sources
@@ -678,8 +690,9 @@ def generate_project_insight(
             _sup_queries = (retrieval_plan.get("core_queries") or [])[:2] if retrieval_plan else [project["name"]]
             _core_seen: set[str] = {a.get("url", "") for a in core_articles}
             _sup_added: list[dict] = []
+            _sup_meta = {"trace_id": trace_id, "surface": "feed_legacy"}
             for _sq in _sup_queries:
-                for _a in _tinyfish_search(_sq, include_domains=list(_tp_trusted)):
+                for _a in _tinyfish_search(_sq, include_domains=list(_tp_trusted), meta=_sup_meta):
                     _url = _a.get("url", "")
                     if _url and _url not in _core_seen:
                         _a.setdefault("retrieval_query", _sq)
@@ -843,9 +856,10 @@ def generate_project_insight(
         from .tinyfish_service import fetch as _tinyfish_fetch
         _pool_urls = [a["url"] for a in (core_articles + curiosity_articles) if a.get("url")]
         _fetched: dict = {}
+        _fc_meta = {"trace_id": trace_id, "surface": "feed_legacy"}
         for _i in range(0, len(_pool_urls), 10):  # TinyFish Fetch caps at 10 URLs/request
             try:
-                _fetched.update(_tinyfish_fetch(_pool_urls[_i:_i + 10], image_links=True))
+                _fetched.update(_tinyfish_fetch(_pool_urls[_i:_i + 10], image_links=True, meta=_fc_meta))
             except Exception as _batch_exc:
                 logger.warning(
                     "[project_service] full_content batch fetch failed for %s (urls %d-%d, non-fatal): %s",
@@ -1134,6 +1148,7 @@ def generate_project_insight(
                 quality_feedback         = quality_feedback,
                 article_plan_block       = _article_plan_block,
                 frame_hint               = _frame_hint,
+                trace_id                 = trace_id,
             )
         except Exception as _e:
             logger.error("[project_service] multi-call generation failed for %s: %s", project_id, _e)
@@ -1221,7 +1236,10 @@ def generate_project_insight(
                     prompt,
                     call_type="feed_writer",
                     json_mode=True,
-                    metadata={"project_id": project_id, "day_ref": day_number},
+                    metadata={
+                        "project_id": project_id, "day_ref": day_number,
+                        "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "writer",
+                    },
                 ),
                 call_type="feed_writer",
             )
@@ -1240,7 +1258,7 @@ def generate_project_insight(
 
     # ── Beginner calibration check + single retry ─────────────────────────────
     if difficulty == "beginner":
-        judgment = _judge_beginner_calibration(raw, project_id, day_number)
+        judgment = _judge_beginner_calibration(raw, project_id, day_number, trace_id=trace_id)
         if judgment is not None and not judgment.is_appropriate_for_beginner:
             logger.warning(
                 "[project_service] beginner calibration failed for %s — "
@@ -1298,6 +1316,7 @@ def generate_project_insight(
                     config={"metadata": {
                         "call_type": "feed_writer_calibration_retry",
                         "project_id": project_id, "day_ref": day_number,
+                        "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "writer",
                     }},
                 )
                 retry_raw  = _extract_json(extract_text(retry_resp))

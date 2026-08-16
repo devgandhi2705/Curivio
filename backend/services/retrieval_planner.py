@@ -37,6 +37,7 @@ def plan(
     today_plan:      dict | None = None,
     project_id:      str | None = None,
     day_ref:         int | None = None,
+    trace_id:        str | None = None,
 ) -> dict:
     """
     Produce goal-driven search queries from the learner's context.
@@ -44,7 +45,7 @@ def plan(
     Validates and repairs composition before returning.
     """
     try:
-        result = _llm_plan(intent_profile, knowledge_state, keywords, project_name, today_plan, project_id, day_ref)
+        result = _llm_plan(intent_profile, knowledge_state, keywords, project_name, today_plan, project_id, day_ref, trace_id)
     except Exception as e:
         logger.warning("[retrieval_planner] LLM planning failed (%s) — using keyword fallback", e)
         result = _keyword_fallback(intent_profile, keywords, project_name)
@@ -61,6 +62,7 @@ def _llm_plan(
     today_plan:      dict | None = None,
     project_id:      str | None = None,
     day_ref:         int | None = None,
+    trace_id:        str | None = None,
 ) -> dict:
     context = _build_context(intent_profile, knowledge_state, keywords, project_name, today_plan)
     _shape  = _detect_shape(today_plan)
@@ -124,6 +126,7 @@ Return ONLY valid JSON:
     model = get_chat_model(json_mode=True)
     raw   = extract_text(model.invoke(prompt, config={"metadata": {
         "call_type": "feed_retrieval_planner", "project_id": project_id, "day_ref": day_ref,
+        "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "retrieval_planner",
     }}))
     data = _parse_json(raw)
 

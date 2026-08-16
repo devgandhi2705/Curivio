@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
@@ -67,6 +68,7 @@ from .services.auth_service import (
     register_user,
     login_user,
     update_profile,
+    set_feed_version,
     change_password,
     delete_account,
     get_current_user,
@@ -95,6 +97,12 @@ from .services.unpack_service import explain_stream
 from .services.translate_service import translate_term
 from .services.tts_service import synthesize_speech
 from .services import document_extraction_service, document_memory_service
+# Feed v2 (Phase 5): the app layer may import feed_v2; the isolation boundary only
+# blocks the reverse (feed_v2 importing legacy services/llm).
+from .services.feed_v2 import projects as v2_projects_service
+from .services.feed_v2 import journeys as v2_journeys_service
+from .services.feed_v2 import graph as v2_graph
+from .services.feed_v2.agents.profile import AllLegsFailed
 
 # --- Rate limits (edit in backend/config.py) ---
 GENERATE_FEED_RATE_LIMIT = cfg.GENERATE_FEED_RATE_LIMIT
@@ -486,6 +494,141 @@ async def auth_update_profile(
     current_user: dict = Depends(get_current_user),
 ):
     return update_profile(current_user["user_id"], data.name, data.email)
+
+
+# ── Feed v2 (Phase 1) — toggle + gated placeholder route ──────────────────────
+
+class FeedVersionRequest(BaseModel):
+    # Literal → Pydantic rejects anything but these two with 422 before the handler.
+    feed_version: Literal["legacy", "v2"]
+
+
+@app.patch("/auth/me/feed-version")
+async def auth_set_feed_version(
+    data: FeedVersionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Read/write the per-user Feed v2 toggle. Read side is /auth/me; this is
+    the write side, returning the refreshed user dict."""
+    return set_feed_version(current_user["user_id"], data.feed_version)
+
+
+@app.get("/v2/projects")
+async def v2_projects(current_user: dict = Depends(get_current_user)):
+    """Placeholder gated behind the v2 toggle. Phase 7 extends this; for now it
+    only proves the gate works (403 for legacy users, 200 stub for v2 users)."""
+    _require_v2(current_user)
+    return {"status": "not_yet_implemented"}
+
+
+# ── Feed v2 (Phase 5) — project creation + profile agent + coverage override ──
+
+def _require_v2(current_user: dict) -> None:
+    if current_user.get("feed_version") != "v2":
+        raise HTTPException(status_code=403, detail="Feed v2 is not enabled for this account")
+
+
+class CreateV2ProjectRequest(BaseModel):
+    name: str
+    description: str = ""
+    difficulty: str = "intermediate"
+
+
+class CoverageModeRequest(BaseModel):
+    coverage_mode: Literal["material_bound", "material_anchored", "open"]
+    confirmed: bool = True
+
+
+@app.post("/v2/projects", status_code=201)
+async def v2_create_project(
+    data: CreateV2ProjectRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a v2 project. The profile is NOT generated here — materials are
+    attached first, then POST /v2/projects/{id}/profile runs the agent."""
+    _require_v2(current_user)
+    return v2_projects_service.create_project(
+        current_user["user_id"], data.name, data.description, data.difficulty)
+
+
+@app.post("/v2/projects/{project_id}/profile")
+async def v2_generate_profile(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Run the profile agent over the project's materials. On agent failure the
+    project is left with profile_status='failed' (visible + retryable) and NO fake
+    profile — re-POST this endpoint to retry."""
+    _require_v2(current_user)
+    try:
+        return v2_projects_service.generate_profile(current_user["user_id"], project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except AllLegsFailed:
+        raise HTTPException(status_code=502, detail="Profile generation failed. Please retry.")
+
+
+@app.patch("/v2/projects/{project_id}/coverage")
+async def v2_set_coverage(
+    project_id: str,
+    data: CoverageModeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """User override of the inferred coverage_mode (one write) + confirm."""
+    _require_v2(current_user)
+    try:
+        return v2_projects_service.set_coverage_mode(
+            current_user["user_id"], project_id, data.coverage_mode, data.confirmed)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/v2/projects/{project_id}/journey")
+async def v2_plan_journey(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Plan + append the next journey batch (7-20 days, or the document's chapter
+    count in material_bound mode). On planner failure the project is left with
+    journey_status='failed' (visible) and NO fake plan row — re-POST to retry."""
+    _require_v2(current_user)
+    try:
+        return v2_journeys_service.plan_next_batch(current_user["user_id"], project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except AllLegsFailed:
+        raise HTTPException(status_code=502, detail="Journey planning failed. Please retry.")
+
+
+class GenerateStreamRequest(BaseModel):
+    day_number: int = 1
+    trace_id: str | None = None   # pass an in-flight run's trace_id to REATTACH (resume)
+
+
+@app.post("/v2/projects/{project_id}/generate/stream")
+async def v2_generate_stream(
+    project_id: str,
+    data: GenerateStreamRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Stream the Phase-7 multi-agent run as NDJSON, one event per node transition
+    (reuses the chat SSE shape: StreamingResponse + X-Accel-Buffering:no). Passing an
+    existing trace_id reattaches to that run via the checkpointer instead of starting
+    a new one. The concurrency lease is acquired eagerly, so a second run for the same
+    (project, day) is rejected here with 409 by mas_runs' unique index."""
+    _require_v2(current_user)
+    try:
+        gen = v2_graph.start_feed_stream(
+            current_user["user_id"], project_id, data.day_number, data.trace_id)
+    except v2_graph.ConcurrentRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return StreamingResponse(
+        gen,
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
 
 @app.put("/auth/me/password")
@@ -1274,17 +1417,67 @@ _CHAT_UPLOAD_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 _INLINE_PREVIEW_MIME_TYPES = _CHAT_UPLOAD_IMAGE_MIME | {"application/pdf"}
 
 
-def _r2_upload_or_none(data: bytes, key: str, content_type: str | None, attachment_id: str) -> bool:
+def _log_chat_upload(
+    trace_id: str, agent_name: str, provider: str, input_text: str, t0: float,
+    *, success: bool, user_id: str, output: str | None = None,
+    error_type: str | None = None, error_message: str | None = None,
+    model_used: str | None = None,
+) -> None:
+    """Phase P: one row per real step of a /chat/upload attempt (reject_too_
+    large, gemini_upload, r2_upload, extract, embed, unexpected) — mirrors
+    unpack_service._log_explain's one-row-per-leg shape (surface='explain'),
+    every step of one attempt sharing a single trace_id instead of one row
+    per whole request. surface='chat_upload' is its own value, distinct from
+    'chat' (which means a real model conversation turn) — extract/reject/r2
+    are non-model steps (provider='local'/'r2', no model/token fields),
+    matching how translate/tts already log their own non-LLM REST calls.
+    Never raises (write_call_row already swallows its own failures)."""
+    from datetime import datetime, timezone
+    from .llm.call_logger import write_call_row
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid.uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider=provider,
+        model_used=model_used,
+        call_type="chat_upload",
+        user_id=user_id,
+        input_text=input_text,
+        output=output,
+        success=success,
+        error_type=error_type,
+        error_message=error_message,
+        trace_id=trace_id,
+        agent_name=agent_name,
+        surface="chat_upload",
+    )
+
+
+def _r2_upload_or_none(
+    data: bytes, key: str, content_type: str | None, attachment_id: str,
+    *, trace_id: str, user_id: str, input_text: str,
+) -> bool:
     """True on success. Logs and returns False on failure instead of raising
     — chat_upload_endpoint's NDJSON generator can't raise HTTPException mid-
     stream (the 200 response has already started), so it turns a False here
-    into a clean {"t":"error"} stream line instead."""
+    into a clean {"t":"error"} stream line instead. Shared by the image/
+    document/other branches, so the chat_upload r2_upload log row (Phase P)
+    lives here once rather than at each of the 3 call sites."""
     from .services import r2_storage_service
+    t0 = time.monotonic()
     try:
         r2_storage_service.upload(data, key, content_type=content_type)
+        _log_chat_upload(trace_id, "r2_upload", "r2", input_text, t0, success=True, user_id=user_id)
         return True
     except Exception as exc:
         logger.warning("[chat] R2 upload failed for attachment %s: %s", attachment_id, exc)
+        _log_chat_upload(
+            trace_id, "r2_upload", "r2", input_text, t0, success=False, user_id=user_id,
+            error_type=type(exc).__name__, error_message=str(exc),
+        )
         return False
 
 
@@ -1330,6 +1523,11 @@ async def chat_upload_endpoint(
     entry) — original bytes go straight to R2, download-only. Nothing is
     rejected outright anymore; only truly-broken uploads (extraction errors,
     upstream failures) fail.
+
+    Phase P: every real step of this attempt (reject_too_large, gemini_upload,
+    r2_upload, extract, embed, unexpected) writes its own llm_call_log row via
+    _log_chat_upload — surface='chat_upload', all rows for one attempt sharing
+    one trace_id. Previously nothing here was logged at all.
     """
     from datetime import datetime, timedelta, timezone
     from pathlib import PurePosixPath
@@ -1340,26 +1538,57 @@ async def chat_upload_endpoint(
     is_image = content_type in _CHAT_UPLOAD_IMAGE_MIME
 
     data = await file.read()
+
+    # Phase P: one trace_id ties every logged step of this one upload attempt
+    # together (reject/gemini_upload/r2_upload/extract/embed/unexpected) —
+    # same shared-trace_id-multi-row shape the feed generation pipeline
+    # already uses for one run's multiple agent legs.
+    upload_trace_id = uuid.uuid4().hex
+    upload_user_id = current_user["user_id"]
+    upload_log_input = (
+        f"filename={filename!r} ext={ext!r} size_bytes={len(data)} "
+        f"content_type={content_type!r} is_image={is_image}"
+    )
+
     if len(data) > cfg.CHAT_UPLOAD_MAX_BYTES:
+        _log_chat_upload(
+            upload_trace_id, "reject_too_large", "local", upload_log_input, time.monotonic(),
+            success=False, user_id=upload_user_id, error_type="file_too_large",
+            error_message=f"{len(data)} bytes exceeds {cfg.CHAT_UPLOAD_MAX_BYTES} byte limit",
+        )
         raise HTTPException(status_code=413, detail=f"File too large ({cfg.CHAT_UPLOAD_MAX_BYTES // (1024 * 1024)}MB limit).")
 
     def generator():
         now = datetime.now(timezone.utc)
         retention = timedelta(days=cfg.ATTACHMENT_RETENTION_DAYS)
         upload_failed = json.dumps({"t": "error", "message": "Upload failed — please try again."}) + "\n"
+        gen_t0 = time.monotonic()
 
         try:
             if is_image:
                 from .llm.model_provider import upload_attachment
+                t_gemini = time.monotonic()
                 try:
                     result = upload_attachment(data, content_type, filename)
                 except Exception as exc:
                     logger.warning("[chat] attachment upload failed: %s", exc)
+                    _log_chat_upload(
+                        upload_trace_id, "gemini_upload", "gemini", upload_log_input, t_gemini,
+                        success=False, user_id=upload_user_id,
+                        error_type=type(exc).__name__, error_message=str(exc),
+                    )
                     yield upload_failed
                     return
+                _log_chat_upload(
+                    upload_trace_id, "gemini_upload", "gemini", upload_log_input, t_gemini,
+                    success=True, user_id=upload_user_id,
+                )
 
                 r2_attachment_id = uuid.uuid4().hex
-                if not _r2_upload_or_none(data, f"chat-attachments/{r2_attachment_id}{ext}", content_type, r2_attachment_id):
+                if not _r2_upload_or_none(
+                    data, f"chat-attachments/{r2_attachment_id}{ext}", content_type, r2_attachment_id,
+                    trace_id=upload_trace_id, user_id=upload_user_id, input_text=upload_log_input,
+                ):
                     yield upload_failed
                     return
                 result["r2_attachment_id"] = r2_attachment_id
@@ -1369,11 +1598,23 @@ async def chat_upload_endpoint(
                 return
 
             if ext in document_extraction_service.DOCUMENT_EXTENSIONS:
-                text, error = document_extraction_service.extract_document_text(data, filename, ext)
+                t_extract = time.monotonic()
+                text, error, error_type = document_extraction_service.extract_document_text(data, filename, ext)
                 if error:
+                    _log_chat_upload(
+                        upload_trace_id, "extract", "local", upload_log_input, t_extract,
+                        success=False, user_id=upload_user_id,
+                        error_type=error_type, error_message=error,
+                    )
                     yield json.dumps({"t": "error", "message": error}) + "\n"
                     return
+                _log_chat_upload(
+                    upload_trace_id, "extract", "local", upload_log_input, t_extract,
+                    success=True, user_id=upload_user_id, output=f"{len(text)} chars extracted",
+                )
+
                 attachment_id = None
+                t_embed = time.monotonic()
                 try:
                     for event in document_memory_service.store_document_stream(filename, text):
                         if event["stage"] == "done":
@@ -1382,14 +1623,27 @@ async def chat_upload_endpoint(
                             yield json.dumps({"t": "stage", **event}) + "\n"
                 except Exception as exc:
                     logger.warning("[chat] document processing failed: %s", exc)
+                    _log_chat_upload(
+                        upload_trace_id, "embed", "gemini", upload_log_input, t_embed,
+                        success=False, user_id=upload_user_id, model_used=cfg.GEMINI_EMBEDDING_MODEL,
+                        error_type=type(exc).__name__, error_message=str(exc),
+                    )
                     yield upload_failed
                     return
+                _log_chat_upload(
+                    upload_trace_id, "embed", "gemini", upload_log_input, t_embed,
+                    success=True, user_id=upload_user_id, model_used=cfg.GEMINI_EMBEDDING_MODEL,
+                    output=f"attachment_id={attachment_id}",
+                )
                 uri = f"doc://{attachment_id}"
             else:
                 attachment_id = uuid.uuid4().hex
                 uri = f"file://{attachment_id}"
 
-            if not _r2_upload_or_none(data, f"chat-attachments/{attachment_id}{ext}", content_type, attachment_id):
+            if not _r2_upload_or_none(
+                data, f"chat-attachments/{attachment_id}{ext}", content_type, attachment_id,
+                trace_id=upload_trace_id, user_id=upload_user_id, input_text=upload_log_input,
+            ):
                 yield upload_failed
                 return
 
@@ -1401,8 +1655,13 @@ async def chat_upload_endpoint(
                 expires_at=(now + retention).isoformat(),
             )
             yield json.dumps({"t": "done", **attachment.model_dump()}) + "\n"
-        except Exception:
+        except Exception as exc:
             logger.exception("[chat] upload stream failed unexpectedly")
+            _log_chat_upload(
+                upload_trace_id, "unexpected", "local", upload_log_input, gen_t0,
+                success=False, user_id=upload_user_id,
+                error_type=type(exc).__name__, error_message=str(exc),
+            )
             yield upload_failed
 
     return StreamingResponse(
@@ -1573,6 +1832,7 @@ async def unpack_explain_endpoint(
     def generator():
         yield from explain_stream(
             term          = data.term,
+            user_id       = current_user["user_id"],
             sentence      = data.sentence,
             prev_sentence = data.prev_sentence,
             next_sentence = data.next_sentence,
@@ -1597,7 +1857,7 @@ async def unpack_translate_endpoint(
 ):
     """Translate a selected term via the DeepL API. Plain JSON — no streaming."""
     try:
-        return translate_term(data.term, data.target_language)
+        return translate_term(data.term, data.target_language, current_user["user_id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -1614,7 +1874,7 @@ async def unpack_read_aloud_endpoint(
 ):
     """Synthesize speech for a selected term/phrase via Deepgram Aura. Plain JSON — no streaming."""
     try:
-        return synthesize_speech(data.term)
+        return synthesize_speech(data.term, current_user["user_id"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

@@ -23,9 +23,13 @@ credits (per TinyFish docs).
 
 from __future__ import annotations
 
+import json
 import os
 import logging
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
@@ -51,6 +55,45 @@ _FETCH_TIMEOUT_S    = 60   # Fetch renders real JS pages, up to 10 in one reques
 logger = logging.getLogger(__name__)
 
 
+def _log_raw(
+    call_type: str, input_text: str, t0: float,
+    *, output: str | None, success: bool, error: Exception | None,
+    meta: dict | None,
+) -> None:
+    """Phase B1 / Admin-4: one row per real TinyFish request, capturing the
+    RAW response — before search()'s 2000-char snippet truncation and
+    _MAX_SEARCH_RESULTS slice, before fetch()'s per-URL normalisation. Shared
+    by every caller (legacy feed direct calls, retrieval_router, chat's
+    web_search, deep_research) so the raw capture lives in exactly one place
+    instead of being duplicated per caller. meta carries trace_id/user_id/
+    project_id/day_ref/surface/is_test from whichever caller made the request;
+    omitted (None) meta still logs, just ungrouped. Never raises."""
+    from ..llm.call_logger import write_call_row
+    meta = meta or {}
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider="tinyfish",
+        call_type=call_type,
+        user_id=meta.get("user_id"),
+        project_id=meta.get("project_id"),
+        day_ref=meta.get("day_ref"),
+        input_text=input_text,
+        output=output,
+        success=success,
+        error_type=type(error).__name__ if error else None,
+        error_message=str(error) if error else None,
+        trace_id=meta.get("trace_id"),
+        agent_name=meta.get("agent_name", "tinyfish"),
+        surface=meta.get("surface"),
+        is_test=bool(meta.get("is_test", False)),
+    )
+
+
 def _mock_articles(query: str, count: int = 3) -> list[dict]:
     return [
         {
@@ -66,7 +109,7 @@ def _mock_articles(query: str, count: int = 3) -> list[dict]:
     ]
 
 
-def search(query: str, include_domains: list[str] | None = None) -> list[dict]:
+def search(query: str, include_domains: list[str] | None = None, meta: dict | None = None) -> list[dict]:
     """
     TinyFish Search — normalised article dicts (title, url, content, source_op).
     Never raises for empty results; raises RuntimeError on a request-level failure
@@ -77,6 +120,11 @@ def search(query: str, include_domains: list[str] | None = None) -> list[dict]:
     separate include_domains request param) — replaces Tavily's
     include_domains for the one live call site that used it (project_service's
     rotating_theme trusted-domain supplementary search).
+
+    `meta`, when given, carries trace_id/user_id/project_id/day_ref/surface/
+    is_test for the raw-response llm_call_log row Phase B1 writes here — the
+    ONE place the true unsliced, untruncated TinyFish response is captured,
+    shared by every caller (retrieval_router, legacy feed's direct calls).
     """
     if _MOCK:
         return _mock_articles(query)
@@ -86,6 +134,7 @@ def search(query: str, include_domains: list[str] | None = None) -> list[dict]:
         site_ops = " OR ".join(f"site:{d}" for d in include_domains)
         q = f"{query} ({site_ops})"
 
+    t0 = time.monotonic()
     try:
         resp = requests.get(
             _SEARCH_URL,
@@ -95,9 +144,13 @@ def search(query: str, include_domains: list[str] | None = None) -> list[dict]:
         )
         resp.raise_for_status()
     except Exception as exc:
+        _log_raw("tinyfish_search", q, t0, output=None, success=False, error=exc, meta=meta)
         raise RuntimeError(f"TinyFish search failed: {exc}") from exc
 
-    results = resp.json().get("results", [])[:_MAX_SEARCH_RESULTS]
+    raw_results = resp.json().get("results", [])
+    _log_raw("tinyfish_search", q, t0, output=json.dumps(raw_results), success=True, error=None, meta=meta)
+
+    results = raw_results[:_MAX_SEARCH_RESULTS]
     return [
         {
             "title":     r.get("title", ""),
@@ -109,13 +162,15 @@ def search(query: str, include_domains: list[str] | None = None) -> list[dict]:
     ]
 
 
-def fetch(urls: list[str], image_links: bool = False) -> dict[str, dict]:
+def fetch(urls: list[str], image_links: bool = False, meta: dict | None = None) -> dict[str, dict]:
     """
     TinyFish Fetch — full clean content for up to 10 URLs per call. Returns
     {url: raw_result_dict} keyed by the requested url, UNTRUNCATED. Per-URL
     failures are logged and omitted from the result (TinyFish reports them in
     a separate "errors" list rather than failing the whole request); a total
     request-level failure (network/auth) raises RuntimeError.
+
+    `meta`: see search()'s docstring — same raw-capture contract.
     """
     if not urls:
         return {}
@@ -123,6 +178,7 @@ def fetch(urls: list[str], image_links: bool = False) -> dict[str, dict]:
         return {u: {"title": "", "text": f"Mock full content for {u}", "image_links": []} for u in urls}
 
     batch = urls[:_MAX_FETCH_URLS]
+    t0 = time.monotonic()
     try:
         resp = requests.post(
             _FETCH_URL,
@@ -132,16 +188,19 @@ def fetch(urls: list[str], image_links: bool = False) -> dict[str, dict]:
         )
         resp.raise_for_status()
     except Exception as exc:
+        _log_raw("tinyfish_fetch", ", ".join(batch), t0, output=None, success=False, error=exc, meta=meta)
         raise RuntimeError(f"TinyFish fetch failed: {exc}") from exc
 
     data = resp.json()
+    _log_raw("tinyfish_fetch", ", ".join(batch), t0, output=json.dumps(data), success=True, error=None, meta=meta)
+
     out: dict[str, dict] = {r.get("url", ""): r for r in data.get("results", [])}
     for err in data.get("errors", []):
         logger.warning("[tinyfish] fetch failed for %s: %s", err.get("url"), err.get("error"))
     return out
 
 
-def fetch_as_articles(urls: list[str]) -> list[dict]:
+def fetch_as_articles(urls: list[str], meta: dict | None = None) -> list[dict]:
     """
     Fetch full content for known URLs, truncated to the same 2000-char article
     shape tavily_service._to_article() used for extract() results. For the live
@@ -150,7 +209,7 @@ def fetch_as_articles(urls: list[str]) -> list[dict]:
     Not for the ranked-pool full_content capture, which wants untruncated text —
     use fetch() directly for that.
     """
-    fetched = fetch(urls)
+    fetched = fetch(urls, meta=meta)
     articles: list[dict] = []
     for url in urls:
         r = fetched.get(url)

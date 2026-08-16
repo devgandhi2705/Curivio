@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react"
+import { useAuth } from "../../contexts/AuthContext.jsx"
 
 const COLOR_GRAD = {
   blue:    "from-blue-500 to-blue-600",
@@ -31,6 +32,8 @@ function DotsIcon() {
 }
 
 export default function ProjectCard({ project, progression, isActive, onSelect, onRename, onEdit, onDelete }) {
+  const { user } = useAuth()
+  const isLegacyFeed = (user?.feed_version || "legacy") === "legacy"
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 
@@ -66,6 +69,12 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
           <span className={lvl.color}>{lvl.label}</span>
           <span className="text-slate-600">·</span>
           <span className="text-slate-500">{intensity}</span>
+          {isLegacyFeed && (
+            <>
+              <span className="text-slate-600">·</span>
+              <span className="text-slate-500 uppercase tracking-wide text-[9px]">Legacy feed</span>
+            </>
+          )}
         </p>
       </div>
       {/* Desktop per-item action menu */}

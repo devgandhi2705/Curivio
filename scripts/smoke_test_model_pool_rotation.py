@@ -73,7 +73,7 @@ def test_poison_one_key_rotates_within_same_model() -> None:
 
         resp = chain.invoke(
             "Reply with exactly one short sentence confirming you are online.",
-            config={"metadata": {"call_type": f"smoke_r3_poison_one_{_RUN}"}},
+            config={"metadata": {"call_type": f"smoke_r3_poison_one_{_RUN}", "is_test": True}},
         )
         model_used = resp.response_metadata.get("model_name")
         print("Answered by:", model_used)
@@ -123,7 +123,7 @@ def test_poison_all_keys_drops_to_next_model() -> None:
 
         resp = chain.invoke(
             "Reply with exactly one short sentence confirming you are online.",
-            config={"metadata": {"call_type": f"smoke_r3_poison_all_{_RUN}"}},
+            config={"metadata": {"call_type": f"smoke_r3_poison_all_{_RUN}", "is_test": True}},
         )
         model_used = resp.response_metadata.get("model_name")
         print("Answered by:", model_used)
@@ -183,7 +183,7 @@ def test_groq_key_list_backward_compatible_with_single_key() -> None:
         chain = chain.with_config(callbacks=[LLMCallLogger()])
         resp = chain.invoke(
             "Reply with exactly one short sentence confirming you are online.",
-            config={"metadata": {"call_type": f"smoke_r3_groq_pool_{_RUN}"}},
+            config={"metadata": {"call_type": f"smoke_r3_groq_pool_{_RUN}", "is_test": True}},
         )
         print("Answered by:", resp.response_metadata.get("model_name") or resp.response_metadata)
         rows = _rows_for(f"smoke_r3_groq_pool_{_RUN}", 2)
@@ -200,7 +200,7 @@ def test_get_chat_model_for_task_end_to_end() -> None:
     model = get_chat_model_for_task("routing")
     resp = model.invoke(
         "Reply with exactly one word: yes.",
-        config={"metadata": {"call_type": f"smoke_r3_task_routing_{_RUN}"}},
+        config={"metadata": {"call_type": f"smoke_r3_task_routing_{_RUN}", "is_test": True}},
     )
     print("Reply:", resp.content)
     print("Answered by:", resp.response_metadata.get("model_name") or resp.response_metadata)

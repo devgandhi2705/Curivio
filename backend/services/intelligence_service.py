@@ -168,7 +168,7 @@ def _build_intelligence_context(chat_ctx: dict) -> tuple[str, str]:
 # Multi-domain search
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _multi_search(interests: str, industry: str) -> list[dict]:
+def _multi_search(interests: str, industry: str, trace_id: str | None = None) -> list[dict]:
     """
     Retrieve articles for a daily intelligence feed via the retrieval router.
 
@@ -177,7 +177,10 @@ def _multi_search(interests: str, industry: str) -> list[dict]:
     """
     from .retrieval_router import route
     try:
-        return route(interests, mode="feed")
+        return route(
+            interests, mode="feed",
+            meta={"trace_id": trace_id, "surface": "intelligence_feed", "agent_name": "intelligence_search"},
+        )
     except Exception:
         logger.exception("intelligence_service: retrieval failed for %r", interests)
         return []
@@ -358,6 +361,13 @@ def generate_intelligence_feed(interests: str) -> dict:
     from .grok_service         import ask_grok
     from ..prompts.intelligence_prompt import build_intelligence_prompt
 
+    # D-recon-fix: one trace_id per real invocation, minted unconditionally up
+    # front — same B1 pattern as generate_project_insight. Cheap on a cache hit
+    # (never used, no retrieval call fires). /generate-feed is unauthenticated
+    # (no current_user dependency), so there's no user_id to thread alongside it.
+    import uuid
+    trace_id = uuid.uuid4().hex
+
     chat_ctx = _get_chat_context()
     intelligence_ctx, industry = _build_intelligence_context(chat_ctx)
 
@@ -369,7 +379,7 @@ def generate_intelligence_feed(interests: str) -> dict:
         return cached
 
     # Multi-domain search and ranking
-    raw_articles = _multi_search(interests, industry)
+    raw_articles = _multi_search(interests, industry, trace_id=trace_id)
     articles     = rank_articles(raw_articles, query=interests, top_n=8, mode="feed")
 
     if not articles:

@@ -107,6 +107,7 @@ def test_call_logging() -> None:
             "user_id": "smoke-user-1",
             "project_id": "smoke-project-1",
             "day_ref": 3,
+            "is_test": True,
         }},
     )
     rows = _rows_for("smoke_test_basic", 1)
@@ -143,7 +144,7 @@ def test_parent_child_logging() -> None:
     chain = raw_model | RunnableLambda(_to_second_prompt) | raw_model
     chain.invoke(
         "Reply with exactly one word: hot",
-        config={"metadata": {"call_type": "smoke_test_chain"}},
+        config={"metadata": {"call_type": "smoke_test_chain", "is_test": True}},
     )
     rows = _rows_for("smoke_test_chain", 2)
     assert len(rows) == 2, f"expected 2 rows, got {len(rows)}"
@@ -159,7 +160,7 @@ def test_failed_call_logging() -> None:
         model="llama-3.3-70b-versatile", api_key="invalid-groq-key-000", max_retries=0
     ).with_config(callbacks=[LLMCallLogger()])
     try:
-        bad_model.invoke("hi", config={"metadata": {"call_type": "smoke_test_failure"}})
+        bad_model.invoke("hi", config={"metadata": {"call_type": "smoke_test_failure", "is_test": True}})
         raise AssertionError("expected an auth error, call succeeded instead")
     except Exception as exc:
         print("Expected failure raised:", type(exc).__name__)
@@ -187,7 +188,7 @@ def test_gemini_retry_fires_post_fix() -> None:
     ).with_config(callbacks=[LLMCallLogger()])
 
     try:
-        bad_model.invoke("hi", config={"metadata": {"call_type": "smoke_test_gemini_retry"}})
+        bad_model.invoke("hi", config={"metadata": {"call_type": "smoke_test_gemini_retry", "is_test": True}})
         raise AssertionError("expected an auth error, call succeeded instead")
     except Exception as exc:
         print("Final exception after retries:", type(exc).__name__)

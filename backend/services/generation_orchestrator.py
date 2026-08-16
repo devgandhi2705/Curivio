@@ -152,6 +152,7 @@ def generate_batch(
     curiosity_anchor:       str | None = None,
     raw_batch_articles:     list[dict] | None = None,
     project_id:             str | None = None,
+    trace_id:               str | None = None,
 ) -> BatchGenerationResult:
     """Execute one writer LLM call for a single BatchPlan. Returns cards only."""
     from ..prompts.project_insight_prompt import build_batch_prompt
@@ -218,13 +219,17 @@ def generate_batch(
     )
 
     from ..llm import call_and_parse_json
+    _writer_meta = {
+        "project_id": project_id, "day_ref": context.day_number,
+        "trace_id": trace_id, "surface": "feed_legacy", "agent_name": "writer",
+    }
     raw, _batch_provider = call_and_parse_json(
         lambda: route_writer_call(
             _gemini_prompt,
             prompt,
             call_type="feed_writer_batch",
             json_mode=True,
-            metadata={"project_id": project_id, "day_ref": context.day_number} if project_id else None,
+            metadata=_writer_meta,
         ),
         call_type="feed_writer_batch",
     )
@@ -336,6 +341,7 @@ def run_generation_orchestrator(
     quality_feedback:         str | None  = None,
     article_plan_block:       str | None  = None,
     frame_hint:               str | None  = None,
+    trace_id:                 str | None  = None,
 ) -> dict:
     """
     Top-level orchestrator entry point.
@@ -483,6 +489,7 @@ def run_generation_orchestrator(
                 curiosity_anchor=_curiosity_anchor,
                 raw_batch_articles=batch_articles,
                 project_id=project_id,
+                trace_id=trace_id,
             )
             results.append(result)
             _update_generation_context(gen_ctx, result)
@@ -540,6 +547,7 @@ def run_generation_orchestrator(
         day_number      = day_number,
         knowledge_state = knowledge_state,
         project_id      = project_id,
+        trace_id        = trace_id,
     )
     raw["package_headline"] = synthesis.package_headline
     raw["learning_thread"]  = synthesis.learning_thread

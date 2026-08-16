@@ -226,6 +226,19 @@ def analyze_industry(industry_key: str) -> dict:
       "action_items":           list[str],
     }
     """
+    # D-recon-fix: one trace_id per real invocation of this function, minted
+    # unconditionally up front (same B1 pattern as generate_project_insight's
+    # trace_id = str(_stub_id) if ... else uuid.uuid4().hex) — cheap even on
+    # a cache hit, where it's simply never used. NOT threaded from the calling
+    # chat turn's own trace_id (action_router_service._handle_industry_brief
+    # is this function's real caller): analyze_industry() is cached per
+    # industry+day and shared across whichever user/chat-turn happens to miss
+    # the cache first, so it's its own operation, not a sub-step of one chat
+    # turn — threading chat's trace_id in would misattribute a shared,
+    # cross-user cache-fill to whichever request happened to trigger it.
+    import uuid
+    trace_id = uuid.uuid4().hex
+
     key = industry_key.lower()
     cfg = _INDUSTRY_CONFIG.get(key)
     if cfg is None:
@@ -244,7 +257,7 @@ def analyze_industry(industry_key: str) -> dict:
 
     logger.info("[industry_intelligence] generating brief for %r", key)
 
-    articles  = _fetch_articles(cfg, industry_key=key)
+    articles  = _fetch_articles(cfg, industry_key=key, trace_id=trace_id)
     brief     = _generate_brief(cfg, articles)
     brief["industry_key"] = key
     brief["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -276,7 +289,9 @@ _INDUSTRY_DOMAIN_MAP: dict[str, str] = {
 }
 
 
-def _fetch_articles(cfg: _IndustryConfig, industry_key: str, top_n: int = 8) -> list[dict]:
+def _fetch_articles(
+    cfg: _IndustryConfig, industry_key: str, top_n: int = 8, trace_id: str | None = None,
+) -> list[dict]:
     """
     Retrieve and rank articles for an industry brief via the retrieval router.
 
@@ -291,6 +306,9 @@ def _fetch_articles(cfg: _IndustryConfig, industry_key: str, top_n: int = 8) -> 
         cfg.display_name,
         mode             = "feed",
         override_queries = cfg.search_queries,
+        meta             = {
+            "trace_id": trace_id, "surface": "intelligence_feed", "agent_name": "industry_brief",
+        },
     )
 
     if not raw:

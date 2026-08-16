@@ -4,6 +4,7 @@ import {
   register as apiRegister,
   completeSignup as apiCompleteSignup,
   updateProfile as apiUpdateProfile,
+  updateFeedVersion as apiUpdateFeedVersion,
   changePassword as apiChangePassword,
   deleteAccount as apiDeleteAccount,
   verifyCurrentPassword as apiVerifyPassword,
@@ -132,6 +133,12 @@ export function AuthProvider({ children }) {
     return u
   }, [])
 
+  const updateFeedVersion = useCallback(async (feedVersion) => {
+    const u = await apiUpdateFeedVersion(feedVersion)
+    setUser(u)
+    return u
+  }, [])
+
   const changePassword = useCallback(async (current, next) => {
     return apiChangePassword(current, next)
   }, [])
@@ -158,6 +165,7 @@ export function AuthProvider({ children }) {
       finalizeSignup,
       logout,
       updateProfile,
+      updateFeedVersion,
       changePassword,
       deleteAccount,
       verifyPassword,

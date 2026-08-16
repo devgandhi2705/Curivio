@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -138,12 +139,21 @@ def fetch_reasoned_results(
     message:        str,
     intent_profile: dict | None = None,
     domain:         str         = "",
+    meta:           dict | None = None,
 ) -> dict:
     """
     Execute primary + contradiction searches and annotate results by angle.
 
     The contradiction results are deduplicated against the primary results
     so the LLM sees genuinely new complicating evidence, not overlap.
+
+    `meta` (Phase B1): trace_id/user_id/surface/is_test — forwarded to
+    retrieval_router (so TinyFish's raw-response row groups correctly, see
+    tinyfish_service._log_raw), and used here to log the FULL result set
+    from both searches (both articles lists in full, before the
+    [:_PRIMARY_MAX]/[:_CONTRADICTION_MAX] slicing below) as its own
+    llm_call_log row — the admin panel's window into what chat's web_search
+    tool actually had available before trimming down to what the model sees.
 
     Returns
     -------
@@ -160,8 +170,14 @@ def fetch_reasoned_results(
     p_query  = queries["primary_query"]
     c_query  = queries["contradiction_query"]
 
-    primary_articles = _safe_search(p_query)[:_PRIMARY_MAX]
-    contra_articles  = _safe_search(c_query)
+    t0 = time.monotonic()
+    raw_primary_articles = _safe_search(p_query, meta=meta)
+    raw_contra_articles  = _safe_search(c_query, meta=meta)
+
+    _log_raw_result_set(p_query, c_query, raw_primary_articles, raw_contra_articles, t0, meta)
+
+    primary_articles = raw_primary_articles[:_PRIMARY_MAX]
+    contra_articles  = raw_contra_articles
 
     # Dedup: only keep contradiction results not already in primary
     primary_urls = {a.get("url", "") for a in primary_articles if a.get("url")}
@@ -190,13 +206,54 @@ def fetch_reasoned_results(
 # Private helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _safe_search(query: str) -> list[dict]:
+def _safe_search(query: str, meta: dict | None = None) -> list[dict]:
     try:
         from .retrieval_router import route
-        return route(query, mode="chat")
+        return route(query, mode="chat", meta=meta)
     except Exception:
         logger.warning("[web_search_reasoning] search failed for %r", query[:60])
         return []
+
+
+def _log_raw_result_set(
+    p_query: str, c_query: str,
+    raw_primary: list[dict], raw_contra: list[dict],
+    t0: float, meta: dict | None,
+) -> None:
+    """Phase B1 / Admin-3: the full primary+contradiction result set exactly as
+    it existed before fetch_reasoned_results' [:_PRIMARY_MAX]/[:_CONTRADICTION_MAX]
+    slicing — one row, separate from the per-query TinyFish raw-response rows
+    tinyfish_service._log_raw already writes (this one documents what chat's
+    web_search tool itself had to choose from). Never raises."""
+    import json
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from ..llm.call_logger import write_call_row
+
+    meta = meta or {}
+    now = datetime.now(timezone.utc).isoformat()
+    output = json.dumps({
+        "primary_query": p_query, "contradiction_query": c_query,
+        "primary_raw": raw_primary, "contradiction_raw": raw_contra,
+        "primary_raw_count": len(raw_primary), "contradiction_raw_count": len(raw_contra),
+    })
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider="tinyfish",
+        call_type="chat_web_search_raw",
+        user_id=meta.get("user_id"),
+        input_text=f"primary_query={p_query!r} contradiction_query={c_query!r}",
+        output=output,
+        success=True,
+        trace_id=meta.get("trace_id"),
+        agent_name="web_search",
+        surface=meta.get("surface", "chat"),
+        is_test=bool(meta.get("is_test", False)),
+    )
 
 
 def _domain_boosted_suffix(domain_key: str, primary_intent: str) -> str:
