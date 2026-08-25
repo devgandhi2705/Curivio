@@ -2,6 +2,8 @@
 Auth service — user registration, login, JWT issuance, and FastAPI dependency.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -43,19 +45,52 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=TOKEN_EXPIRE_DAYS)
-    return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    # jti: per-token identity so a single issued token can be individually
+    # revoked (logout / password change) without touching every other token
+    # already issued to this user — see revoke_token/is_token_revoked below.
+    jti = str(uuid.uuid4())
+    return jwt.encode({"sub": user_id, "jti": jti, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def _decode_token(token: str) -> str:
-    """Decode a JWT and return the user_id (sub claim). Raises HTTPException on failure."""
+def _decode_token(token: str) -> dict:
+    """Decode a JWT and return its full payload. Raises HTTPException on failure."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str | None = payload.get("sub")
-        if not user_id:
+        if not payload.get("sub"):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return user_id
+        return payload
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+
+# ── Token revocation ──────────────────────────────────────────────────────────
+# Right-sized to this phase: a jti blocklist, not a full refresh-token system.
+# Populated on logout and on password change, checked on every authenticated
+# request. It can only revoke the ONE token presented at the time of that
+# action — it has no way to enumerate every token ever issued to a user, so a
+# different still-live session (another device, another browser tab that
+# logged in earlier) is NOT revoked by this. Closing that fully would need a
+# per-user "valid_after" timestamp checked against each token's issued-at
+# claim — a bigger change, deliberately out of scope here.
+
+def is_token_revoked(jti: str) -> bool:
+    with get_connection() as conn:
+        row = conn.execute("SELECT 1 FROM revoked_tokens WHERE jti = ?", (jti,)).fetchone()
+    return row is not None
+
+
+def revoke_token(jti: str, exp: int) -> None:
+    """Blocklist one JWT by its jti until its own natural expiry. Opportunistic
+    cleanup on every insert keeps the table bounded by revocations within one
+    token TTL window, not by all-time history."""
+    expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO revoked_tokens (jti, expires_at) VALUES (?, ?)",
+            (jti, expires_at),
+        )
+        conn.execute("DELETE FROM revoked_tokens WHERE expires_at < ?", (now_iso,))
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -262,15 +297,119 @@ def check_current_password(user_id: str, password: str) -> bool:
     return verify_password(password, row["hashed_pw"])
 
 
+# ── Verification hardening (shared by reset + signup codes) ─────────────────
+# Per-TARGET (email), not per-caller-IP — the IP-keyed slowapi limits on the
+# routes stay as a first line of defense, but they only throttle one caller;
+# an attacker rotating source IPs sails past an IP limit untouched. Keying on
+# the email means the budget is the same no matter how many IPs are used.
+
+_MAX_VERIFY_ATTEMPTS   = 5    # brute-forcing a 6-digit code (1e6 space) in 5
+                              # guesses has ~0.0005% success odds — tight enough
+                              # to stop guessing, loose enough to absorb a couple
+                              # of legitimate typos before locking the target out.
+_LOCKOUT_MINUTES        = 15  # independent of the code's own TTL (Task 4) — a
+                              # fresh code does NOT clear this; only a genuinely
+                              # correct/valid verification does (see
+                              # _clear_verify_lockout call sites below). Without
+                              # that rule, an attacker could just request a new
+                              # code every _RESEND_COOLDOWN_SECONDS to reset
+                              # their guess budget and the lockout would do nothing.
+_RESEND_COOLDOWN_SECONDS = 60  # minimum gap between resend requests for the SAME
+                                # target email, independent of caller IP (Task 3).
+
+
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+
+
+def _codes_match(stored_hash: str, submitted_code: str) -> bool:
+    return hmac.compare_digest(stored_hash, _hash_code(submitted_code))
+
+
+def _check_lockout(email: str, purpose: str) -> None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT locked_until FROM verification_lockouts WHERE email = ? AND purpose = ?",
+            (email, purpose),
+        ).fetchone()
+    if row and row["locked_until"]:
+        if datetime.now(timezone.utc) < datetime.fromisoformat(row["locked_until"]):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many attempts. Please try again in {_LOCKOUT_MINUTES} minutes.",
+            )
+
+
+def _record_verify_failure(email: str, purpose: str) -> None:
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT fail_count FROM verification_lockouts WHERE email = ? AND purpose = ?",
+            (email, purpose),
+        ).fetchone()
+        fail_count = (row["fail_count"] if row else 0) + 1
+        locked_until = (
+            (now + timedelta(minutes=_LOCKOUT_MINUTES)).isoformat()
+            if fail_count >= _MAX_VERIFY_ATTEMPTS else None
+        )
+        conn.execute(
+            """INSERT INTO verification_lockouts (email, purpose, fail_count, locked_until, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(email, purpose) DO UPDATE SET
+                   fail_count   = excluded.fail_count,
+                   locked_until = excluded.locked_until,
+                   updated_at   = excluded.updated_at""",
+            (email, purpose, fail_count, locked_until, now.isoformat()),
+        )
+
+
+def _clear_verify_lockout(email: str, purpose: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM verification_lockouts WHERE email = ? AND purpose = ?", (email, purpose)
+        )
+
+
+def _check_resend_cooldown(email: str, purpose: str) -> None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT last_sent_at FROM resend_cooldowns WHERE email = ? AND purpose = ?",
+            (email, purpose),
+        ).fetchone()
+    if row:
+        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(row["last_sent_at"])).total_seconds()
+        if elapsed < _RESEND_COOLDOWN_SECONDS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {int(_RESEND_COOLDOWN_SECONDS - elapsed)}s before requesting another code.",
+            )
+
+
+def _record_resend(email: str, purpose: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO resend_cooldowns (email, purpose, last_sent_at) VALUES (?, ?, ?)
+               ON CONFLICT(email, purpose) DO UPDATE SET last_sent_at = excluded.last_sent_at""",
+            (email, purpose, datetime.now(timezone.utc).isoformat()),
+        )
+
+
 # ── Password reset (6-digit code) ────────────────────────────────────────────
 
-_RESET_EXPIRY_MINUTES = 15
+_RESET_EXPIRY_MINUTES = 5  # was 15 — secondary hardening. The primary fix
+                           # against guessing is _MAX_VERIFY_ATTEMPTS above;
+                           # shortening the window only shrinks the time a
+                           # correct-but-unused code stays valid if it leaks.
 
 
 def create_reset_token(email: str) -> None:
     """Generate, store, and email a 6-digit reset code. Silent on unknown email."""
-    user = get_user_by_email(email.lower().strip())
+    email = email.lower().strip()
+    _check_resend_cooldown(email, "reset")
+
+    user = get_user_by_email(email)
     if not user:
+        _record_resend(email, "reset")
         return
 
     code = str(secrets.randbelow(1_000_000)).zfill(6)
@@ -282,9 +421,10 @@ def create_reset_token(email: str) -> None:
             (user["user_id"],),
         )
         conn.execute(
-            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
-            (user["user_id"], code, expires_at),
+            "INSERT INTO password_reset_tokens (user_id, code_hash, expires_at) VALUES (?, ?, ?)",
+            (user["user_id"], _hash_code(code), expires_at),
         )
+    _record_resend(email, "reset")
 
     _send_code_email(user["email"], user["name"], code)
 
@@ -351,8 +491,12 @@ def _send_code_email(email: str, name: str, code: str) -> None:
 
 def verify_reset_code(email: str, code: str) -> None:
     """Check the 6-digit code is valid and unexpired without consuming it. Raises HTTPException on failure."""
-    user = get_user_by_email(email.lower().strip())
+    email = email.lower().strip()
+    _check_lockout(email, "reset")
+
+    user = get_user_by_email(email)
     if not user:
+        _record_verify_failure(email, "reset")
         raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
 
     with get_connection() as conn:
@@ -362,12 +506,16 @@ def verify_reset_code(email: str, code: str) -> None:
             (user["user_id"],),
         ).fetchone()
 
-        if not latest or latest["token"] != code.strip():
+        if not latest or not _codes_match(latest["code_hash"], code):
+            _record_verify_failure(email, "reset")
             raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
 
         expires_at = datetime.fromisoformat(latest["expires_at"])
         if datetime.now(timezone.utc) > expires_at:
+            _record_verify_failure(email, "reset")
             raise HTTPException(status_code=400, detail="This code has expired. Please request a new one.")
+
+    _clear_verify_lockout(email, "reset")
 
 
 def consume_reset_token(email: str, code: str, new_password: str) -> None:
@@ -375,8 +523,12 @@ def consume_reset_token(email: str, code: str, new_password: str) -> None:
     if len(new_password) < 8:
         raise HTTPException(status_code=422, detail="Password must be at least 8 characters.")
 
-    user = get_user_by_email(email.lower().strip())
+    email = email.lower().strip()
+    _check_lockout(email, "reset")
+
+    user = get_user_by_email(email)
     if not user:
+        _record_verify_failure(email, "reset")
         raise HTTPException(status_code=400, detail="Invalid or expired code.")
 
     with get_connection() as conn:
@@ -386,11 +538,13 @@ def consume_reset_token(email: str, code: str, new_password: str) -> None:
             (user["user_id"],),
         ).fetchone()
 
-        if not latest or latest["token"] != code.strip():
+        if not latest or not _codes_match(latest["code_hash"], code):
+            _record_verify_failure(email, "reset")
             raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
 
         expires_at = datetime.fromisoformat(latest["expires_at"])
         if datetime.now(timezone.utc) > expires_at:
+            _record_verify_failure(email, "reset")
             raise HTTPException(status_code=400, detail="This code has expired. Please request a new one.")
 
         conn.execute(
@@ -401,14 +555,22 @@ def consume_reset_token(email: str, code: str, new_password: str) -> None:
             "UPDATE password_reset_tokens SET used = 1 WHERE id = ?",
             (latest["id"],),
         )
+    _clear_verify_lockout(email, "reset")
 
 
 # ── Email verification for signup ────────────────────────────────────────────
 
-_SIGNUP_EXPIRY_MINUTES = 15
+_SIGNUP_EXPIRY_MINUTES = 5  # was 15 — see _RESET_EXPIRY_MINUTES's comment,
+                            # same reasoning applies here.
 
-# in-memory store: email_lower → {name, hashed_pw, code, expires_at}
-_pending_signups: dict = {}
+# Pending signups live in the `pending_signups` table, not a module-level
+# dict. The old in-memory dict was lost on every restart and, in any
+# multi-worker/multi-instance deployment, only visible to whichever worker
+# happened to handle the /auth/send-verify-email request — a signup whose
+# /auth/complete-signup landed on a different worker would 400 with "no
+# pending signup" even with the correct code. A DB row (same pattern already
+# used for password_reset_tokens) is visible to every worker and survives a
+# restart.
 
 
 def _build_signup_email_bodies(display_name: str, code: str) -> tuple[str, str]:
@@ -444,6 +606,7 @@ def _build_signup_email_bodies(display_name: str, code: str) -> tuple[str, str]:
 def create_signup_verification(email: str, name: str, password: str) -> None:
     """Validate signup data, store a pending record, and email a 6-digit code."""
     email = email.lower().strip()
+    _check_resend_cooldown(email, "signup")
 
     if get_user_by_email(email):
         raise HTTPException(status_code=409, detail="An account with this email already exists")
@@ -451,18 +614,21 @@ def create_signup_verification(email: str, name: str, password: str) -> None:
     if len(password) < 8:
         raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
 
-    # Clean up any expired entries for this email
-    _pending_signups.pop(email, None)
-
     code       = str(secrets.randbelow(1_000_000)).zfill(6)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_SIGNUP_EXPIRY_MINUTES)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=_SIGNUP_EXPIRY_MINUTES)).isoformat()
 
-    _pending_signups[email] = {
-        "name":       name.strip(),
-        "hashed_pw":  hash_password(password),
-        "code":       code,
-        "expires_at": expires_at,
-    }
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO pending_signups (email, name, hashed_pw, code_hash, expires_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(email) DO UPDATE SET
+                   name       = excluded.name,
+                   hashed_pw  = excluded.hashed_pw,
+                   code_hash  = excluded.code_hash,
+                   expires_at = excluded.expires_at""",
+            (email, name.strip(), hash_password(password), _hash_code(code), expires_at),
+        )
+    _record_resend(email, "signup")
 
     display_name = name.strip() or "there"
     text_body, html_body = _build_signup_email_bodies(display_name, code)
@@ -473,21 +639,31 @@ def create_signup_verification(email: str, name: str, password: str) -> None:
 def complete_signup_verification(email: str, code: str) -> dict:
     """Verify the 6-digit code and create the user account. Returns token + user."""
     email = email.lower().strip()
-    pending = _pending_signups.get(email)
+    _check_lockout(email, "signup")
+
+    with get_connection() as conn:
+        pending = conn.execute(
+            "SELECT * FROM pending_signups WHERE email = ?", (email,)
+        ).fetchone()
 
     if not pending:
+        _record_verify_failure(email, "signup")
         raise HTTPException(status_code=400, detail="No pending signup for this email. Please start over.")
 
-    if pending["code"] != code.strip():
+    if not _codes_match(pending["code_hash"], code):
+        _record_verify_failure(email, "signup")
         raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
 
-    if datetime.now(timezone.utc) > pending["expires_at"]:
-        _pending_signups.pop(email, None)
+    if datetime.now(timezone.utc) > datetime.fromisoformat(pending["expires_at"]):
+        with get_connection() as conn:
+            conn.execute("DELETE FROM pending_signups WHERE email = ?", (email,))
+        _record_verify_failure(email, "signup")
         raise HTTPException(status_code=400, detail="This code has expired. Please request a new one.")
 
     # Check again in case email was registered by someone else during the window
     if get_user_by_email(email):
-        _pending_signups.pop(email, None)
+        with get_connection() as conn:
+            conn.execute("DELETE FROM pending_signups WHERE email = ?", (email,))
         raise HTTPException(status_code=409, detail="An account with this email already exists")
 
     user_id = str(uuid.uuid4())
@@ -496,8 +672,9 @@ def complete_signup_verification(email: str, code: str) -> dict:
             "INSERT INTO users (user_id, email, name, hashed_pw) VALUES (?, ?, ?, ?)",
             (user_id, email, pending["name"], pending["hashed_pw"]),
         )
+        conn.execute("DELETE FROM pending_signups WHERE email = ?", (email,))
 
-    _pending_signups.pop(email, None)
+    _clear_verify_lockout(email, "signup")
 
     token     = create_access_token(user_id)
     user_dict = {"user_id": user_id, "email": email, "name": pending["name"], "created_at": None}
@@ -507,21 +684,45 @@ def complete_signup_verification(email: str, code: str) -> dict:
 
 # ── FastAPI dependency ────────────────────────────────────────────────────────
 
+def _valid_payload(credentials: HTTPAuthorizationCredentials | None) -> dict:
+    """Shared by get_current_user and get_current_token: decode + revocation
+    check. A token minted before the jti claim existed has no "jti" key —
+    treated as never-revoked (can't be individually blocklisted), it simply
+    rides out its original expiry."""
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    payload = _decode_token(credentials.credentials)
+    jti = payload.get("jti")
+    if jti and is_token_revoked(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+    return payload
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
     """
     FastAPI dependency. Inject with `user: dict = Depends(get_current_user)`.
-    Returns the user dict on success; raises 401 if token is missing or invalid.
+    Returns the user dict on success; raises 401 if token is missing, invalid,
+    or has been revoked (logout / password change since it was issued).
     """
-    if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    user_id = _decode_token(credentials.credentials)
-    user    = get_user_by_id(user_id)
+    payload = _valid_payload(credentials)
+    user    = get_user_by_id(payload["sub"])
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return _row_to_user(user)
+
+
+def get_current_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    """
+    FastAPI dependency for routes that need the raw JWT payload (jti/exp) to
+    revoke the presented token itself — logout, change-password — rather than
+    the user row. Same validity/revocation checks as get_current_user.
+    """
+    return _valid_payload(credentials)
 
 
 def get_current_admin_user(current_user: dict = Depends(get_current_user)) -> dict:

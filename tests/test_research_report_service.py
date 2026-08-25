@@ -602,7 +602,8 @@ class TestActionRouterIntegration:
         with patch("backend.services.deep_research_service.get_stored_research",
                    return_value=None):
             result = dispatch_action("research_report", "unknown topic", {})
-        assert "deep research" in result["instruction"].lower()
+        assert result["found"] is False
+        assert "no stored research" in result["instruction"].lower()
 
     def test_report_action_higher_priority_than_find_reports(self):
         from backend.services.action_router_service import detect_action

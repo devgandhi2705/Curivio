@@ -13,7 +13,7 @@ related_topics, progressions) is preserved separately for the UI/chat layer.
 Design constraints
 ------------------
 - Zero I/O — pure string operations, no DB, no API calls.
-- Mode-aware limits: chat 1–2, feed 2–4, deep_research 4–6.
+- Mode-aware limits: chat 1–2, feed 2–4.
 - Retrieval-first: every query angle is designed to surface documents, not
   explain concepts.
 - Trusted-source preference: authority angles embed known source names so
@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 _MODE_LIMITS: dict[str, int] = {
     "chat":          2,
     "feed":          4,
-    "deep_research": 6,
 }
 
 _DEFAULT_LIMIT = 2
@@ -220,7 +219,7 @@ def expand_queries(topic: str, mode: str = "chat") -> ExpansionResult:
     Parameters
     ----------
     topic   User query or topic string (any length).
-    mode    "chat" | "feed" | "deep_research"  — controls query budget.
+    mode    "chat" | "feed"  — controls query budget.
 
     Returns
     -------

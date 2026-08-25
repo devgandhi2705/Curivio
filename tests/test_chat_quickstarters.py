@@ -4,12 +4,12 @@ Quick-starter prefix intent tests.
 Each quick-starter in ChatInput.jsx inserts a prefix ("Research ", "Compare ",
 "Analyze ", "Learning roadmap for ") that the user completes before sending.
 These tests verify that the completed prompts route to the correct backend
-auto-mode — no Tavily, no Groq, no deep-research pipeline is called.
+auto-mode — no Tavily, no Groq calls are made.
 
 Quick-starters and their expected auto-mode:
-  "Research <topic>"            → deep_research
+  "Research <topic>"            → web_search
   "Compare <A> vs <B>"          → web_search   (comparison)
-  "Analyze <topic>"             → deep_research
+  "Analyze <topic>"             → web_search
   "Learning roadmap for <X>"    → normal        (no research intent)
 
 TESTING RULES
@@ -30,17 +30,17 @@ class TestResearchPrefix:
     def test_research_ai_manufacturing(self):
         r = detect_intent("Research AI in manufacturing")
         assert r["intent"]           == "research"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
 
     def test_research_transformer_architecture(self):
         r = detect_intent("Research transformer architecture")
         assert r["intent"]           == "research"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
 
     def test_research_global_supply_chains(self):
         r = detect_intent("Research global supply chains in pharma")
         assert r["intent"]           == "research"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
 
     def test_research_query_type_is_research(self):
         r = detect_intent("Research reinforcement learning from human feedback")
@@ -91,12 +91,12 @@ class TestAnalyzePrefix:
     def test_analyze_supply_chain(self):
         r = detect_intent("Analyze semiconductor supply chains")
         assert r["intent"]           == "analyze"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
 
     def test_analyze_market_trends(self):
         r = detect_intent("Analyze EV market trends in Asia")
         assert r["intent"]           == "analyze"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
 
     def test_analyze_query_type_is_analysis(self):
         r = detect_intent("Analyze the fintech regulatory landscape")
@@ -174,8 +174,8 @@ class TestAutoModeWithQuickStarters:
     # ── Explicit web_search mode ──────────────────────────────────────────────
 
     def test_explicit_web_search_research_prompt_not_upgraded(self):
-        # "Research X" would normally auto-upgrade to deep_research,
-        # but user explicitly selected web_search — must stay web_search
+        # "Research X" recommends web_search per detect_intent, and the user
+        # explicitly selected web_search — must stay web_search
         done = self._stream_done("Research AI in manufacturing", "web_search")
         assert done["chat_mode"] == "web_search"
         assert done["auto_mode"] is False
@@ -184,14 +184,6 @@ class TestAutoModeWithQuickStarters:
         # Roadmap prompt + explicit web_search → web_search (intent=normal, no upgrade)
         done = self._stream_done("Learning roadmap for machine learning", "web_search")
         assert done["chat_mode"] == "web_search"
-        assert done["auto_mode"] is False
-
-    # ── Explicit deep_research mode ───────────────────────────────────────────
-
-    def test_explicit_deep_research_compare_not_downgraded(self):
-        # "Compare X vs Y" would auto-detect web_search, but user set deep_research
-        done = self._stream_done("Compare PyTorch vs TensorFlow", "deep_research")
-        assert done["chat_mode"] == "deep_research"
         assert done["auto_mode"] is False
 
     # ── Auto mode (normal → intent detection fires) ───────────────────────────
@@ -215,9 +207,9 @@ class TestAutoModeWithQuickStarters:
 # ─────────────────────────────────────────────────────────────────────────────
 
 QUICK_STARTER_SPECS = [
-    ("Research ",             "deep_research"),
+    ("Research ",             "web_search"),
     ("Compare ",              "web_search"),
-    ("Analyze ",              "deep_research"),
+    ("Analyze ",              "web_search"),
     ("Learning roadmap for ", "normal"),
 ]
 

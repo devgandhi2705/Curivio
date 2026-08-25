@@ -54,9 +54,8 @@ Curivio curates structured intelligence briefs from live web sources, lets you e
 - **Four chat modes:**
   - `normal` — memory + context only, fastest, no external retrieval
   - `web_search` — Tavily retrieval with reasoning-augmented dual-query (primary + contradiction angle)
-  - `deep_research` — 6-stage workflow with stage-by-stage progress streaming
   - `layman` — mechanism-preserving simplification; domain-specific analogy bank
-- **Feed → Chat integration** — open any card in chat with one of four zoom levels: Ask About, Explain Simply, Continue Research, or Deep Research; each mode receives the card's extracted mechanism as its seed query
+- **Feed → Chat integration** — open any card in chat with one of three zoom levels: Ask About, Explain Simply, or Continue Research; each mode receives the card's extracted mechanism as its seed query
 - **Auto intent detection** — regex fast-path + 9-dimension semantic scoring upgrades mode automatically for research/comparison/analysis phrasing
 - **Cognitive tension directive** — tension engine scores the conversation and injects friction directives to prevent flat informational responses
 - **Dynamic narrative rhythm** — rotates response structure (analytical, narrative, Socratic, comparative) across turns to prevent homogeneity
@@ -111,7 +110,6 @@ User
      │   ├─ chat_modes_service      Mode routing, mechanism-targeted queries
      │   ├─ chat_prompt_service     System prompt assembly (12+ context sections)
      │   ├─ chat_intent_service     Regex fast-path + semantic intent scoring
-     │   ├─ deep_research_service   6-stage multi-query workflow
      │   ├─ tension_engine          Cognitive friction scoring + directive injection
      │   ├─ narrative_rhythm_service Response structure rotation
      │   └─ layman_mode_service     Domain-specific analogy banks + simplification
@@ -154,7 +152,6 @@ User
 4. Mode routing:
    - explain_simply  → layman mode + mechanism-preservation directive
    - web_search      → mechanism-anchored dual query (Tavily)
-   - deep_research   → 6-stage workflow with stage progress events
 5. Assemble system prompt (12+ sections: persona, depth, format, tension,
    narrative rhythm, continuity, knowledge state, layman directive)
 6. Stream tokens → persist messages → enrich recommendations
@@ -202,7 +199,6 @@ ai-learning-agent/
 │   │   ├── project_insight_prompt.py    # Feed generation mega-prompt: 9 title styles,
 │   │   │                                # 10 narrative frames, curiosity tension scoring,
 │   │   │                                # beginner calibration, inter-article continuity
-│   │   ├── deep_research_prompt.py      # Multi-stage research synthesis prompt
 │   │   ├── learning_path_prompt.py      # Structured learning path generation
 │   │   └── topic_expansion_prompt.py    # Related/prereq/advanced topic generation
 │   │
@@ -229,9 +225,6 @@ ai-learning-agent/
 │       │                                # semantic scoring integration
 │       ├── semantic_intent_service.py   # 9-dimension semantic intent scoring,
 │       │                                # blended format directives
-│       ├── deep_research_service.py     # 6-stage research workflow:
-│       │                                # expand_queries → fetch → rank → viewpoints
-│       │                                #   → generate → persist
 │       ├── web_search_reasoning_service.py # Dual-query reasoning search (supporting
 │       │                                   # + complicating evidence separation)
 │       ├── intelligence_service.py      # Daily intelligence brief pipeline
@@ -495,7 +488,7 @@ Protected endpoints (`✅`) require `Authorization: Bearer <token>`.
 }
 ```
 
-`chat_mode` values: `normal` | `web_search` | `deep_research` | `layman`
+`chat_mode` values: `normal` | `web_search` | `layman`
 
 `feed_context.action` values:
 
@@ -504,7 +497,6 @@ Protected endpoints (`✅`) require `Authorization: Bearer <token>`.
 | `ask_about` | No retrieval — card context is sufficient |
 | `explain_simply` | Layman mode; mechanism-preservation directive injected |
 | `continue_research` | Web search anchored to card's extracted mechanism |
-| `deep_research` | Full research workflow branching outward from card's mechanism |
 
 ### Learning Projects
 
@@ -525,7 +517,6 @@ Protected endpoints (`✅`) require `Authorization: Bearer <token>`.
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| `POST` | `/deep-research` | ✅ | Run or retrieve cached deep research |
 | `POST` | `/topic-expansion` | ✅ | Get related / prerequisite / advanced topics |
 | `POST` | `/learning-path` | ✅ | Generate a structured learning path |
 | `POST` | `/repos` | ✅ | Find GitHub repos for a topic |
@@ -563,9 +554,6 @@ Protected endpoints (`✅`) require `Authorization: Bearer <token>`.
 | `chunk` | During token streaming | `v` — incremental text |
 | `done` | After stream ends | `message_id`, `chat_mode`, `sources`, `recommendations`, `context_used` |
 | `error` | On unrecoverable failure | `message` — error description |
-
-For `deep_research` mode, multiple `status` events arrive as each of the 6 stages completes:  
-`Expanding search angles…` → `Searching sources…` → `Ranking results…` → `Comparing perspectives…` → `Generating findings…` → `Finalizing report…`
 
 ---
 
@@ -620,20 +608,6 @@ Each chat mode then uses the mechanism differently:
 |---|---|
 | `explain_simply` | Mechanism injected into layman directive: "PRESERVE THIS SPECIFIC MECHANISM: …" |
 | `web_search` | Query = `"{mechanism} {project} evidence current 2025 examples"` |
-| `deep_research` | Query = `"{title} {mechanism} {stage-specific expansion angle}"` |
-
-### Deep Research Workflow
-
-6 sequential stages, each independently recoverable:
-
-```
-expand_queries   → generate 4–6 search angles from the topic
-fetch_articles   → parallel Tavily searches across all angles
-rank_articles    → domain-aware source scoring and deduplication
-extract_viewpoints → identify 3–5 distinct analytical perspectives
-generate         → synthesise findings into structured research report
-persist          → cache result by query hash for instant recall
-```
 
 ### Beginner Calibration
 

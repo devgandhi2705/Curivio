@@ -79,16 +79,6 @@ class FeedRetrievalRules:
 
 
 @dataclass(frozen=True)
-class DeepResearchRules:
-    """Rules for deep research / chat mode flows."""
-    max_search_queries: int = 8
-    search_depth: str = "advanced"
-    use_crawl: bool = False                # only crawl_primary strategy uses this
-    use_map_for_discovery: bool = False
-    max_extract_targets: int = 5
-
-
-@dataclass(frozen=True)
 class DomainRetrievalConfig:
     # ── Identity ──────────────────────────────────────────────────────────────
     key: str                                    # canonical key ("ai", "finance", …)
@@ -115,7 +105,6 @@ class DomainRetrievalConfig:
 
     # ── Flow rules ────────────────────────────────────────────────────────────
     feed_retrieval_rules: FeedRetrievalRules   = field(default_factory=FeedRetrievalRules)
-    deep_research_rules: DeepResearchRules     = field(default_factory=DeepResearchRules)
 
     # ── Source-type trust hierarchy ───────────────────────────────────────────
     # Multipliers applied to the final rank score based on classified source type.
@@ -199,13 +188,6 @@ _AI = DomainRetrievalConfig(
         search_depth="advanced",
         use_extract_for_known_urls=True,
     ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=4,
-        search_depth="advanced",
-        use_crawl=False,
-        use_map_for_discovery=True,
-        max_extract_targets=5,
-    ),
     prompt_context=(
         "Domain context: AI / Machine Learning\n"
         "- Use precise ML terminology (loss functions, gradients, attention, etc.).\n"
@@ -273,10 +255,6 @@ _TECHNOLOGY = DomainRetrievalConfig(
     feed_retrieval_rules=FeedRetrievalRules(
         search_queries_per_package=2,
         max_results_per_query=8,
-        search_depth="advanced",
-    ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=4,
         search_depth="advanced",
     ),
     prompt_context=(
@@ -348,11 +326,6 @@ _FINANCE = DomainRetrievalConfig(
         max_results_per_query=7,
         search_depth="advanced",
         use_extract_for_known_urls=True,
-    ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=4,
-        search_depth="advanced",
-        max_extract_targets=5,
     ),
     prompt_context=(
         "Domain context: Finance\n"
@@ -426,11 +399,6 @@ _PHARMA = DomainRetrievalConfig(
         search_depth="advanced",
         use_extract_for_known_urls=True,
     ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=4,
-        search_depth="advanced",
-        max_extract_targets=5,
-    ),
     prompt_context=(
         "Domain context: Pharmaceutical / Biotech\n"
         "- Cite clinical evidence levels (Phase I/II/III, RCT, meta-analysis).\n"
@@ -498,10 +466,6 @@ _MANUFACTURING = DomainRetrievalConfig(
         max_results_per_query=6,
         search_depth="basic",
     ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=3,
-        search_depth="advanced",
-    ),
     prompt_context=(
         "Domain context: Manufacturing\n"
         "- Frame insights in terms of OEE, throughput, quality, and cost impact.\n"
@@ -567,10 +531,6 @@ _EXPORT_TRADE = DomainRetrievalConfig(
         max_results_per_query=6,
         search_depth="basic",
     ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=3,
-        search_depth="advanced",
-    ),
     prompt_context=(
         "Domain context: Export / International Trade\n"
         "- Reference the correct HS codes, Incoterms, and trade agreements.\n"
@@ -635,10 +595,6 @@ _BUSINESS = DomainRetrievalConfig(
         max_results_per_query=6,
         search_depth="basic",
     ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=3,
-        search_depth="advanced",
-    ),
     prompt_context=(
         "Domain context: Business / Strategy\n"
         "- Ground recommendations in established frameworks (Porter's 5, SWOT, OKR, etc.).\n"
@@ -668,10 +624,6 @@ _DEFAULT = DomainRetrievalConfig(
     feed_retrieval_rules=FeedRetrievalRules(
         search_queries_per_package=1,
         max_results_per_query=5,
-        search_depth="basic",
-    ),
-    deep_research_rules=DeepResearchRules(
-        max_search_queries=2,
         search_depth="basic",
     ),
     prompt_context="",

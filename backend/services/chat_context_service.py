@@ -29,7 +29,15 @@ def build_user_profile_context(user_id: str | None = None) -> dict:
     Return a snapshot of what the agent knows about the user's learning profile.
 
     {
-      "learning_stage":         str,           # "beginner" | "intermediate" | "advanced"
+      "learning_stage":         str,           # "early" | "developing" | "proficient"
+      #                                          (recommendation_service.get_learning_stage()'s
+      #                                          liked-topic-count thresholds — was previously
+      #                                          documented here as beginner/intermediate/advanced,
+      #                                          which is a different vocabulary belonging to
+      #                                          adaptive_explanation_service's inferred_level;
+      #                                          fixed as part of the Chat identity pass's
+      #                                          user-level signal collapse, see
+      #                                          chat_prompt_service._resolve_user_level)
       "difficulty_preference":  str | None,
       "top_interests":          list[str],      # up to 5 topic names
       "suppressed_topics":      list[str],

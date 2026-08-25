@@ -12,7 +12,6 @@ Covers
 TESTING RULES
 -------------
 - No Tavily calls — mock all external services
-- No deep research pipeline calls — mock run_deep_research
 """
 
 import pytest
@@ -113,7 +112,7 @@ class TestDetectIntentResearch:
     def test_research_keyword_triggers_research(self):
         r = detect_intent("Research AI in manufacturing")
         assert r["intent"]           == "research"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
         assert r["query_type"]       == "research"
 
     def test_deep_dive_triggers_research(self):
@@ -154,7 +153,7 @@ class TestDetectIntentAnalyze:
     def test_analyze_triggers_analyze(self):
         r = detect_intent("Analyze semiconductor supply chains")
         assert r["intent"]           == "analyze"
-        assert r["recommended_mode"] == "deep_research"
+        assert r["recommended_mode"] == "web_search"
         assert r["query_type"]       == "analysis"
 
     def test_analysis_of_triggers_analyze(self):
@@ -292,7 +291,7 @@ class TestDetectIntentReturnShape:
     ])
     def test_recommended_mode_is_valid_value(self, message):
         r = detect_intent(message)
-        assert r["recommended_mode"] in ("web_search", "deep_research", "normal")
+        assert r["recommended_mode"] in ("web_search", "normal")
 
     @pytest.mark.parametrize("message", [
         "Compare X vs Y",
@@ -362,11 +361,11 @@ class TestAutoModeIntegration:
         assert done["chat_mode"] == "normal"
         assert done["auto_mode"] is False
 
-    def test_explicit_deep_research_mode_not_overridden(self):
-        # User explicitly chose deep_research — auto_mode should be False
-        events = self._run_stream("What is attention?", chat_mode="deep_research")
+    def test_explicit_web_search_mode_not_overridden(self):
+        # User explicitly chose web_search — auto_mode should be False
+        events = self._run_stream("What is attention?", chat_mode="web_search")
         done = next(e for e in events if e["t"] == "done")
-        assert done["chat_mode"] == "deep_research"
+        assert done["chat_mode"] == "web_search"
         assert done["auto_mode"] is False
 
     def test_status_event_emitted_before_chunks_for_web_search(self):

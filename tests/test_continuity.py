@@ -487,7 +487,7 @@ class TestContinuityInSystemPrompt:
                 "sessions_count": 2,
             },
         }
-        prompt = build_system_prompt(ctx, mode="deep_research")
+        prompt = build_system_prompt(ctx, mode="web_search")
         assert "Embeddings" in prompt
         assert "FAISS" in prompt
 

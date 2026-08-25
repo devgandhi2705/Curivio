@@ -53,11 +53,11 @@ def test_two_users_zero_cross_contamination() -> None:
 
     process_feedback("Distributed Systems", "liked", alice)
     process_feedback("Distributed Systems", "liked", alice)
-    record_activity("Distributed Systems", "deep_research", alice)
+    record_activity("Distributed Systems", "learning_path", alice)
     record_activity("Kubernetes", "topic_expansion", alice)
 
     process_feedback("Watercolor Painting", "liked", bob)
-    record_activity("Watercolor Painting", "deep_research", bob)
+    record_activity("Watercolor Painting", "topic_expansion", bob)
     record_activity("Oil Painting", "learning_path", bob)
     record_activity("Acrylics", "github_repos", bob)
 

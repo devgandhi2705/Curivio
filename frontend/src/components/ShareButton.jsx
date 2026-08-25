@@ -89,7 +89,20 @@ const PLATFORMS = [
 
 const ACTION_BTN_CLASS = "inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
 
-export default function ShareButton({ type, resourceId, shareTitle = "", shareText = "", className = "" }) {
+function ShareLinkIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+         aria-hidden="true">
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="18" cy="18" r="2.5" />
+      <path d="m8.2 10.9 7.6-3.8M8.2 13.1l7.6 3.8" />
+    </svg>
+  )
+}
+
+export default function ShareButton({ type, resourceId, shareTitle = "", shareText = "", className = "", buttonClassName = "" }) {
   const [isOpen, setIsOpen]     = useState(false)
   const [shareUrl, setShareUrl] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -200,17 +213,11 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
 
   return (
     <div ref={wrapperRef} className={`relative inline-block ${className}`}>
-      <button onClick={handleTriggerClick} className={ACTION_BTN_CLASS}>
+      <button onClick={handleTriggerClick} className={`${ACTION_BTN_CLASS} ${buttonClassName}`}>
         {isLoading ? (
           <span className="share-spinner" />
         ) : (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" strokeWidth="2"
-               strokeLinecap="round" strokeLinejoin="round"
-               aria-hidden="true">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
+          <ShareLinkIcon />
         )}
       </button>
 
@@ -253,11 +260,7 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
 
             <button onClick={handleCopy} className={`mt-3 w-full justify-between ${ACTION_BTN_CLASS}`}>
               <span className="inline-flex items-center gap-1.5">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                </svg>
+                <ShareLinkIcon size={14} />
                 Copy link
               </span>
               {copied && <span>Copied!</span>}

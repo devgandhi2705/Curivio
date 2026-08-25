@@ -15,13 +15,13 @@ from botocore.exceptions import ClientError
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 
 logger = logging.getLogger(__name__)
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from .rate_limiter import limiter
 
 from .services.curator_service import generate_learning_feed
 from .services.intelligence_service import (
@@ -35,12 +35,6 @@ from .services.api_usage_service import (
     get_usage_stats,
     get_daily_summary,
     get_recent_calls,
-)
-from .services.deep_research_service import (
-    is_important_topic,
-    get_stored_research,
-    list_research_topics,
-    run_deep_research,
 )
 from .services.topic_expansion_service import (
     expand_topic,
@@ -73,6 +67,8 @@ from .services.auth_service import (
     delete_account,
     get_current_user,
     get_current_admin_user,
+    get_current_token,
+    revoke_token,
     check_current_password,
     create_reset_token,
     verify_reset_code,
@@ -113,8 +109,6 @@ UNPACK_RATE_LIMIT        = cfg.UNPACK_RATE_LIMIT
 CHAT_UPLOAD_RATE_LIMIT   = cfg.CHAT_UPLOAD_RATE_LIMIT
 AUTH_STRICT_RATE_LIMIT   = cfg.AUTH_STRICT_RATE_LIMIT
 AUTH_LOOSE_RATE_LIMIT    = cfg.AUTH_LOOSE_RATE_LIMIT
-
-limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -363,34 +357,6 @@ class ApiUsageSummary(BaseModel):
     recent_calls: list[dict]
 
 
-# --- Deep research models ---
-
-class DeepResearchRequest(BaseModel):
-    topic: str
-
-    @field_validator("topic")
-    @classmethod
-    def topic_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("topic must not be blank")
-        return v.strip()
-
-class DeepResearchResult(BaseModel):
-    topic: str
-    related_concepts: list[str]
-    implementation_ideas: list[str]
-    practical_applications: list[str]
-    advanced_follow_ups: list[str]
-    research_summary: str
-    sources: list[str]
-    generated_at: str
-
-class DeepResearchSummary(BaseModel):
-    id: int
-    topic: str
-    generated_at: str
-
-
 # --- Routes ---
 
 @app.get("/")
@@ -635,8 +601,24 @@ async def v2_generate_stream(
 async def auth_change_password(
     data: ChangePasswordRequest,
     current_user: dict = Depends(get_current_user),
+    token_payload: dict = Depends(get_current_token),
 ):
     change_password(current_user["user_id"], data.current_password, data.new_password)
+    # Revoke the token used to make this change — a credential that motivated
+    # a password change shouldn't still work afterward. Only this session's
+    # token: see revoke_token's docstring for why other live sessions aren't
+    # touched by this.
+    jti = token_payload.get("jti")
+    if jti:
+        revoke_token(jti, token_payload["exp"])
+    return {"ok": True}
+
+
+@app.post("/auth/logout")
+async def auth_logout(token_payload: dict = Depends(get_current_token)):
+    jti = token_payload.get("jti")
+    if jti:
+        revoke_token(jti, token_payload["exp"])
     return {"ok": True}
 
 
@@ -711,18 +693,6 @@ async def list_intelligence_feeds(request: Request, limit: int = 20):
     return get_recent_intelligence_feeds(limit=limit)
 
 
-def _auto_research(topic: str, user_id: str) -> None:
-    """Background task wrapper — errors are logged, never re-raised."""
-    try:
-        run_deep_research(topic)
-        try:
-            record_activity(topic, "deep_research", user_id)
-        except Exception:
-            logger.warning("[session_memory] record failed for deep_research %r", topic)
-    except Exception:
-        logger.exception("[deep_research] background task failed for topic %r", topic)
-
-
 @app.post("/feedback", response_model=FeedbackResponse)
 @limiter.limit(FEEDBACK_RATE_LIMIT)
 async def feedback(
@@ -730,9 +700,6 @@ async def feedback(
     current_user: dict = Depends(get_current_user),
 ):
     result = process_feedback(data.topic, data.feedback, current_user["user_id"])
-    decision = evaluate_exploration(data.topic)
-    if decision.should_explore:
-        background_tasks.add_task(_auto_research, data.topic, current_user["user_id"])
     return FeedbackResponse(**result)
 
 
@@ -766,40 +733,6 @@ async def api_usage_stats(request: Request, days: int = 7):
     daily  = get_daily_summary(days=days)
     recent = get_recent_calls(limit=20)
     return ApiUsageSummary(period_days=days, **stats, daily=daily, recent_calls=recent)
-
-
-# --- Deep research routes (list before /{topic} so exact path wins) ---
-
-@app.get("/deep-research", response_model=list[DeepResearchSummary])
-@limiter.limit(MEMORY_RATE_LIMIT)
-async def list_deep_research(request: Request, limit: int = 20):
-    return [DeepResearchSummary(**r) for r in list_research_topics(limit=limit)]
-
-
-@app.post("/deep-research", response_model=DeepResearchResult)
-@limiter.limit(FEEDBACK_RATE_LIMIT)
-async def trigger_deep_research(
-    request: Request, data: DeepResearchRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    cached = get_stored_research(data.topic)
-    if cached:
-        return DeepResearchResult(**cached)
-    result = run_deep_research(data.topic)
-    try:
-        record_activity(data.topic, "deep_research", current_user["user_id"])
-    except Exception:
-        logger.warning("[session_memory] record failed for deep_research %r", data.topic)
-    return DeepResearchResult(**result)
-
-
-@app.get("/deep-research/{topic}", response_model=DeepResearchResult)
-@limiter.limit(MEMORY_RATE_LIMIT)
-async def get_deep_research(request: Request, topic: str):
-    result = get_stored_research(topic)
-    if result is None:
-        raise HTTPException(status_code=404, detail="No deep research found for this topic")
-    return DeepResearchResult(**result)
 
 
 # --- Topic selection models ---
@@ -1202,10 +1135,13 @@ class FeedContext(BaseModel):
     Carries the pre-curated content from the insight card so the chat
     service can skip redundant retrieval and answer from known context.
     """
-    action:           str             # "ask_about" | "continue_research" | "deep_research"
+    action:           str             # "ask_about" | "continue_research"
     insight_title:    str
     insight_summary:  str             = ""
     why_it_matters:   str             = ""
+    educational_explanation: str      = ""
+    blocks:           list[dict]      = []
+    source_links:     list[dict | str] = []
     source_urls:      list[str]       = []
     project_name:     str             = ""
     project_keywords: list[str]       = []
@@ -1264,13 +1200,18 @@ class ChatRequest(BaseModel):
     chat_mode:    str               = "normal"
     feed_context: FeedContext | None = None
     attachments:  list[ChatAttachment] | None = None
-    extended_thinking: bool         = False
+    # Phase K: browser IANA timezone (Intl.DateTimeFormat().resolvedOptions().timeZone),
+    # the app's only locale signal — used solely to point a distressed user at their own
+    # country's crisis lines instead of a US default. Never stored. max_length caps the
+    # payload; the value itself is validated by exact lookup against pytz's zone table in
+    # crisis_support_service, so nothing client-supplied can reach the system prompt.
+    client_timezone: str | None     = Field(default=None, max_length=64)
 
     @field_validator("chat_mode")
     @classmethod
     def chat_mode_valid(cls, v: str) -> str:
-        if v not in ("normal", "web_search", "deep_research", "layman"):
-            raise ValueError("chat_mode must be 'normal', 'web_search', 'deep_research', or 'layman'")
+        if v not in ("normal", "web_search", "layman"):
+            raise ValueError("chat_mode must be 'normal', 'web_search', or 'layman'")
         return v
 
     @field_validator("session_id")
@@ -1396,8 +1337,9 @@ async def chat_stream_endpoint(
             chat_mode    = data.chat_mode,
             feed_context = data.feed_context.model_dump() if data.feed_context else None,
             user_id      = current_user["user_id"],
+            user_name    = current_user.get("name"),
             attachments  = [a.model_dump() for a in data.attachments] if data.attachments else None,
-            extended_thinking = data.extended_thinking,
+            client_timezone   = data.client_timezone,
         )
 
     return StreamingResponse(
@@ -1599,7 +1541,7 @@ async def chat_upload_endpoint(
 
             if ext in document_extraction_service.DOCUMENT_EXTENSIONS:
                 t_extract = time.monotonic()
-                text, error, error_type = document_extraction_service.extract_document_text(data, filename, ext)
+                text, pages, error, error_type = document_extraction_service.extract_document_text(data, filename, ext)
                 if error:
                     _log_chat_upload(
                         upload_trace_id, "extract", "local", upload_log_input, t_extract,
@@ -1616,7 +1558,7 @@ async def chat_upload_endpoint(
                 attachment_id = None
                 t_embed = time.monotonic()
                 try:
-                    for event in document_memory_service.store_document_stream(filename, text):
+                    for event in document_memory_service.store_document_stream(filename, text, pages=pages):
                         if event["stage"] == "done":
                             attachment_id = event["attachment_id"]
                         else:

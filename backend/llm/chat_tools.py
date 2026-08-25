@@ -1,20 +1,14 @@
 """
 Model-invoked retrieval tools for chat_agent.py's LangGraph agent.
 
-Both wrap EXISTING retrieval/research code — this module only adapts their
-call/return shape into LangChain @tool functions the model can invoke on its
-own turn-by-turn, replacing the old backend-orchestrated mode-flag pre-fetch
+This module wraps EXISTING retrieval code — it only adapts its call/return
+shape into a LangChain @tool function the model can invoke on its own
+turn-by-turn, replacing the old backend-orchestrated mode-flag pre-fetch
 (chat_modes_service.prepare_mode_context, still used unchanged by the sync
-chat() path; stream_research_progress, the per-stage-status generator
-chat_stream used to call for deep_research, was confirmed genuinely orphaned
-after Chat-4.1 and deleted in Chat-4.2 — see deep_research_service.py).
+chat() path).
 
 web_search reuses web_search_reasoning_service.fetch_reasoned_results() —
-the same reasoning-augmented Tavily search chat used before. deep_research
-reuses deep_research_service.run_deep_research() as one opaque callable —
-its stages 4-6 (extract_viewpoints/generate/persist) stay an unchanged linear
-chain; stages 1-3 now run as a bounded plan->act->replan subgraph inside
-deep_research_service.py (Chat-4.2) — opaque from here either way.
+the same reasoning-augmented Tavily search chat used before.
 
 response_format="content_and_artifact": `content` is what the model reads
 (a formatted synthesis-ready note, via the same formatters chat_modes_service
@@ -40,7 +34,6 @@ from actual LLM rows.
 Public API
 ----------
 web_search      LangChain tool — live/current web search
-deep_research   LangChain tool — multi-source structured research report
 """
 from __future__ import annotations
 
@@ -100,7 +93,13 @@ def web_search(query: str, config: RunnableConfig) -> tuple[str, list[dict]]:
     meta = _tool_meta(config)
     t0 = time.monotonic()
     try:
-        reasoning = fetch_reasoned_results(query, meta=meta)
+        # Phase M: meta["complexity"] is the router's real RoutingDecision
+        # .complexity for this turn, put on the agent's call metadata by
+        # chat_service. It rides the metadata dict that already carries
+        # trace_id/user_id/surface, so there is no new plumbing — and it is
+        # absent whenever the router failed or wasn't run, which
+        # fetch_reasoned_results reads as "use today's fixed 3+3".
+        reasoning = fetch_reasoned_results(query, meta=meta, complexity=meta.get("complexity"))
     except Exception as exc:
         _log_tool_call("chat_web_search", "web_search", query, t0,
                        output="", success=False, error=exc, meta=meta)
@@ -113,49 +112,25 @@ def web_search(query: str, config: RunnableConfig) -> tuple[str, list[dict]]:
                        output=content, success=True, error=None, meta=meta)
         return content, []
 
-    content = format_reasoning_search_note(reasoning)
+    # Phase E — citation numbering: format_reasoning_search_note() numbers
+    # each real source [1], [2], … by enumerating reasoning["supporting"]
+    # then reasoning["complicating"], in that order — the model cites those
+    # exact numbers inline. artifact (below) is what the frontend resolves
+    # [N] against, so artifact[N-1] must be the SAME article the note
+    # labelled [N]. Filtering supporting/complicating for a real url ONCE,
+    # here, before either is built — rather than only filtering when
+    # building artifact (the old shape) — is what guarantees that: a
+    # url-less article no longer silently shifts every later number out of
+    # alignment between what the model reads and what the frontend can link.
+    supporting_cited   = [a for a in reasoning.get("supporting",   []) if a.get("url")]
+    complicating_cited = [a for a in reasoning.get("complicating", []) if a.get("url")]
+    cited_reasoning = {**reasoning, "supporting": supporting_cited, "complicating": complicating_cited}
+
+    content = format_reasoning_search_note(cited_reasoning)
     artifact = [
         {"title": a.get("title", "").strip(), "url": a.get("url", "")}
-        for a in articles if a.get("url")
+        for a in supporting_cited + complicating_cited
     ]
     _log_tool_call("chat_web_search", "web_search", query, t0,
-                   output=content, success=True, error=None, meta=meta)
-    return content, artifact
-
-
-@tool(response_format="content_and_artifact")
-def deep_research(topic: str, config: RunnableConfig) -> tuple[str, list[dict]]:
-    """
-    Run a comprehensive multi-source research pipeline on one topic: expands
-    search angles, gathers and ranks sources, extracts competing viewpoints,
-    and synthesizes findings, tensions, and open questions. Slower than
-    web_search — use for genuine deep-dive / analysis requests, not quick
-    fact lookups.
-    """
-    from ..services.chat_modes_service import format_research_note
-    from ..services.deep_research_service import run_deep_research
-
-    meta = _tool_meta(config)
-    t0 = time.monotonic()
-    try:
-        result = run_deep_research(topic, meta=meta)
-    except Exception as exc:
-        _log_tool_call("chat_deep_research", "deep_research", topic, t0,
-                       output="", success=False, error=exc, meta=meta)
-        raise
-
-    if not result:
-        content = "[DEEP RESEARCH]: No research data available for this topic."
-        _log_tool_call("chat_deep_research", "deep_research", topic, t0,
-                       output=content, success=True, error=None, meta=meta)
-        return content, []
-
-    content = format_research_note(result)
-    # ponytail: url-only — run_deep_research()'s public contract exposes only
-    # result["sources"] (urls, no titles); per-article titles live in the
-    # pipeline's internal workflow state, out of reach without touching its
-    # internals (Chat-4.2 scope). Upgrade when the subgraph restructure lands.
-    artifact = [{"title": "", "url": u} for u in result.get("sources", [])]
-    _log_tool_call("chat_deep_research", "deep_research", topic, t0,
                    output=content, success=True, error=None, meta=meta)
     return content, artifact

@@ -7,23 +7,33 @@ from __future__ import annotations
 
 from backend.config import (
     GEMINI_FALLBACK_MODEL, GEMINI_LITE_MODEL, GEMINI_MODEL,
-    GROQ_FALLBACK_MODEL, GROQ_FAST_MODEL,
+    GROQ_FALLBACK_MODEL, GROQ_FAST_MODEL, OPENROUTER_NEMOTRON_MODEL,
 )
 from backend.llm.model_priority import TASK_MODEL_PRIORITY, get_model_priority_list
 
+# Chat model routing phase: OpenRouter/nemotron added to routing/simple_qa/tool_use
+# (primary) and complex_reasoning (fallback, after Gemini's primary) — grounded in
+# real llm_call_log data, see model_priority.py's own comments for the real numbers
+# behind each placement. coding/vision deliberately untouched (real data showed no
+# pressure there, or a real architectural reason not to touch them).
 _EXPECTED = {
-    "routing": [("groq", GROQ_FAST_MODEL), ("gemini", GEMINI_LITE_MODEL)],
+    "routing": [
+        ("openrouter", OPENROUTER_NEMOTRON_MODEL), ("groq", GROQ_FAST_MODEL), ("gemini", GEMINI_LITE_MODEL),
+    ],
     "simple_qa": [
-        ("gemini", GEMINI_MODEL), ("groq", GROQ_FAST_MODEL), ("gemini", GEMINI_FALLBACK_MODEL),
+        ("openrouter", OPENROUTER_NEMOTRON_MODEL), ("gemini", GEMINI_MODEL),
+        ("groq", GROQ_FAST_MODEL), ("gemini", GEMINI_FALLBACK_MODEL),
     ],
     "complex_reasoning": [
-        ("gemini", GEMINI_MODEL), ("gemini", GEMINI_FALLBACK_MODEL), ("groq", GROQ_FALLBACK_MODEL),
+        ("gemini", GEMINI_MODEL), ("openrouter", OPENROUTER_NEMOTRON_MODEL),
+        ("gemini", GEMINI_FALLBACK_MODEL), ("groq", GROQ_FALLBACK_MODEL),
     ],
     "coding": [
         ("gemini", GEMINI_FALLBACK_MODEL), ("gemini", GEMINI_MODEL), ("groq", GROQ_FALLBACK_MODEL),
     ],
     "tool_use": [
-        ("gemini", GEMINI_MODEL), ("gemini", GEMINI_FALLBACK_MODEL), ("groq", GROQ_FALLBACK_MODEL),
+        ("openrouter", OPENROUTER_NEMOTRON_MODEL), ("gemini", GEMINI_MODEL),
+        ("gemini", GEMINI_FALLBACK_MODEL), ("groq", GROQ_FALLBACK_MODEL),
     ],
     "vision": [("gemini", GEMINI_MODEL), ("gemini", GEMINI_FALLBACK_MODEL)],
 }

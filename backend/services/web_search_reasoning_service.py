@@ -29,6 +29,43 @@ logger = logging.getLogger(__name__)
 _PRIMARY_MAX      = 3   # max articles from primary query
 _CONTRADICTION_MAX = 3   # max NEW articles from contradiction query (deduped vs primary)
 
+# Phase M — per-tier selection caps, keyed by the router's existing
+# RoutingDecision.complexity. Anything else (including None, which is what
+# chat_router.classify_message returns on failure — a real 30.8% of logged
+# router calls) falls back to the _PRIMARY_MAX/_CONTRADICTION_MAX pair above,
+# i.e. exactly today's fixed 3+3. The tiers only ever change what is KEPT.
+#
+# Why these numbers, from the real logged pool (24 chat_web_search_raw rows):
+#   primary available      : 5 every single turn (tinyfish_service slices each
+#                            search to _MAX_SEARCH_RESULTS = 5 client-side)
+#   complicating available : mean 3.71 after URL dedup vs primary (min 1, max 5)
+#   max total obtainable   : mean 8.71 (min 6, max 10) — against 6 kept today
+#
+# simple = 2+2. 57% of real web_search turns classify simple, and they look
+# like "capital of Japan" / "current president of Argentina" / "fun fact" —
+# a fact plus a corroborating source, not six. Shorter note, fewer tokens
+# spent on sources the model skims past, shorter citation list to scan.
+#
+# complex = 5+4. 5 is the hard ceiling on primary (that client-side slice), so
+# it is the most that can be asked for without changing the fetch. 4 is chosen
+# against the 3.71 mean complicating availability — asking 5 would under-fill
+# on most turns for one extra source on a minority of them. 9 total is also
+# the largest target that costs ZERO extra retrieval: every one of these
+# articles is already fetched today and thrown away by the 3+3 slice.
+#
+# Under-fill is safe by construction and never silent-fails: a short list just
+# slices short. And because the worst real turn still had 6 obtainable, the
+# complex tier's floor equals today's fixed total — it can only match or beat it.
+_TIER_CAPS: dict[str, tuple[int, int]] = {
+    "simple":  (2, 2),
+    "complex": (5, 4),
+}
+
+
+def _caps_for(complexity: str | None) -> tuple[int, int]:
+    """(primary_max, contradiction_max) for this turn's router complexity."""
+    return _TIER_CAPS.get(complexity or "", (_PRIMARY_MAX, _CONTRADICTION_MAX))
+
 
 # ── Intent → contradiction angle templates ────────────────────────────────────
 # Per-intent suffixes that bias Tavily toward challenge/critical content.
@@ -140,9 +177,17 @@ def fetch_reasoned_results(
     intent_profile: dict | None = None,
     domain:         str         = "",
     meta:           dict | None = None,
+    complexity:     str | None  = None,
 ) -> dict:
     """
     Execute primary + contradiction searches and annotate results by angle.
+
+    `complexity` (Phase M): the router's real RoutingDecision.complexity for
+    this turn, "simple" | "complex". Selects the keep-caps via _caps_for();
+    None or anything unrecognised keeps today's fixed 3+3. This changes only
+    how many of the already-fetched articles survive — the number of searches
+    (always exactly 2, one per query from build_search_queries) and the
+    per-search result count are both untouched.
 
     The contradiction results are deduplicated against the primary results
     so the LLM sees genuinely new complicating evidence, not overlap.
@@ -176,15 +221,21 @@ def fetch_reasoned_results(
 
     _log_raw_result_set(p_query, c_query, raw_primary_articles, raw_contra_articles, t0, meta)
 
-    primary_articles = raw_primary_articles[:_PRIMARY_MAX]
+    primary_cap, contra_cap = _caps_for(complexity)
+
+    primary_articles = raw_primary_articles[:primary_cap]
     contra_articles  = raw_contra_articles
 
-    # Dedup: only keep contradiction results not already in primary
+    # Dedup: only keep contradiction results not already in primary.
+    # Phase M note — dedup runs against the CAPPED primary list, which is the
+    # pre-existing behaviour and is deliberately left alone: a smaller primary
+    # cap means fewer URLs are excluded here, so the simple tier's complicating
+    # slot draws from a slightly wider pool rather than a narrower one.
     primary_urls = {a.get("url", "") for a in primary_articles if a.get("url")}
     complicating = [
         a for a in contra_articles
         if a.get("url", "") and a.get("url", "") not in primary_urls
-    ][:_CONTRADICTION_MAX]
+    ][:contra_cap]
 
     # Tag by angle (metadata only — not shown to user, used by formatter)
     for a in primary_articles:

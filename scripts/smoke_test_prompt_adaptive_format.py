@@ -147,13 +147,13 @@ def test_depth_detection_no_false_positive() -> None:
     msg = ("I keep bouncing between wanting to learn distributed systems and wanting "
            "to learn ML, and I am not sure how to think about which one to actually "
            "commit to right now.")
-    depth = chat_prompt_service.detect_depth(msg, "normal")
+    depth = chat_prompt_service.detect_depth(msg)
     print(f"detect_depth(...) = {depth!r} (was 'detailed' before the fix)")
     assert depth != "detailed", "isolated 'how'/'about' must not trigger detailed depth"
 
     # Real phrase should still correctly trigger detailed.
     phrase_msg = "Can you explain this in detail, step by step?"
-    depth2 = chat_prompt_service.detect_depth(phrase_msg, "normal")
+    depth2 = chat_prompt_service.detect_depth(phrase_msg)
     print(f"detect_depth({phrase_msg!r}) = {depth2!r}")
     assert depth2 == "detailed", "genuine 'in detail'/'step by step' phrases must still trigger detailed"
     print("PASS: false positive fixed, true positive preserved")

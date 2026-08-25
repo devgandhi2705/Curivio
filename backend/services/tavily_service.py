@@ -17,7 +17,7 @@ Domain-aware strategy wrappers sit in the middle:
 
 A single orchestration entry-point sits at the top:
     intelligent_retrieve()     — pick the right operation(s) for domain + mode
-    retrieval_mode_handler()   — delegate by mode (chat / feed / deep_research)
+    retrieval_mode_handler()   — delegate by mode (chat / feed)
 
 Credit-optimization rules
 -------------------------
@@ -457,12 +457,9 @@ def search_strategy(
     if mode == "chat":
         depth   = "basic"
         max_r   = min(cfg.feed_retrieval_rules.max_results_per_query, 8)
-    elif mode == "feed":
+    else:  # feed
         depth   = cfg.feed_retrieval_rules.search_depth
         max_r   = cfg.feed_retrieval_rules.max_results_per_query
-    else:  # deep_research
-        depth   = cfg.deep_research_rules.search_depth
-        max_r   = 10
 
     inc_domains = list(cfg.include_domains)
     if extra_domains:
@@ -503,7 +500,7 @@ def crawl_strategy(
     Crawl a domain URL using depth and limit from the domain config.
 
     Falls back to sensible defaults when no crawl_targets are configured.
-    Credit usage: expensive — only call in deep_research or batch jobs.
+    Credit usage: expensive — only call for a genuinely deep crawl or batch job.
     """
     from ..config.retrieval_config import get_domain_config
 
@@ -609,18 +606,17 @@ def intelligent_retrieve(
        retrieval_config.
     3. Run search_strategy() with domain ``include_domains`` filter.
     4. Re-extract trusted URLs found in search results (cheap pattern).
-    5. If crawl_seed provided (deep_research / crawl_primary strategy) →
-       run crawl_strategy().
+    5. If crawl_seed provided (crawl_primary strategy) → run crawl_strategy().
     6. URL-deduplicate and return.
 
     Parameters
     ----------
     query          User query (will be normalised internally).
     domain         retrieval_config key, e.g. "finance", "pharma".
-    mode           "chat" | "feed" | "deep_research"
+    mode           "chat" | "feed"
     pre_known_urls Static trusted URLs to extract/crawl before searching.
                    Typically the domain config's extract_targets.
-    crawl_seed     URL to crawl (deep_research mode, crawl_primary strategy).
+    crawl_seed     URL to crawl (crawl_primary strategy).
     """
     from ..config.retrieval_config import get_domain_config
 
@@ -671,8 +667,8 @@ def intelligent_retrieve(
         except Exception as exc:
             logger.warning("[tavily] re-extract failed: %s", exc)
 
-    # ── Step 4: crawl seed (deep_research / crawl_primary) ───────────────────
-    if crawl_seed and mode == "deep_research":
+    # ── Step 4: crawl seed (crawl_primary strategy) ──────────────────────────
+    if crawl_seed:
         try:
             _add(crawl_strategy(crawl_seed, query=nq, domain=domain))
         except Exception as exc:
@@ -697,9 +693,8 @@ def retrieval_mode_handler(
     """
     Top-level mode dispatcher.
 
-    chat          → single search_strategy() call, no extract/crawl
-    feed          → intelligent_retrieve() with domain extract_targets
-    deep_research → intelligent_retrieve() with extract_targets + crawl_seed
+    chat → single search_strategy() call, no extract/crawl
+    feed → intelligent_retrieve() with domain extract_targets
 
     This is the function retrieval_router.execute_plan() delegates to for
     each operation, replacing direct primitive calls.
@@ -715,16 +710,10 @@ def retrieval_mode_handler(
         [t.url for t in cfg.extract_targets]
         if cfg.extract_targets else None
     )
-    crawl_seed = (
-        cfg.crawl_targets[0].url
-        if cfg.crawl_targets and mode == "deep_research" and cfg.deep_research_rules.use_crawl
-        else None
-    )
 
     return intelligent_retrieve(
         query        = query,
         domain       = domain,
         mode         = mode,
         pre_known_urls = pre_known,
-        crawl_seed   = crawl_seed,
     )

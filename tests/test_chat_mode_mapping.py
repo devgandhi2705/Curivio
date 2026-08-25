@@ -6,24 +6,19 @@ backend behaviour stays consistent with the frontend contract:
 
   UI state             chatMode sent to API    backend retrieval
   ─────────────────    ──────────────────────   ──────────────────────────────
-  both off             "normal"                 none (memory/context only)
-  Web Search on        "web_search"             Tavily search, no deep pipeline
-  Deep Research on     "deep_research"          Tavily + full research workflow
+  off                  "normal"                 none (memory/context only)
+  Web Search on        "web_search"             Tavily search
 
 chat_stream() (the only chat path — sync /chat and its backend-orchestrated
 chat_modes_service.prepare_mode_context pre-fetch were both retired) drives
 this differently since Chat-4.1: chat_mode only gates tool availability and
 supplies an optional bias hint (chat_agent.resolve_tools_and_hint) — web_search
-and deep_research are real tools the model calls itself, not a pre-fetch —
-see TestResolveToolsAndHint / TestStreamReflectsActualToolUse below.
+is a real tool the model calls itself, not a pre-fetch — see
+TestResolveToolsAndHint / TestStreamReflectsActualToolUse below.
 
 Toggle rules (mirrors ChatInput.jsx logic):
-  - Clicking Web Search when mode is "web_search"     → "normal"
-  - Clicking Web Search otherwise                     → "web_search"
-  - Clicking Deep Research when mode is "deep_research" → "normal"
-  - Clicking Deep Research otherwise                  → "deep_research"
-  - Deep Research visually activates both toggles    (deep ⊃ web)
-  - Web Search alone does NOT activate deep research
+  - Clicking Web Search when mode is "web_search" → "normal"
+  - Clicking Web Search otherwise                 → "web_search"
 
 TESTING RULES
 ─────────────
@@ -41,13 +36,8 @@ from unittest.mock import patch
 # ─────────────────────────────────────────────────────────────────────────────
 
 def toggle_web_search(current_mode: str) -> str:
-    """Mirror of ChatInput toggleWebSearch."""
+    """Mirror of ChatInput toggleWeb."""
     return "normal" if current_mode == "web_search" else "web_search"
-
-
-def toggle_deep_research(current_mode: str) -> str:
-    """Mirror of ChatInput toggleDeepResearch."""
-    return "normal" if current_mode == "deep_research" else "deep_research"
 
 
 class TestToggleWebSearch:
@@ -57,44 +47,18 @@ class TestToggleWebSearch:
     def test_on_to_off(self):
         assert toggle_web_search("web_search") == "normal"
 
-    def test_from_deep_research_downgrades(self):
-        # Clicking Web Search while in deep_research → downgrade to web_search
-        assert toggle_web_search("deep_research") == "web_search"
-
-
-class TestToggleDeepResearch:
-    def test_off_to_on(self):
-        assert toggle_deep_research("normal") == "deep_research"
-
-    def test_on_to_off(self):
-        assert toggle_deep_research("deep_research") == "normal"
-
-    def test_from_web_search_upgrades(self):
-        # Clicking Deep Research while in web_search → upgrade to deep_research
-        assert toggle_deep_research("web_search") == "deep_research"
-
 
 class TestVisualToggleState:
-    """web_active and deep_active flags (mirrors ChatInput JSX logic)."""
+    """web_active flag (mirrors ChatInput JSX logic)."""
 
     @staticmethod
-    def web_active(mode):  return mode in ("web_search", "deep_research")
+    def web_active(mode):  return mode == "web_search"
 
-    @staticmethod
-    def deep_active(mode): return mode == "deep_research"
-
-    def test_normal_both_inactive(self):
+    def test_normal_inactive(self):
         assert not self.web_active("normal")
-        assert not self.deep_active("normal")
 
-    def test_web_search_only_web_active(self):
-        assert     self.web_active("web_search")
-        assert not self.deep_active("web_search")
-
-    def test_deep_research_both_active(self):
-        # Deep Research visually activates the Web toggle too (deep ⊃ web)
-        assert self.web_active("deep_research")
-        assert self.deep_active("deep_research")
+    def test_web_search_active(self):
+        assert self.web_active("web_search")
 
 
 class TestModeTransitionGraph:
@@ -105,32 +69,6 @@ class TestModeTransitionGraph:
         m = toggle_web_search(m)
         assert m == "web_search"
         m = toggle_web_search(m)
-        assert m == "normal"
-
-    def test_normal_deep_normal(self):
-        m = "normal"
-        m = toggle_deep_research(m)
-        assert m == "deep_research"
-        m = toggle_deep_research(m)
-        assert m == "normal"
-
-    def test_normal_web_then_deep(self):
-        m = "normal"
-        m = toggle_web_search(m)
-        assert m == "web_search"
-        m = toggle_deep_research(m)
-        assert m == "deep_research"
-
-    def test_normal_deep_then_web_downgrades(self):
-        m = "normal"
-        m = toggle_deep_research(m)
-        assert m == "deep_research"
-        m = toggle_web_search(m)    # Web click while in deep → downgrade
-        assert m == "web_search"
-
-    def test_deep_to_off(self):
-        m = "deep_research"
-        m = toggle_deep_research(m)
         assert m == "normal"
 
 
@@ -155,9 +93,11 @@ class TestChatRequestValidation:
         req = self._make_request("web_search")
         assert req.chat_mode == "web_search"
 
-    def test_deep_research_mode_accepted(self):
-        req = self._make_request("deep_research")
-        assert req.chat_mode == "deep_research"
+    def test_deep_research_mode_rejected(self):
+        # deep_research was removed — no code path can invoke it going forward.
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            self._make_request("deep_research")
 
     def test_invalid_mode_rejected(self):
         from pydantic import ValidationError
@@ -176,8 +116,8 @@ class TestChatRequestValidation:
 
 class TestResolveToolsAndHint:
     """
-    Three-way mode handling (chat_agent.resolve_tools_and_hint), the single
-    place chat_mode gets translated into tool availability + an optional bias.
+    chat_agent.resolve_tools_and_hint, the single place chat_mode gets
+    translated into tool availability + an optional bias.
     """
 
     def test_layman_hard_gates_tools(self):
@@ -197,12 +137,6 @@ class TestResolveToolsAndHint:
         tools_enabled, hint = resolve_tools_and_hint("web_search")
         assert tools_enabled is True
         assert hint and "web_search" in hint
-
-    def test_deep_research_has_tools_and_a_hint(self):
-        from backend.llm.chat_agent import resolve_tools_and_hint
-        tools_enabled, hint = resolve_tools_and_hint("deep_research")
-        assert tools_enabled is True
-        assert hint and "deep_research" in hint
 
     def test_unknown_mode_falls_back_to_tools_no_hint(self):
         from backend.llm.chat_agent import resolve_tools_and_hint
@@ -224,7 +158,7 @@ class TestStreamReflectsActualToolUse:
     def _collect_done_event(self, message, chat_mode, agent_events):
         from backend.services.chat_service import chat_stream
 
-        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False, extended_thinking=False):
+        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False, task_type=None):
             yield from agent_events
 
         events = []
@@ -282,14 +216,3 @@ class TestStreamReflectsActualToolUse:
         assert done["chat_mode"] == "normal"
         assert done["auto_mode"] is False
         assert done["sources"] == []
-
-    def test_deep_research_tool_populates_sources(self):
-        agent_events = [
-            {"type": "tool_start", "tool": "deep_research"},
-            {"type": "tool_end", "tool": "deep_research",
-             "sources": [{"title": "", "url": "https://a.com"}, {"title": "", "url": "https://b.com"}]},
-            {"type": "text", "text": "Deep dive..."},
-        ]
-        _, done = self._collect_done_event("Analyze quantum computing", "deep_research", agent_events)
-        assert done["chat_mode"] == "deep_research"
-        assert len(done["sources"]) == 2

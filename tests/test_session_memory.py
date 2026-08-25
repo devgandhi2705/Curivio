@@ -105,26 +105,26 @@ def _all_activities():
 
 class TestRecordActivity:
     def test_returns_integer_id(self, mem_db):
-        row_id = record_activity("RAG", "deep_research", "test-user")
+        row_id = record_activity("RAG", "topic_expansion", "test-user")
         assert isinstance(row_id, int)
 
     def test_id_is_positive(self, mem_db):
-        row_id = record_activity("RAG", "deep_research", "test-user")
+        row_id = record_activity("RAG", "topic_expansion", "test-user")
         assert row_id > 0
 
     def test_row_exists_in_db(self, mem_db):
-        record_activity("RAG", "deep_research", "test-user")
+        record_activity("RAG", "topic_expansion", "test-user")
         count = mem_db.execute("SELECT COUNT(*) FROM research_sessions").fetchone()[0]
         assert count == 1
 
     def test_multiple_records_same_topic(self, mem_db):
-        record_activity("RAG", "deep_research", "test-user")
+        record_activity("RAG", "topic_expansion", "test-user")
         record_activity("RAG", "learning_path", "test-user")
         count = mem_db.execute("SELECT COUNT(*) FROM research_sessions").fetchone()[0]
         assert count == 2
 
     def test_ids_are_unique(self, mem_db):
-        id1 = record_activity("RAG", "deep_research", "test-user")
+        id1 = record_activity("RAG", "topic_expansion", "test-user")
         id2 = record_activity("RAG", "learning_path", "test-user")
         assert id1 != id2
 
@@ -139,26 +139,26 @@ class TestRecordActivity:
     def test_raises_value_error_for_missing_user_id(self, mem_db):
         # Chat-R7a: user_id is required — no silent fallback to unscoped writes.
         with pytest.raises(ValueError, match="user_id must not be empty"):
-            record_activity("RAG", "deep_research", "")
+            record_activity("RAG", "topic_expansion", "")
 
-    def test_all_four_activity_types_accepted(self, mem_db):
+    def test_all_activity_types_accepted(self, mem_db):
         for activity in ACTIVITY_TYPES:
             record_activity("RAG", activity, "test-user")
         count = mem_db.execute("SELECT COUNT(*) FROM research_sessions").fetchone()[0]
         assert count == len(ACTIVITY_TYPES)
 
     def test_topic_case_preserved_in_db(self, mem_db):
-        record_activity("RAG Pipelines", "deep_research", "test-user")
+        record_activity("RAG Pipelines", "topic_expansion", "test-user")
         row = mem_db.execute("SELECT topic FROM research_sessions").fetchone()
         assert row["topic"] == "RAG Pipelines"
 
     def test_topic_key_lowercased_in_db(self, mem_db):
-        record_activity("RAG Pipelines", "deep_research", "test-user")
+        record_activity("RAG Pipelines", "topic_expansion", "test-user")
         row = mem_db.execute("SELECT topic_key FROM research_sessions").fetchone()
         assert row["topic_key"] == "rag pipelines"
 
     def test_user_id_stored_on_row(self, mem_db):
-        record_activity("RAG", "deep_research", "test-user")
+        record_activity("RAG", "topic_expansion", "test-user")
         row = mem_db.execute("SELECT user_id FROM research_sessions").fetchone()
         assert row["user_id"] == "test-user"
 
@@ -532,16 +532,6 @@ class TestMainHooks:
         finally:
             app.dependency_overrides.pop(get_current_user, None)
 
-    def _good_research(self):
-        return {
-            "topic": "RAG", "related_concepts": ["a", "b", "c", "d"],
-            "implementation_ideas": ["x", "y", "z"],
-            "practical_applications": ["p1", "p2", "p3"],
-            "advanced_follow_ups": ["f1", "f2", "f3", "f4"],
-            "research_summary": "summary", "sources": [],
-            "generated_at": "2026-05-15T10:00:00",
-        }
-
     def _good_path(self):
         return {
             "topic": "RAG", "learning_stage": "beginner",
@@ -558,19 +548,6 @@ class TestMainHooks:
             "progression_rationale": "rationale",
             "generated_at": "2026-05-15T10:00:00",
         }
-
-    def test_deep_research_post_records_activity(self, client):
-        with patch("backend.main.get_stored_research", return_value=None), \
-             patch("backend.main.run_deep_research", return_value=self._good_research()), \
-             patch("backend.main.record_activity") as mock_record:
-            client.post("/deep-research", json={"topic": "RAG"})
-        mock_record.assert_called_once_with("RAG", "deep_research", "test-user")
-
-    def test_deep_research_post_cache_hit_does_not_record(self, client):
-        with patch("backend.main.get_stored_research", return_value=self._good_research()), \
-             patch("backend.main.record_activity") as mock_record:
-            client.post("/deep-research", json={"topic": "RAG"})
-        mock_record.assert_not_called()
 
     def test_learning_path_post_records_activity(self, client):
         with patch("backend.main.get_learning_path", return_value=self._good_path()), \
@@ -592,10 +569,9 @@ class TestMainHooks:
         mock_record.assert_called_once_with("RAG", "github_repos", "test-user")
 
     def test_record_failure_does_not_break_endpoint(self, client):
-        with patch("backend.main.get_stored_research", return_value=None), \
-             patch("backend.main.run_deep_research", return_value=self._good_research()), \
+        with patch("backend.main.get_topic_repos", return_value=[]), \
              patch("backend.main.record_activity", side_effect=RuntimeError("db error")):
-            resp = client.post("/deep-research", json={"topic": "RAG"})
+            resp = client.post("/repos", json={"topic": "RAG"})
         assert resp.status_code == 200
 
 
@@ -606,18 +582,18 @@ class TestMainHooks:
 @pytest.mark.integration
 class TestSessionMemoryIntegration:
     def test_full_record_and_retrieve(self, mem_db):
-        record_activity("RAG Pipelines", "deep_research", "test-user")
+        record_activity("RAG Pipelines", "topic_expansion", "test-user")
         record_activity("RAG Pipelines", "learning_path", "test-user")
         memory = get_topic_memory("RAG Pipelines")
         assert memory is not None
         assert memory["times_explored"] == 2
-        assert memory["has_deep_research"] is True
+        assert memory["has_topic_expansion"] is True
         assert memory["has_learning_path"] is True
 
     def test_redundancy_check_via_is_activity_recorded(self, mem_db):
-        assert is_activity_recorded("RAG", "deep_research") is False
-        record_activity("RAG", "deep_research", "test-user")
-        assert is_activity_recorded("RAG", "deep_research") is True
+        assert is_activity_recorded("RAG", "topic_expansion") is False
+        record_activity("RAG", "topic_expansion", "test-user")
+        assert is_activity_recorded("RAG", "topic_expansion") is True
 
     def test_list_explored_topics_ordering(self, mem_db):
         # Use explicit timestamps so ordering is deterministic regardless of wall-clock speed
@@ -629,11 +605,11 @@ class TestSessionMemoryIntegration:
 
     def test_research_context_recommended_next_updates(self, mem_db):
         ctx_before = get_research_context("RAG")
-        assert "deep_research" in ctx_before["recommended_next"]
+        assert "github_repos" in ctx_before["recommended_next"]
 
-        record_activity("RAG", "deep_research", "test-user")
+        record_activity("RAG", "github_repos", "test-user")
         record_activity("RAG", "learning_path", "test-user")
         ctx_after = get_research_context("RAG")
-        assert "deep_research"   not in ctx_after["recommended_next"]
+        assert "github_repos"    not in ctx_after["recommended_next"]
         assert "learning_path"   not in ctx_after["recommended_next"]
         assert "topic_expansion" in     ctx_after["recommended_next"]

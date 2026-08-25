@@ -155,3 +155,7 @@ export async function verifyResetCode(email, code) {
 export async function resetPassword(email, code, new_password) {
   return authPost("/auth/reset-password", { email, code, new_password })
 }
+
+export async function logoutRequest() {
+  return authFetch("/auth/logout", { method: "POST" })
+}

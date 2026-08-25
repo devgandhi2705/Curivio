@@ -480,7 +480,29 @@ function HeaderSearchBar({ value, onChange }) {
 
 const COLLAPSE_THRESHOLD = 500 // chars — see recon: input p90=30k, output p90=9.4k
 
-function CollapsibleBlock({ label, text }) {
+function HighlightMatches({ text, query }) {
+  if (!query || !text) return text
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery) return text
+
+  const escapedQuery = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const parts = String(text).split(new RegExp(`(${escapedQuery})`, "gi"))
+  return parts.map((part, index) =>
+    part.toLowerCase() === normalizedQuery.toLowerCase()
+      ? <mark key={index} className="bg-amber-300/80 text-slate-950 rounded-[2px] px-0.5">{part}</mark>
+      : part
+  )
+}
+
+function rowMatchesSearch(row, query) {
+  const normalizedQuery = query?.trim().toLowerCase()
+  if (!normalizedQuery) return false
+  return [row.input, row.output].some(value =>
+    String(value || "").toLowerCase().includes(normalizedQuery)
+  )
+}
+
+function CollapsibleBlock({ label, text, query }) {
   const isLong = (text?.length || 0) > COLLAPSE_THRESHOLD
   const [expanded, setExpanded] = useState(!isLong)
 
@@ -508,7 +530,7 @@ function CollapsibleBlock({ label, text }) {
       </div>
       {expanded && (
         <pre className="text-[11px] font-mono text-slate-300 whitespace-pre-wrap break-words bg-slate-950/60 border border-slate-800/60 rounded-lg p-3 max-h-96 overflow-y-auto">
-          {text}
+          <HighlightMatches text={text} query={query} />
         </pre>
       )}
     </div>
@@ -538,7 +560,7 @@ function SiblingRow({ row, isActive, onClick }) {
 // button style, border/rounded tokens), adapted for a right-edge panel that
 // doesn't dim the filters/table behind it.
 
-function DetailPanel({ row, surface, batch, batchLoading, onClose, onSelectSibling }) {
+function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSelectSibling }) {
   useEffect(() => {
     function handleKey(e) { if (e.key === "Escape") onClose() }
     document.addEventListener("keydown", handleKey)
@@ -645,8 +667,8 @@ function DetailPanel({ row, surface, batch, batchLoading, onClose, onSelectSibli
           )}
 
           <div className="px-5 py-4 space-y-4">
-            <CollapsibleBlock label="Input" text={row.input} />
-            <CollapsibleBlock label="Output" text={formatOutput(row.output)} />
+            <CollapsibleBlock label="Input" text={row.input} query={search} />
+            <CollapsibleBlock label="Output" text={formatOutput(row.output)} query={search} />
           </div>
         </div>
       </div>
@@ -1340,12 +1362,14 @@ const ROW_GRID =
 // NOT truncate the common case, unlike squeezed into a grid track), (3) a
 // compact latency/tokens/status cluster. Same content as the grid row, same
 // onClick — this is a layout fork, not a second data model.
-function MobileRowCard({ marker, actionType, callType, hasWebSearch, timestamp, userEmail, surface, detail, latencyMs, tokens, success, onClick, indented }) {
+function MobileRowCard({ marker, actionType, callType, hasWebSearch, timestamp, userEmail, surface, detail, latencyMs, tokens, success, onClick, indented, isSearchMatch }) {
   return (
     <button
       onClick={onClick}
       className={`sm:hidden w-full text-left px-3 py-3 transition-colors hover:bg-slate-800/40 ${
-        indented ? "bg-slate-950/40 border-t border-slate-800/20" : "border-b border-slate-800/40 last:border-0"
+        isSearchMatch
+          ? "bg-amber-400/[0.08] border-l-2 border-amber-300"
+          : indented ? "bg-slate-950/40 border-t border-slate-800/20" : "border-b border-slate-800/40 last:border-0"
       }`}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -1401,12 +1425,15 @@ function WebSearchBadge() {
 // "Batch" concept (SiblingRow/DetailPanel) is a different, narrower thing —
 // retry-legs of ONE call — and still only surfaces inside a single row's own
 // DetailPanel, unrelated to this outer grouping.
-function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
+function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
+  const hasSearchMatch = group.rows.some(row => rowMatchesSearch(row, search))
   return (
     <div className="border-b border-slate-800/40 last:border-0">
       <button
         onClick={onToggle}
-        className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-2.5 text-left hover:bg-slate-800/40 transition-colors`}
+        className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-2.5 text-left hover:bg-slate-800/40 transition-colors ${
+          hasSearchMatch ? "bg-amber-400/[0.08] border-l-2 border-amber-300" : ""
+        }`}
       >
         <ChevronIcon className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
         <span className="text-[11px] text-slate-400 font-mono tabular-nums truncate">{formatTimestamp(group.started_at)}</span>
@@ -1442,6 +1469,7 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
         tokens={group.op_tokens}
         success={group.all_succeeded}
         onClick={onToggle}
+        isSearchMatch={hasSearchMatch}
       />
       {isExpanded && (
         <div className="pb-1.5">
@@ -1478,9 +1506,15 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
               darker ground instead. */}
           {group.rows.map(row => (
             <div key={row.id}>
-              <button
+              {(() => {
+                const isSearchMatch = rowMatchesSearch(row, search)
+                return (
+                  <>
+                    <button
                 onClick={() => onRowClick(row, group.action_type)}
-                className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-1.5 text-left bg-slate-950/40 hover:bg-slate-800/30 transition-colors border-t border-slate-800/20 first:border-0`}
+                className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-1.5 text-left hover:bg-slate-800/30 transition-colors border-t border-slate-800/20 first:border-0 ${
+                  isSearchMatch ? "bg-amber-400/[0.08] border-l-2 border-amber-300" : "bg-slate-950/40"
+                }`}
               >
                 <span className="flex justify-center" aria-hidden="true">
                   <span className="w-1.5 h-px bg-slate-700" />
@@ -1504,8 +1538,8 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
                 <span className="text-[11px] text-slate-500 font-mono tabular-nums text-right">{fmtMs(row.latency_ms)}</span>
                 <span className="text-[11px] text-slate-500 font-mono tabular-nums text-right">{fmtTokens(row.total_tokens)}</span>
                 <span className="justify-self-end"><StatusBadge success={row.success} /></span>
-              </button>
-              <MobileRowCard
+                  </button>
+                  <MobileRowCard
                 marker={<span className="w-1.5 h-px bg-slate-700" aria-hidden="true" />}
                 callType={row.call_type}
                 timestamp={row.created_at}
@@ -1517,7 +1551,11 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
                 success={row.success}
                 onClick={() => onRowClick(row, group.action_type)}
                 indented
-              />
+                isSearchMatch={isSearchMatch}
+                    />
+                  </>
+                )
+              })()}
             </div>
           ))}
         </div>
@@ -1528,7 +1566,7 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick }) {
 
 // Singleton (row_count === 1): a plain row, no expand chevron — there's
 // nothing to expand (design decision 6).
-function SingletonRow({ group, onRowClick }) {
+function SingletonRow({ group, onRowClick, search }) {
   const row = group.rows[0]
   return (
     <>
@@ -1633,7 +1671,7 @@ function ColumnHeader({ sortBy, sortOrder, onSort }) {
   )
 }
 
-function GroupedCallsList({ groups, loading, error, expandedKeys, onToggleGroup, onRowClick, sortBy, sortOrder, onSort }) {
+function GroupedCallsList({ groups, loading, error, expandedKeys, onToggleGroup, onRowClick, search, sortBy, sortOrder, onSort }) {
   if (loading) return <Skeleton className="h-[420px]" />
 
   if (error) {
@@ -1684,6 +1722,7 @@ function GroupedCallsList({ groups, loading, error, expandedKeys, onToggleGroup,
                   isExpanded={expandedKeys.has(key)}
                   onToggle={() => onToggleGroup(key)}
                   onRowClick={onRowClick}
+                  search={search}
                 />
               )
           })}
@@ -2026,6 +2065,7 @@ export default function AdminPage() {
             expandedKeys={expandedKeys}
             onToggleGroup={handleToggleGroup}
             onRowClick={handleOpenRow}
+            search={filters.search}
             sortBy={sortBy}
             sortOrder={sortOrder}
             onSort={handleSort}
@@ -2040,6 +2080,7 @@ export default function AdminPage() {
           surface={selectedRowSurface}
           batch={batch}
           batchLoading={batchLoading}
+          search={filters.search}
           onClose={handleClosePanel}
           onSelectSibling={handleSelectSibling}
         />

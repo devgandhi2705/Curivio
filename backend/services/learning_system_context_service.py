@@ -1,9 +1,9 @@
 """
 Learning System Context Service.
 
-Unifies feed, explain simply, chat, web search, and deep research into one
-coherent learning identity by injecting a compact "LEARNING SYSTEM" framing
-section into every system prompt.
+Unifies feed, explain simply, chat, and web search into one coherent
+learning identity by injecting a compact "LEARNING SYSTEM" framing section
+into every system prompt.
 
 The section positions the current mode in the depth hierarchy, shows what the
 user has already established on this topic, and states the specific analytical
@@ -18,7 +18,6 @@ Depth hierarchy
   Understand    (layman)         Abstraction compression; intuition first
   Explore       (normal chat)    Interactive mechanism-building
   Validate      (web_search)     Reality-test analytical conclusions
-  Master        (deep_research)  Strategic expansion and synthesis
 
 Public API
 ----------
@@ -55,16 +54,6 @@ _LAYER_META: dict[str, dict] = {
             "Do not use evidence only to confirm. Actively find where reality complicates, "
             "contradicts, or updates what was established analytically. "
             "The most valuable finding is one that changes the conclusion."
-        ),
-        "next_layer": "Deep Research — for comprehensive synthesis across all available evidence",
-    },
-    "deep_research": {
-        "label":     "Strategic Expansion",
-        "objective": "Produce a comprehensive synthesis that extends beyond what prior exploration reached.",
-        "mission":   (
-            "Build on what is already established — do not re-explain mechanisms the user has covered. "
-            "Go outward: new angles, cross-domain synthesis, strategic implications, "
-            "second-order effects, and what the conventional framing consistently misses."
         ),
         "next_layer": None,
     },
@@ -103,12 +92,29 @@ def build_learning_system_section(context: dict, mode: str) -> str:
     if depth == "quick":
         return ""
 
-    layer = _LAYER_META.get(mode, _DEFAULT_LAYER)
     knowledge = context.get("conversation_knowledge", {}) or {}
-
     lines: list[str] = []
-    lines.append(f"LEARNING SYSTEM — {layer['label']}:")
-    lines.append(layer["objective"])
+
+    # Structured-mode fix (Task 1): a freshly feed-linked turn (feed_action set
+    # this turn by chat_service.py, not just a resolved feed_entry_anchor
+    # carried from a prior turn) gets framing tied to the REAL action + card
+    # title, instead of a generic label hardcoded to mode="deep_research"
+    # regardless of what actually triggered the turn. chat_modes_service.
+    # build_feed_context_note() no longer appends its own copy of this note
+    # (removed there) — this is now the single source, so the two can't
+    # disagree or duplicate.
+    feed_action = context.get("feed_action")
+    feed_topic  = context.get("feed_topic", "")
+    feed_note   = build_feed_layer_note(feed_action, feed_topic) if feed_action and feed_topic else ""
+
+    if feed_note:
+        lines.append(feed_note)
+        mission = ""  # feed_note already states its own mission inline
+    else:
+        layer = _LAYER_META.get(mode, _DEFAULT_LAYER)
+        lines.append(f"LEARNING SYSTEM — {layer['label']}:")
+        lines.append(layer["objective"])
+        mission = layer["mission"]
 
     # Thread context — only when there's meaningful state
     thread    = (knowledge.get("current_thread") or "").strip()
@@ -135,8 +141,9 @@ def build_learning_system_section(context: dict, mode: str) -> str:
         if unresolved:
             lines.append(f"Still unresolved: {unresolved[0][:100]}")
 
-    # Layer-specific mission
-    lines.append(layer["mission"])
+    # Layer-specific mission (feed-aware framing above already states its own)
+    if mission:
+        lines.append(mission)
 
     # Curiosity momentum signal (recent questions — gives the AI conversational context)
     curiosity = knowledge.get("curiosity_momentum", [])
@@ -144,14 +151,20 @@ def build_learning_system_section(context: dict, mode: str) -> str:
         recent_q = curiosity[0][:80]
         lines.append(f"User's most recent question: \"{recent_q}\"")
 
-    # Breadth signal — how widely the user has explored
+    # Breadth signal — how widely the user has explored. Task 3 (structured-mode
+    # fix pass): used to append "— {inferred_level} level" here too, reading
+    # learner_profile.inferred_level directly — an entirely separate,
+    # independently-computed level signal from _build_profile_section's
+    # "Learning stage: X" line elsewhere in this same structured prompt, able
+    # to disagree with it (recon: "early" here, "advanced" there, same user,
+    # same turn). resolve_user_level() is the one place level gets resolved
+    # now — _build_profile_section already surfaces it, so this line states
+    # only what it uniquely knows (breadth), not a second, possibly-conflicting
+    # restatement of a signal owned elsewhere.
     breadth = context.get("exploration_breadth", {})
     total   = breadth.get("total_explored", 0)
     if total >= 5:
-        learner = context.get("learner_profile", {})
-        level   = learner.get("inferred_level", "")
-        if level:
-            lines.append(f"Learner context: {total} topics explored — {level} level.")
+        lines.append(f"Learner context: {total} topics explored.")
 
     # Phase 4.6: inject project-level cross-session knowledge
     # This section shows what the user has learned ACROSS ALL feed sessions for this
@@ -195,11 +208,5 @@ def build_feed_layer_note(feed_action: str, topic: str) -> str:
             f"LEARNING SYSTEM — Validation Extension: "
             f"The user already has a surface understanding of \"{topic}\" from their feed. "
             f"Use web search results to extend, challenge, and update that foundation."
-        )
-    if feed_action == "deep_research":
-        return (
-            f"LEARNING SYSTEM — Strategic Expansion: "
-            f"The feed insight on \"{topic}\" is the seed. "
-            f"Expand outward: new angles, strategic implications, what the surface framing misses."
         )
     return ""

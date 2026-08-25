@@ -1252,6 +1252,8 @@ export default function AppLayout() {
       insight_summary:  card.summary  || "",
       why_it_matters:   card.why_it_matters || "",
       educational_explanation: card.educational_explanation || "",
+      blocks:           card.blocks   || [],
+      source_links:     card.source_links || [],
       source_urls:      (card.source_links || []).map(l => l.url || l).filter(Boolean),
       project_name:     projectMeta.name       || "",
       project_keywords: projectMeta.keywords   || [],

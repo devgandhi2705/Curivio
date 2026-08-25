@@ -38,8 +38,8 @@ SIGNAL_WEIGHTS: dict[str, float] = {
 
 # Actions recommended when each signal fires
 _ACTION_MAP: dict[str, list[str]] = {
-    "user_engagement":        ["deep_research", "learning_path"],
-    "news_frequency":         ["deep_research"],
+    "user_engagement":        ["learning_path"],
+    "news_frequency":         ["learning_path"],
     "educational_importance": ["topic_expansion", "learning_path", "github_repos"],
 }
 

@@ -287,7 +287,7 @@ class TestChatPromptService:
         ctx["research"]["topic"] = "RAG Pipelines"
         ctx["research"]["has_deep_research"] = True
         ctx["research"]["deep_research"] = {"summary": "RAG is about retrieval augmented generation"}
-        prompt = build_system_prompt(ctx, mode="deep_research")
+        prompt = build_system_prompt(ctx, mode="web_search")
         assert "RAG" in prompt
 
     def test_build_system_prompt_includes_session_memory(self):
@@ -303,7 +303,7 @@ class TestChatPromptService:
             "last_activity_at": "2025-01-01",
             "recommended_next": [],
         }
-        prompt = build_system_prompt(ctx, mode="deep_research")
+        prompt = build_system_prompt(ctx, mode="web_search")
         assert "LoRA" in prompt
         assert "2" in prompt  # times_explored
 

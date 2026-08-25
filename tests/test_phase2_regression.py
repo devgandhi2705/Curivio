@@ -5,15 +5,14 @@ Phase 2.7 — Quality Regression Validation
 Validates that the Phase 2 PromptComposer architecture (Phases 2.5–2.6) produces
 prompts that are structurally equivalent to or better than the pre-Phase-2 versions.
 
-Seven output modes under test
-------------------------------
+Output modes under test
+------------------------
 1. Day 1 Feed       — make_daily_package_prompt (no prior history or memory)
 2. Day 2 Feed       — make_daily_package_prompt (with history, continuity, memory)
 3. Chat             — build_system_prompt in normal/standard mode
 4. Explain Simply   — build_system_prompt in layman mode
-5. Deep Research    — build_deep_research_prompt + structured chat mode
-6. Compare Mode     — build_system_prompt in compare structured mode
-7. Trend Analysis   — build_system_prompt in trend_analysis structured mode
+5. Compare Mode     — build_system_prompt in compare structured mode
+6. Trend Analysis   — build_system_prompt in trend_analysis structured mode
 
 Validation dimensions
 ---------------------
@@ -236,34 +235,6 @@ _CHAT_CONTEXT_STRUCTURED = {
         )
     },
 }
-
-_DEEP_RESEARCH_TOPIC     = "Retrieval Augmented Generation"
-_DEEP_RESEARCH_SOURCE_ANALYSIS = (
-    "CROSS-SOURCE SIGNALS:\n"
-    "  Agreement (3/3 sources): RAG reduces hallucination rates by grounding responses in retrieved context.\n"
-    "  Contrastive signal: Academic sources emphasise accuracy gains; practitioner sources emphasise latency cost.\n"
-    "  Underweighted: Chunk size selection strategy is rarely discussed despite major accuracy impact."
-)
-_DEEP_RESEARCH_VIEWPOINTS = (
-    "VIEWPOINT A — Academic Research:\n"
-    "  Stance: RAG fundamentally solves the knowledge cutoff and hallucination problems.\n"
-    "  Evidence: Lewis et al. (2020) showed 40% reduction in factual errors on knowledge-intensive tasks.\n\n"
-    "VIEWPOINT B — Production Engineering:\n"
-    "  Stance: RAG adds 200-500ms latency per query and requires significant infrastructure investment.\n"
-    "  Evidence: Multiple MLOps practitioners report retrieval becoming the bottleneck at scale."
-)
-_DEEP_RESEARCH_ARTICLES = (
-    "1. RAG: Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks\n"
-    "   URL: https://arxiv.org/abs/2005.11401\n"
-    "   Content: We introduce RAG, a general-purpose fine-tuning recipe that combines parametric and non-parametric memory...\n\n"
-    "2. Building Production RAG Systems\n"
-    "   URL: https://example.com/prod-rag\n"
-    "   Content: In production, retrieval latency dominates. HNSW indexes reduce query time from O(n) to O(log n)...\n\n"
-    "3. Evaluating RAG Pipelines\n"
-    "   URL: https://example.com/rag-eval\n"
-    "   Content: RAGAS framework evaluates faithfulness, answer relevancy, and context recall..."
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PromptComposer core
@@ -570,7 +541,9 @@ class TestChatNormal:
         assert "Curivio" in prompt
 
     def test_depth_instruction_injected(self, prompt):
-        assert "RESPONSE DEPTH" in prompt
+        # RESPONSE DEPTH / _DEPTH_INSTRUCTIONS is dead code (Phase 6 removed it,
+        # zero callers). Depth judgment now lives in RESPONSE PRINCIPLES instead.
+        assert "RESPONSE PRINCIPLES" in prompt
 
     def test_conversation_memory_injected(self, prompt):
         # conversation_memory has 6 turns with topics
@@ -582,7 +555,9 @@ class TestChatNormal:
         assert "intermediate" in prompt.lower() or "machine learning" in prompt.lower()
 
     def test_natural_guidelines_present(self, prompt):
-        assert "CONVERSATIONAL RULES" in prompt
+        # CONVERSATIONAL RULES was replaced by RESPONSE PRINCIPLES (see
+        # chat_prompt_service._build_natural_prompt docstring).
+        assert "RESPONSE PRINCIPLES" in prompt
 
     def test_no_json_schema_in_natural_mode(self, prompt):
         # Natural mode must NOT include the structured JSON output directive
@@ -623,115 +598,16 @@ class TestExplainSimply:
         assert "FORMAT GUIDANCE" not in prompt
 
     def test_natural_guidelines_present(self, prompt):
-        assert "CONVERSATIONAL RULES" in prompt
+        # CONVERSATIONAL RULES was replaced by RESPONSE PRINCIPLES_LAYMAN (see
+        # chat_prompt_service._build_natural_prompt docstring).
+        assert "RESPONSE PRINCIPLES" in prompt
 
     def test_no_json_schema(self, prompt):
         assert "OUTPUT FORMAT — MANDATORY" not in prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Mode 5 — Deep Research (prompt + structured chat mode)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestDeepResearchPrompt:
-    """Mode 5a — Deep research prompt builder."""
-
-    @pytest.fixture(scope="class")
-    def prompt(self):
-        from backend.prompts.deep_research_prompt import build_deep_research_prompt
-        return build_deep_research_prompt(
-            topic              = _DEEP_RESEARCH_TOPIC,
-            source_count       = 3,
-            source_analysis    = _DEEP_RESEARCH_SOURCE_ANALYSIS,
-            viewpoint_analysis = _DEEP_RESEARCH_VIEWPOINTS,
-            articles           = _DEEP_RESEARCH_ARTICLES,
-        )
-
-    def test_prompt_health(self, prompt):
-        _assert_prompt_health(prompt, min_tokens=500, label="DeepResearch")
-
-    def test_three_personas_present(self, prompt):
-        assert "RESEARCH ANALYST" in prompt
-        assert "STRATEGY CONSULTANT" in prompt
-        assert "TECHNICAL INVESTIGATOR" in prompt
-
-    def test_topic_embedded(self, prompt):
-        assert "Retrieval Augmented Generation" in prompt
-
-    def test_source_analysis_embedded(self, prompt):
-        assert "MULTI-SOURCE ANALYSIS" in prompt
-        assert "hallucination" in prompt.lower()
-
-    def test_viewpoints_embedded(self, prompt):
-        assert "MULTI-ANGLE VIEWPOINT" in prompt
-        assert "Lewis" in prompt  # from mock viewpoint data
-
-    def test_articles_embedded(self, prompt):
-        assert "BACKGROUND ARTICLES" in prompt
-        assert "arxiv.org" in prompt
-
-    def test_section_dividers_present(self, prompt):
-        assert "---" in prompt
-
-    def test_output_schema_has_required_keys(self, prompt):
-        assert "research_summary" in prompt
-        assert "key_findings" in prompt
-        assert "viewpoint_comparison" in prompt
-        assert "tradeoffs" in prompt
-        assert "strategic_implications" in prompt
-        assert "confidence_level" in prompt
-
-    def test_writing_rules_present(self, prompt):
-        assert "Writing rules" in prompt
-
-    def test_synthesis_rules_present(self, prompt):
-        assert "Synthesis quality rules" in prompt
-
-    def test_json_schema_is_parseable(self, prompt):
-        # The schema in the prompt should be valid JSON structure
-        # Extract just the schema portion
-        schema_start = prompt.find('{\n  "research_summary"')
-        if schema_start == -1:
-            schema_start = prompt.find('{\n  "research_summary"')
-        assert schema_start != -1, "Could not find JSON schema in deep research prompt"
-
-
-class TestDeepResearchChatMode:
-    """Mode 5b — Chat in deep_research structured mode."""
-
-    @pytest.fixture(scope="class")
-    def prompt(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        return build_system_prompt(_CHAT_CONTEXT_STRUCTURED, mode="deep_research")
-
-    def test_prompt_health(self, prompt):
-        _assert_prompt_health(prompt, min_tokens=200, label="DeepResearchChat")
-
-    def test_structured_json_schema_present(self, prompt):
-        assert "OUTPUT FORMAT — MANDATORY" in prompt
-
-    def test_structured_persona_present(self, prompt):
-        assert "Curivio" in prompt
-        assert "research" in prompt.lower()
-
-    def test_schema_keys_present(self, prompt):
-        assert "response_type" in prompt
-        assert "key_takeaways" in prompt
-        assert "next_topics" in prompt
-
-    def test_no_conversational_rules(self, prompt):
-        # Structured mode uses _GUIDELINES, not _NATURAL_GUIDELINES
-        assert "CONVERSATIONAL RULES" not in prompt
-
-    def test_research_context_injected(self, prompt):
-        assert "RAG pipelines" in prompt
-
-    def test_continuity_injected(self, prompt):
-        assert "transformers" in prompt.lower() or "embeddings" in prompt.lower()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Mode 6 — Compare Mode
+# Mode 5 — Compare Mode
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestCompareMode:
@@ -974,17 +850,6 @@ class TestTokenEfficiency:
         # Feed prompt is large but should stay under 20k tokens
         assert tokens < 20_000, f"Day1 feed prompt unexpectedly large: {tokens} tokens"
 
-    def test_deep_research_within_reasonable_budget(self):
-        from backend.prompts.deep_research_prompt import build_deep_research_prompt
-        prompt = build_deep_research_prompt(
-            topic=_DEEP_RESEARCH_TOPIC, source_count=3,
-            source_analysis=_DEEP_RESEARCH_SOURCE_ANALYSIS,
-            viewpoint_analysis=_DEEP_RESEARCH_VIEWPOINTS,
-            articles=_DEEP_RESEARCH_ARTICLES,
-        )
-        tokens = max(1, len(prompt) // 4)
-        assert tokens < 5_000, f"Deep research prompt unexpectedly large: {tokens} tokens"
-
     def test_chat_natural_within_reasonable_budget(self):
         from backend.services.chat_prompt_service import build_system_prompt
         prompt = build_system_prompt(_CHAT_CONTEXT_NORMAL, mode="normal")
@@ -993,7 +858,7 @@ class TestTokenEfficiency:
 
     def test_chat_structured_within_reasonable_budget(self):
         from backend.services.chat_prompt_service import build_system_prompt
-        prompt = build_system_prompt(_CHAT_CONTEXT_STRUCTURED, mode="deep_research")
+        prompt = build_system_prompt(_CHAT_CONTEXT_STRUCTURED, mode="web_search")
         tokens = max(1, len(prompt) // 4)
         assert tokens < 5_000, f"Chat structured prompt unexpectedly large: {tokens} tokens"
 
@@ -1057,10 +922,6 @@ class TestDetectDepth:
     def test_research_trigger_returns_research(self):
         from backend.services.chat_prompt_service import detect_depth
         assert detect_depth("analyze the tradeoffs and compare perspectives") == "research"
-
-    def test_deep_research_mode_always_research(self):
-        from backend.services.chat_prompt_service import detect_depth
-        assert detect_depth("hi", mode="deep_research") == "research"
 
     def test_standard_question_returns_standard(self):
         from backend.services.chat_prompt_service import detect_depth

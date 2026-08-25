@@ -516,10 +516,61 @@ CREATE_PASSWORD_RESET_TOKENS = """
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    TEXT    NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    token      TEXT    NOT NULL UNIQUE,
+    code_hash  TEXT    NOT NULL UNIQUE,
     expires_at TEXT    NOT NULL,
     used       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+# Security hardening phase: the reset code used to be stored as plaintext in
+# `token`; existing installs need the column renamed to match — new installs
+# get code_hash straight from CREATE_PASSWORD_RESET_TOKENS above, so this is
+# a no-op there ("no such column: token", caught by init_db's migration
+# runner same as any other fresh-DB skip). Any reset code mid-flight at
+# upgrade time is orphaned (its row keeps the old plaintext under a column
+# name the app no longer queries) — acceptable, codes are single-digit-
+# minutes-lived; the user just requests a new one.
+MIGRATE_RESET_TOKENS_TOKEN_TO_CODE_HASH = (
+    "ALTER TABLE password_reset_tokens RENAME COLUMN token TO code_hash"
+)
+
+CREATE_VERIFICATION_LOCKOUTS = """
+CREATE TABLE IF NOT EXISTS verification_lockouts (
+    email        TEXT    NOT NULL,
+    purpose      TEXT    NOT NULL CHECK(purpose IN ('reset', 'signup')),
+    fail_count   INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    updated_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (email, purpose)
+);
+"""
+
+CREATE_RESEND_COOLDOWNS = """
+CREATE TABLE IF NOT EXISTS resend_cooldowns (
+    email        TEXT NOT NULL,
+    purpose      TEXT NOT NULL CHECK(purpose IN ('reset', 'signup')),
+    last_sent_at TEXT NOT NULL,
+    PRIMARY KEY (email, purpose)
+);
+"""
+
+CREATE_PENDING_SIGNUPS = """
+CREATE TABLE IF NOT EXISTS pending_signups (
+    email      TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    hashed_pw  TEXT NOT NULL,
+    code_hash  TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_REVOKED_TOKENS = """
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    jti        TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -829,6 +880,15 @@ MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM = (
     "ALTER TABLE chat_sessions ADD COLUMN forked_from TEXT DEFAULT NULL"
 )
 
+# Phase U: turn-count expiry for "this session had a crisis turn recently".
+# NULL = no active window. A turn number (history_turns + 1 the way
+# chat_service.py counts them), not a timestamp — decay is "next N turns",
+# not wall-clock time, so a long pause mid-conversation doesn't silently
+# expire it, and it can't drift on a slow reply either.
+MIGRATE_ADD_CHAT_SESSIONS_CRISIS_EXPIRES = (
+    "ALTER TABLE chat_sessions ADD COLUMN crisis_expires_at_turn INTEGER DEFAULT NULL"
+)
+
 # Extend share_links.type CHECK to include 'dashboard'.
 # SQLite requires a full table-recreation to change a CHECK constraint.
 MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE = [
@@ -980,10 +1040,68 @@ CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
     +attachment_id TEXT,
     +filename      TEXT,
     +chunk_index   TEXT,
+    +page_no       INTEGER,
     +chunk_text    TEXT,
     +created_at    TEXT
 );
 """
+
+# Chat citation grounding (same fix pattern as feed_v2 Phase 8b, applied
+# independently on chat's side): page_no is nullable/additive — NULL for
+# chunks from documents with no real page concept (docx/txt/code) and for
+# every chunk stored before this migration ran (no fabricated precision).
+#
+# vec0 virtual tables have no ALTER TABLE ADD COLUMN support (see
+# CREATE_DOCUMENT_ATTACHMENT_SESSIONS' comment above), so this is a real
+# rebuild, not a one-line ADD COLUMN. Live-verified (real sqlite-vec
+# in-memory DB): ALTER TABLE RENAME on a vec0 table corrupts it — it leaves
+# the internal shadow tables (e.g. `<name>_rowids`) under the OLD name,
+# breaking every query against the renamed table. So this never renames —
+# it drops the old table and CREATEs a fresh one under the same final name,
+# round-tripping data through a temp table in between (also live-verified:
+# embeddings round-trip exactly, self-distance stays ~0 after the copy).
+#
+# Idempotency: unlike every ADD-COLUMN migration in this file, a naive
+# re-run of a drop+recreate wouldn't fail loudly (CREATE succeeds again,
+# nothing here would raise "already exists") — it would just silently
+# re-run and, worse, wipe any real page_no values populated since the first
+# run (the copy step hardcodes NULL because it assumes the pre-migration
+# shape). The bare CREATE TABLE sentinel below (no IF NOT EXISTS) is the
+# fix: it raises "already exists" on any run after the first, which the
+# runner's existing whitelist (init_db in utils/db.py) catches and skips —
+# the same skip-on-"already exists" idempotency every other migration here
+# already relies on, just made explicit since vec0 can't give it for free.
+MIGRATE_DOCUMENT_CHUNKS_VEC_ADD_PAGE_NO = [
+    "CREATE TABLE document_chunks_vec_page_no_migrated (id INTEGER PRIMARY KEY)",
+    """CREATE VIRTUAL TABLE document_chunks_vec_tmp USING vec0(
+        embedding      float[3072],
+        +attachment_id TEXT,
+        +filename      TEXT,
+        +chunk_index   TEXT,
+        +page_no       INTEGER,
+        +chunk_text    TEXT,
+        +created_at    TEXT
+    )""",
+    """INSERT INTO document_chunks_vec_tmp
+           (embedding, attachment_id, filename, chunk_index, page_no, chunk_text, created_at)
+       SELECT embedding, attachment_id, filename, chunk_index, NULL, chunk_text, created_at
+       FROM   document_chunks_vec""",
+    "DROP TABLE document_chunks_vec",
+    """CREATE VIRTUAL TABLE document_chunks_vec USING vec0(
+        embedding      float[3072],
+        +attachment_id TEXT,
+        +filename      TEXT,
+        +chunk_index   TEXT,
+        +page_no       INTEGER,
+        +chunk_text    TEXT,
+        +created_at    TEXT
+    )""",
+    """INSERT INTO document_chunks_vec
+           (embedding, attachment_id, filename, chunk_index, page_no, chunk_text, created_at)
+       SELECT embedding, attachment_id, filename, chunk_index, page_no, chunk_text, created_at
+       FROM   document_chunks_vec_tmp""",
+    "DROP TABLE document_chunks_vec_tmp",
+]
 
 # Chat-R15c — permanent attachment_id -> session_id record for document (doc://)
 # attachments, written once at message-save time (chat_service._save_message,
@@ -1024,6 +1142,7 @@ MIGRATIONS = [
     MIGRATE_ADD_TOP_GAPS_JSON,
     MIGRATE_ADD_INSIGHT_STATUS,
     MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM,
+    MIGRATE_ADD_CHAT_SESSIONS_CRISIS_EXPIRES,
     MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE,
     MIGRATE_ADD_CHAT_MESSAGES_ATTACHMENTS,
     MIGRATE_USER_PREFERENCES_ADD_USER_ID_SCOPE,
@@ -1041,6 +1160,8 @@ MIGRATIONS = [
     MIGRATE_ADD_LLM_CALL_LOG_IS_TEST,
     MIGRATE_BACKFILL_LLM_CALL_LOG_IS_TEST,
     MIGRATE_ADD_LLM_CALL_LOG_TARGET_LANGUAGE,
+    MIGRATE_DOCUMENT_CHUNKS_VEC_ADD_PAGE_NO,
+    MIGRATE_RESET_TOKENS_TOKEN_TO_CODE_HASH,
 ]
 
 ALL_TABLES = [
@@ -1093,6 +1214,10 @@ ALL_TABLES = [
     CREATE_CARD_NOTES,
     CREATE_CARD_NOTES_IDX,
     CREATE_PASSWORD_RESET_TOKENS,
+    CREATE_VERIFICATION_LOCKOUTS,
+    CREATE_RESEND_COOLDOWNS,
+    CREATE_PENDING_SIGNUPS,
+    CREATE_REVOKED_TOKENS,
     CREATE_CONVERSATION_KNOWLEDGE_STATE,
     CREATE_PROJECT_LEARNING_MEMORY,
     CREATE_PROJECT_LEARNING_MEMORY_IDX,

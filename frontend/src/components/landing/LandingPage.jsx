@@ -186,7 +186,7 @@ const JOURNEY = [
   {
     num: "03",
     title: "Learn at your own depth",
-    desc: "Skim summaries, ask anything, get plain-English explanations, or dive into deep research — all from the same card.",
+    desc: "Skim summaries, ask anything, get plain-English explanations, or search the live web — all from the same card.",
     color: "text-violet-400",
     border: "border-violet-500/20",
     bg: "bg-violet-500/5",

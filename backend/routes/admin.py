@@ -12,10 +12,12 @@ the slowest individual query, vs ~= the slowest once parallelized). Plain
 `def` lets FastAPI dispatch each to its threadpool instead.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from pydantic import BaseModel
 
+from .. import config as cfg
+from ..rate_limiter import limiter
 from ..services import admin_service
 from ..services.auth_service import get_current_admin_user
 
@@ -24,6 +26,9 @@ router = APIRouter(
     tags=["admin"],
     dependencies=[Depends(get_current_admin_user)],
 )
+
+ADMIN_READ_RATE_LIMIT   = cfg.ADMIN_READ_RATE_LIMIT
+ADMIN_EXPORT_RATE_LIMIT = cfg.ADMIN_EXPORT_RATE_LIMIT
 
 
 # ── Response models ─────────────────────────────────────────────────────────
@@ -194,7 +199,9 @@ def _norm_search(search: str | None) -> str | None:
 
 
 @router.get("/calls", response_model=AdminCallLogListResponse)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
 def admin_list_calls(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     call_type: str | None = None,
@@ -227,7 +234,9 @@ def admin_list_calls(
 
 
 @router.get("/calls/grouped", response_model=AdminCallGroupListResponse)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
 def admin_list_calls_grouped(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     project_id: str | None = None,
@@ -270,7 +279,9 @@ def admin_list_calls_grouped(
 
 
 @router.get("/calls/export", response_model=AdminCallExportResponse)
+@limiter.limit(ADMIN_EXPORT_RATE_LIMIT)
 def admin_export_calls(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     project_id: str | None = None,
@@ -299,7 +310,9 @@ def admin_export_calls(
 
 
 @router.get("/calls/volume", response_model=AdminDailyVolumeResponse)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
 def admin_calls_volume(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     call_type: str | None = None,
@@ -323,7 +336,8 @@ def admin_calls_volume(
 
 
 @router.get("/calls/{run_id}/tree", response_model=AdminCallTreeResponse)
-def admin_call_tree(run_id: str):
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
+def admin_call_tree(request: Request, run_id: str):
     tree = admin_service.get_call_tree(run_id)
     if tree is None:
         raise HTTPException(status_code=404, detail="No call found for this run_id")
@@ -331,7 +345,9 @@ def admin_call_tree(run_id: str):
 
 
 @router.get("/summary", response_model=AdminSummaryResponse)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
 def admin_summary(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     include_test_data: bool = False,
@@ -355,7 +371,9 @@ def admin_summary(
 
 
 @router.get("/operations/summary", response_model=AdminOperationSummaryResponse)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
 def admin_operation_summary(
+    request: Request,
     date_from: str | None = None,
     date_to: str | None = None,
     project_id: str | None = None,
@@ -380,5 +398,6 @@ def admin_operation_summary(
 
 
 @router.get("/projects", response_model=AdminProjectListResponse)
-def admin_list_projects():
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
+def admin_list_projects(request: Request):
     return AdminProjectListResponse(projects=admin_service.list_projects())

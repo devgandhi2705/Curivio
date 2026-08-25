@@ -579,29 +579,33 @@ def _groups_cte(
                 FIRST_VALUE(resolved_target_language) OVER (
                     PARTITION BY group_key
                     ORDER BY (resolved_target_language IS NULL), timestamp_start ASC, id ASC
-                ) AS picked_target_language
+                ) AS picked_target_language,
+                FIRST_VALUE(success) OVER (
+                    PARTITION BY group_key
+                    ORDER BY timestamp_start DESC, id DESC
+                ) AS latest_success
             FROM resolved
         ),
         groups AS (
             SELECT
-                group_key,
-                MAX(trace_id)               AS trace_id,
-                MAX(surface)                AS surface,
-                MIN(created_at)             AS started_at,
-                MAX(created_at)             AS ended_at,
-                COUNT(*)                    AS row_count,
-                MIN(success)                AS all_succeeded,
-                MAX(CASE WHEN call_type IN ({ws_placeholders}) THEN 1 ELSE 0 END) AS has_web_search,
-                {search_case}                AS has_search_match,
-                MAX(is_test)                AS is_test,
-                MAX(picked_project_id)      AS project_id,
-                MAX(picked_user_id)         AS user_id,
-                MAX(picked_day_ref)         AS day_ref,
-                MAX(picked_target_language) AS target_language,
-                SUM(latency_ms)             AS op_latency_ms,
-                SUM(total_tokens)           AS op_tokens
-            FROM picked
-            GROUP BY group_key
+                p.group_key,
+                MAX(p.trace_id)               AS trace_id,
+                MAX(p.surface)                AS surface,
+                MIN(p.created_at)             AS started_at,
+                MAX(p.created_at)             AS ended_at,
+                COUNT(*)                      AS row_count,
+                MAX(p.latest_success)        AS all_succeeded,
+                MAX(CASE WHEN p.call_type IN ({ws_placeholders}) THEN 1 ELSE 0 END) AS has_web_search,
+                {search_case}                  AS has_search_match,
+                MAX(p.is_test)                AS is_test,
+                MAX(p.picked_project_id)      AS project_id,
+                MAX(p.picked_user_id)         AS user_id,
+                MAX(p.picked_day_ref)         AS day_ref,
+                MAX(p.picked_target_language) AS target_language,
+                SUM(p.latency_ms)             AS op_latency_ms,
+                SUM(p.total_tokens)           AS op_tokens
+                        FROM picked p
+            GROUP BY p.group_key
         )
     """
     return sql, [*candidate_params, *_WEB_SEARCH_CALL_TYPES, *search_case_params]

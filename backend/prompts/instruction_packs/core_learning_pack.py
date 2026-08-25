@@ -42,6 +42,17 @@ BRILLIANT_FRIEND_TONE: str = (
     "direct, warm, not condescending."
 )
 
+# Layman-fix pass (Task 3): the two directives below shared these near-verbatim
+# instead of sourcing them once. Same .replace()-placeholder convention this file
+# already uses for {{ANALOGY_BANK}} — kept as plain literals, not f-strings, so
+# {{ANALOGY_BANK}} survives untouched for layman_mode_service's own later replace.
+_CORE_IDEA_STEP: str = (
+    "THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?"
+)
+_NEVER_OPEN_WITH_DEFINITION: str = (
+    "Never open with a definition. Lead with intuition, then mechanism, then implication."
+)
+
 MECHANISM_PRESERVATION_RULE: str = """\
 THE FUNDAMENTAL RULE:
 Simplify vocabulary, abstraction, and jargon.
@@ -114,7 +125,7 @@ BAD:  "FDA helps exports because countries trust approved medicines."
 GOOD: "FDA approval works like a global trust certificate — buyers assume a company that passed strict inspections is less likely to fail them, and that assumption is worth more than a marketing budget because scrutiny earned it, money didn't."
 
 Structure your response in this sequence:
-1. THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?
+1. {{CORE_IDEA_STEP}}
 2. THE ANALOGY BRIDGE — See analogy system below. Carry the mechanism, not just the shape.
    Bridge back explicitly: "In the same way, [concept] works by [mechanism]…"
 3. THE MECHANISM — How it actually works, in plain language.
@@ -147,8 +158,15 @@ STRATEGIC MEANING TEST (confirm before finalising):
 - Does this surface something non-obvious? (insight density preserved)
 - Would a smart person feel genuinely smarter after reading this, not just more informed?
 
-Tone: speak like a brilliant friend explaining over coffee — direct, warm, not condescending.
-Never open with a definition. Lead with intuition, then mechanism, then implication."""
+{{BRILLIANT_FRIEND_TONE}}
+{{NEVER_OPEN_WITH_DEFINITION}}"""
+
+LAYMAN_SIMPLIFICATION_DIRECTIVE = (
+    LAYMAN_SIMPLIFICATION_DIRECTIVE
+    .replace("{{CORE_IDEA_STEP}}", _CORE_IDEA_STEP)
+    .replace("{{BRILLIANT_FRIEND_TONE}}", BRILLIANT_FRIEND_TONE)
+    .replace("{{NEVER_OPEN_WITH_DEFINITION}}", _NEVER_OPEN_WITH_DEFINITION)
+)
 
 LAYMAN_SIMPLIFICATION_SIMPLE: str = """\
 ACTIVE RESPONSE MODE — EXPLAIN SIMPLY:
@@ -160,7 +178,7 @@ This is INTELLIGENT SIMPLIFICATION — not childish simplification. The user is 
 specific domain. Do not condescend. Do not oversimplify to the point of misleading.
 
 Structure your response in this sequence:
-1. THE CORE IDEA — One plain sentence. What is this, in the simplest honest terms?
+1. {{CORE_IDEA_STEP}}
 2. THE ANALOGY — "Think of it like…" Use something the reader already knows: roads, restaurants,
    sports, cooking. The analogy must carry the MAIN MECHANISM, not just the surface shape.
    Then bridge back explicitly: "In the same way, [the actual concept] works by [mechanism]…"
@@ -177,8 +195,8 @@ Structure your response in this sequence:
    This is the most valuable part of the response — do not skip it or bury it.
 
 Tone and style:
-- Lead with intuition, not definition. Never start with a Wikipedia-style "X is a Y that Z" sentence.
-- Speak like a brilliant friend explaining over coffee — not a textbook, not a professor.
+- {{NEVER_OPEN_WITH_DEFINITION}} Never start with a Wikipedia-style "X is a Y that Z" sentence.
+- {{BRILLIANT_FRIEND_TONE}}
 - Never be condescending. The user is intelligent but new to this specific domain.
 - Connect to the user's project context and prior interests when relevant.
 
@@ -188,3 +206,10 @@ Do NOT:
 - Write walls of text with no paragraph breaks.
 - Over-simplify to the point of being misleading.
 - Skip THE INSIGHT — it is what makes the response genuinely memorable."""
+
+LAYMAN_SIMPLIFICATION_SIMPLE = (
+    LAYMAN_SIMPLIFICATION_SIMPLE
+    .replace("{{CORE_IDEA_STEP}}", _CORE_IDEA_STEP)
+    .replace("{{BRILLIANT_FRIEND_TONE}}", BRILLIANT_FRIEND_TONE)
+    .replace("{{NEVER_OPEN_WITH_DEFINITION}}", _NEVER_OPEN_WITH_DEFINITION)
+)

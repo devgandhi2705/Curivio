@@ -28,10 +28,10 @@ export default function BookmarkButton({ bookmarkData, className = '', label = f
       <button
         onClick={e => { e.stopPropagation(); setOpen(true) }}
         title={saved ? 'Bookmarked!' : 'Save to bookmarks'}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors text-xs ${
+        className={`flex items-center gap-1 px-2 py-1 rounded-lg border transition-colors text-xs ${
           saved
-            ? 'text-amber-400 bg-amber-500/10'
-            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+            ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+            : 'text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-slate-300 hover:bg-slate-800'
         } ${className}`}
       >
         <BookmarkIcon filled={saved} />

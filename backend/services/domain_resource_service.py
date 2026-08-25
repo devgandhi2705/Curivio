@@ -270,9 +270,6 @@ def discover_resources(
 def get_domain_search_queries(topic: str, domain: str | None = None) -> list[str]:
     """
     Return the ordered list of Tavily query strings for a topic and domain.
-
-    Useful for `deep_research_service._expand_queries` — lets the deep-research
-    workflow use domain-optimised angles instead of the generic fallback templates.
     """
     from .domain_classifier_service import classify_domain
 

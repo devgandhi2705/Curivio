@@ -456,7 +456,7 @@ class TestActionPromptSection:
             "preference_snapshot": {}, "learner_profile": {},
             "action_result": {"instruction": "Action: SHOW REPOSITORIES\nHere are repos..."},
         }
-        prompt = build_system_prompt(ctx, mode="deep_research")
+        prompt = build_system_prompt(ctx, mode="web_search")
         assert "Action: SHOW REPOSITORIES" in prompt
 
     def test_no_action_result_prompt_unchanged(self):

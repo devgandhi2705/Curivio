@@ -9,7 +9,6 @@
  *   onMarkRead()         — called to mark read (no args)
  *   onMarkUnread()       — called to mark unread (no args)
  *   onAskAbout(card)     — open in chat: ask about this
- *   onDeepResearch(card) — open in chat: deep research
  *   relatedChats         — list of linked chat sessions (null = not loaded)
  *   onLoadRelatedChats() — trigger lazy load of related chats
  *   onOpenChat(sessionId)— navigate to a specific chat session
@@ -75,14 +74,6 @@ function ChatIcon({ className }) {
 }
 
 
-function MicroscopeIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
-      <path d="M9.5 0a.75.75 0 0 1 .75.75v1h1.5a.75.75 0 0 1 0 1.5h-1.5v.75a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 9.5 0ZM7.25 4.5a.75.75 0 0 0-1.5 0v1h-.25C3.783 5.5 2.5 6.783 2.5 8.25V10h-.75a.75.75 0 0 0 0 1.5h9.5a.75.75 0 0 0 0-1.5H10.5V8.25C10.5 6.783 9.217 5.5 7.75 5.5H7.5V4.5Zm-3 6H9V8.25A1.25 1.25 0 0 0 7.75 7h-2A1.25 1.25 0 0 0 4.5 8.25V10.5ZM2.5 12h11a.75.75 0 0 1 0 1.5h-11a.75.75 0 0 1 0-1.5Z" />
-    </svg>
-  )
-}
-
 function CheckCircleIcon({ className }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="currentColor">
@@ -119,14 +110,6 @@ function ClockIcon({ className }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="currentColor">
       <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0ZM7.25 4.75a.75.75 0 0 1 1.5 0V8.5h2a.75.75 0 0 1 0 1.5H8a.75.75 0 0 1-.75-.75V4.75Z" />
-    </svg>
-  )
-}
-
-function DotsIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
     </svg>
   )
 }
@@ -594,7 +577,6 @@ export default function InsightCard({
   onMarkRead,
   onMarkUnread,
   onAskAbout,
-  onDeepResearch,
   onExplainSimply,
   isQueued = false,
   onToggleQueue,
@@ -615,14 +597,13 @@ export default function InsightCard({
 
   const type   = TYPE_CONFIG[card.content_type] || TYPE_CONFIG.news
 
-  const hasChatActions = !readOnly && (onAskAbout || onDeepResearch || onExplainSimply || onToggleQueue)
+  const hasChatActions = !readOnly && (onAskAbout || onExplainSimply || onToggleQueue)
   const shareResourceId = projectId && day != null
     ? `${projectId}/${day}${articleKey ? `/${articleKey}` : ''}`
     : null
 
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteDraft, setNoteDraft] = useState(note ?? "")
-  const [moreOpen, setMoreOpen] = useState(false)
   const noteTimerRef = useRef(null)
 
   useEffect(() => { setNoteDraft(note ?? "") }, [note])
@@ -661,9 +642,6 @@ export default function InsightCard({
               <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide border ${type.labelColor}`}>
                 {type.label}
               </span>
-              {isOfflineAvailable && (
-                <CloudCheckIcon className="w-3.5 h-3.5 text-slate-600" />
-              )}
               {card.category && (
                 <span className="inline-flex items-center text-[10px] text-slate-500/60 leading-none">
                   {card.category}
@@ -672,6 +650,37 @@ export default function InsightCard({
             </div>
             <h3 className="text-[15px] md:text-sm font-semibold text-slate-100 leading-snug">{card.title}</h3>
           </div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {isOfflineAvailable && (
+            <CloudCheckIcon className="w-3 h-3 text-slate-600" />
+          )}
+          {!readOnly && (
+            <BookmarkButton
+              className="w-7 h-7 justify-center p-0 [&>svg]:w-3 [&>svg]:h-3"
+              bookmarkData={{
+                title:              card.title,
+                summary:            card.summary || '',
+                content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
+                source_url:         card.source_links?.[0]?.url || '',
+                project_id:          projectId,
+                project_name:        projectName,
+                ai_generated_notes:  note?.trim() || card.why_it_matters || '',
+                related_topics:     card.related_topics || [],
+                source_type:        'feed',
+                tags:                [card.category, card.content_type].filter(Boolean),
+              }}
+            />
+          )}
+          {shareResourceId && (
+            <ShareButton
+              type="feed"
+              resourceId={shareResourceId}
+              shareTitle={card.title || ""}
+              shareText={card.summary || ""}
+              buttonClassName="w-7 h-7 justify-center p-0 [&_svg]:w-3 [&_svg]:h-3"
+            />
+          )}
         </div>
       </div>
 
@@ -716,7 +725,7 @@ export default function InsightCard({
       <SourceSection sourceLinks={card.source_links} cardTitle={card.title} />
 
       {/* Bottom action bar */}
-      {(hasChatActions || (!readOnly && (onMarkRead || onMarkUnread)) || shareResourceId) && (
+      {(hasChatActions || (!readOnly && (onMarkRead || onMarkUnread))) && (
         <div className="border-t border-slate-800/50 px-2.5 md:px-4 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
           <div className="flex items-center gap-1 md:gap-1.5 flex-wrap">
@@ -744,157 +753,75 @@ export default function InsightCard({
                 Explain Simply
               </button>
             )}
-            {/* SECONDARY: Deep Research — icon only on mobile */}
-            {!readOnly && onDeepResearch && (
-              <button
-                onClick={() => onDeepResearch(card)}
-                disabled={offlineDisabled}
-                title={offlineDisabled ? "Requires an internet connection" : undefined}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-slate-800/20 hover:bg-violet-500/10 border border-slate-700/20 hover:border-violet-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
-              >
-                <MicroscopeIcon className="w-3 h-3" />
-                <span className="hidden md:inline">Deep Research</span>
-              </button>
-            )}
-            {/* SECONDARY: Read Later — desktop main row only */}
+            <div className="ml-auto flex items-center gap-1 md:gap-1.5">
+            {/* Read Later — always visible, icon-only */}
             {!readOnly && onToggleQueue && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
-                className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                  isQueued
-                    ? "text-amber-400 bg-amber-500/10 border-amber-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
-                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
-                }`}
-              >
-                <ClockIcon className="w-3 h-3" />
-                {isQueued ? "Queued" : "Read Later"}
-              </button>
-            )}
-            {/* Add note — desktop main row only (ml-auto) */}
-            {!readOnly && (onSaveNote || onDeleteNote || note) && (
-              <button
-                onClick={() => setNoteOpen(o => !o)}
-                className={`hidden md:inline-flex ml-auto items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                  noteOpen || hasNote
-                    ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
-                }`}
-              >
-                <PencilIcon className="w-3 h-3" />
-                {hasNote ? "My note" : "Add note"}
-                {hasNote && !noteOpen && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
-                )}
-              </button>
-            )}
-            {/* Bookmark — always visible, hidden in readOnly (shared) view */}
-            {!readOnly && (
-              <BookmarkButton
-                className={(onSaveNote || onDeleteNote || note) ? "" : "md:ml-auto"}
-                label
-                bookmarkData={{
-                  title:              card.title,
-                  summary:            card.summary || '',
-                  content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
-                  source_url:         card.source_links?.[0]?.url || '',
-                  project_id:         projectId,
-                  project_name:       projectName,
-                  ai_generated_notes: note?.trim() || card.why_it_matters || '',
-                  related_topics:     card.related_topics || [],
-                  source_type:        'feed',
-                  tags:               [card.category, card.content_type].filter(Boolean),
-                }}
-              />
-            )}
-            {/* Share — always visible, including in readOnly (shared) view */}
-            {shareResourceId && (
-              <ShareButton
-                type="feed"
-                resourceId={shareResourceId}
-                shareTitle={card.title || ""}
-                shareText={card.summary || ""}
-                className={readOnly || onSaveNote || onDeleteNote || note ? "" : "md:ml-auto"}
-              />
-            )}
-            {/* Read / Unread — desktop main row only */}
-            {!readOnly && (onMarkRead || onMarkUnread) && (
-              <button
-                onClick={handleReadToggle}
-                className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                  isRead
-                    ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
-                    : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
-                }`}
-              >
-                {isRead
-                  ? <><CheckCircleIcon className="w-3 h-3" /> Read</>
-                  : <><CircleIcon className="w-3 h-3" /> Mark as Read</>
-                }
-              </button>
-            )}
-            {/* More toggle — mobile only, reveals tertiary actions */}
-            {!readOnly && (onToggleQueue || onSaveNote || onDeleteNote || note || onMarkRead || onMarkUnread) && (
-              <button
-                onClick={() => setMoreOpen(o => !o)}
-                className={`md:hidden ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
-                  moreOpen
-                    ? "text-slate-300 bg-slate-800/60 border-slate-700/50"
-                    : "text-slate-500/70 bg-transparent border-slate-700/20 hover:text-slate-300"
-                }`}
-              >
-                <DotsIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-          {/* Tertiary row — mobile only, shown when More is open */}
-          {moreOpen && (
-            <div className="md:hidden flex items-center gap-1 flex-wrap mt-1.5 pt-1.5 border-t border-slate-800/40">
-              {onToggleQueue && (
+              <div className="relative group">
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
+                  aria-label={isQueued ? "Queued" : "Read Later"}
+                  title={isQueued ? "Queued" : "Read Later"}
+                  className={`inline-flex w-7 h-7 items-center justify-center p-0 rounded-lg border transition-all ${
                     isQueued
-                      ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                      ? "text-amber-400 bg-amber-500/10 border-amber-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
                   }`}
                 >
                   <ClockIcon className="w-3 h-3" />
-                  {isQueued ? "Queued" : "Read Later"}
                 </button>
-              )}
-              {(onSaveNote || onDeleteNote || note) && (
+                <span className="pointer-events-none absolute right-0 bottom-full z-20 mb-1 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  {isQueued ? "Queued" : "Read Later"}
+                </span>
+              </div>
+            )}
+            {/* Add note — always visible, icon-only */}
+            {!readOnly && (onSaveNote || onDeleteNote || note) && (
+              <div className="relative group">
                 <button
                   onClick={() => setNoteOpen(o => !o)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
+                  aria-label={hasNote ? "My note" : "Add note"}
+                  title={hasNote ? "My note" : "Add note"}
+                  className={`inline-flex w-7 h-7 items-center justify-center p-0 rounded-lg text-[11px] font-medium border transition-all ${
                     noteOpen || hasNote
                       ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
-                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
                   }`}
                 >
                   <PencilIcon className="w-3 h-3" />
-                  {hasNote ? "My note" : "Add note"}
                   {hasNote && !noteOpen && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 flex-shrink-0" />
+                    <span className="absolute right-1 top-1 w-1.5 h-1.5 rounded-full bg-amber-400/70" />
                   )}
                 </button>
-              )}
-              {(onMarkRead || onMarkUnread) && (
+                <span className="pointer-events-none absolute right-0 bottom-full z-20 mb-1 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  {hasNote ? "My note" : "Add note"}
+                </span>
+              </div>
+            )}
+            {/* Read / Unread — desktop main row only */}
+            {!readOnly && (onMarkRead || onMarkUnread) && (
+              <div className="relative group">
                 <button
                   onClick={handleReadToggle}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border transition-all ${
+                  aria-label={isRead ? "Read" : "Mark as Read"}
+                  title={isRead ? "Read" : "Mark as Read"}
+                  className={`inline-flex w-7 h-7 items-center justify-center p-0 rounded-lg border transition-all ${
                     isRead
-                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                      : "text-slate-500 bg-slate-800/20 border-slate-700/20 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
+                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-slate-800/40 hover:text-slate-400 hover:border-slate-700/40"
+                      : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/30"
                   }`}
                 >
                   {isRead
-                    ? <><CheckCircleIcon className="w-3 h-3" /> Read</>
-                    : <><CircleIcon className="w-3 h-3" /> Mark as Read</>
+                    ? <CheckCircleIcon className="w-3 h-3" />
+                    : <CircleIcon className="w-3 h-3" />
                   }
                 </button>
-              )}
+                <span className="pointer-events-none absolute right-0 bottom-full z-20 mb-1 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  {isRead ? "Read" : "Mark as Read"}
+                </span>
+              </div>
+            )}
             </div>
-          )}
+          </div>
         </div>
       )}
 

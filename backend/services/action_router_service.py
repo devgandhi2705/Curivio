@@ -278,13 +278,13 @@ def _handle_research_report(topic: str, context: dict) -> dict:
     """
     Generate a structured research report from stored deep-research data.
 
-    If deep research has already been run for the topic, formats it into a
-    professional multi-section report (executive summary, key findings, trend
-    analysis, opportunities/risks, resources, sources) and returns the
-    markdown as the LLM instruction.
+    Deep research itself can no longer be run (removed feature) — this only
+    formats a report from a topic's pre-existing stored research, if any
+    still exists from before removal (professional multi-section report:
+    executive summary, key findings, trend analysis, opportunities/risks,
+    resources, sources), returned as the LLM instruction.
 
-    Falls back gracefully when no research is stored — prompts the user to
-    run deep research first.
+    Falls back gracefully when no research is stored for the topic.
     """
     from .deep_research_service       import get_stored_research
     from .research_report_service     import generate_report, format_report_as_markdown
@@ -293,12 +293,10 @@ def _handle_research_report(topic: str, context: dict) -> dict:
     if not research:
         instruction = (
             f"Action: RESEARCH REPORT\n"
-            f"No deep research has been stored for \"{topic}\" yet.\n"
-            "Tell the user that you need to perform deep research first before "
-            "generating a report.  Offer to run deep research now and then produce "
-            "the report once it completes.  Explain briefly what the report will include: "
-            "executive summary, key findings, trend analysis, opportunities and risks, "
-            "important resources, and source references."
+            f"No stored research is available for \"{topic}\".\n"
+            "Tell the user you don't have a research report on file for this topic, "
+            "and offer to help by answering their questions directly or searching the "
+            "web for current information instead."
         )
         return _result("research_report", topic, False, {}, instruction)
 

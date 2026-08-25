@@ -52,20 +52,37 @@ _MAX_DISTANCE = 0.35
 
 def _entry_text_from_state(state: dict) -> str:
     """
-    Compact text representation of the extracted knowledge state (never raw
-    messages). Real rows are often sparse — current_thread + curiosity_momentum
-    populated, mechanisms/unresolved empty — so this degrades gracefully.
+    1-2 sentence prose summary of the extracted knowledge state (never raw
+    messages) — this is the text that gets embedded and matched against future
+    questions, so it needs to read like a note a person would leave themselves,
+    not a period-joined slice of internal state fields.
+
+    Write-time only: this only shapes NEW rows going forward. Existing
+    conversation_memory_vec rows keep whatever entry_text they were written
+    with — no backfill/regeneration of stored rows happens here or anywhere else.
+
+    Real rows are often sparse — current_thread + one mechanism populated,
+    unresolved empty — so this degrades gracefully down to a single sentence.
     """
-    parts: list[str] = []
-    thread = (state.get("current_thread") or "").strip()
-    if thread:
-        parts.append(f"Thread: {thread}")
-    parts += [m for m in state.get("mechanisms_covered", [])[-3:] if m]
-    parts += [q for q in state.get("unresolved_questions", [])[-2:] if q]
-    momentum = state.get("curiosity_momentum", [])
-    if momentum:
-        parts.append(momentum[0])
-    return ". ".join(p.strip() for p in parts if p and p.strip())
+    thread     = (state.get("current_thread") or "").strip()
+    mechanisms = [m.strip() for m in state.get("mechanisms_covered", [])[-1:] if m and m.strip()]
+    unresolved = [q.strip() for q in state.get("unresolved_questions", [])[-1:] if q and q.strip()]
+
+    if not thread and not mechanisms and not unresolved:
+        return ""
+
+    sentences: list[str] = []
+    if thread and mechanisms:
+        sentences.append(f"On {thread}: {mechanisms[0]}")
+    elif mechanisms:
+        sentences.append(mechanisms[0])
+    elif thread:
+        sentences.append(f"Discussed {thread}.")
+
+    if unresolved:
+        sentences.append(f"Still open: {unresolved[0]}")
+
+    return " ".join(sentences).strip()
 
 
 def record_entry(user_id: str | None, session_id: str, state: dict) -> None:

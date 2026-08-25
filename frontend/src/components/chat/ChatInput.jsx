@@ -14,29 +14,11 @@ function GlobeIcon() {
   )
 }
 
-function FlaskIcon() {
-  return (
-    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 3h6M9 3v7l-5 9a1 1 0 0 0 .9 1.5h14.2a1 1 0 0 0 .9-1.5L15 10V3" />
-    </svg>
-  )
-}
-
 function LightbulbIcon() {
   return (
     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 21h6M12 3a6 6 0 0 1 6 6c0 2.22-1.2 4.16-3 5.2V17a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1v-2.8A6 6 0 0 1 6 9a6 6 0 0 1 6-6z" />
-    </svg>
-  )
-}
-
-function ThinkHarderIcon() {
-  return (
-    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 20V14M12 20V8M18 20V4" />
     </svg>
   )
 }
@@ -196,11 +178,9 @@ function ModeMenuItem({ active, onClick, disabled, icon, label, variant }) {
  *                               expires_at, previewUrl}] or []
  * onStop()            — fire when user clicks stop while AI is responding
  * disabled            — true while AI is responding
- * chatMode            — "normal" | "web_search" | "deep_research" | "layman"
+ * chatMode            — "normal" | "web_search" | "layman"
  * onModeChange(mode)  — called when user clicks a mode toggle
  * autoMode            — string | null — last backend-detected auto-mode
- * extendedThinking            — bool — "think harder" toggle state (Chat-6), off by default
- * onToggleExtendedThinking(v) — called with the new bool when the toggle is clicked
  */
 export default function ChatInput({
   onSend,
@@ -209,8 +189,6 @@ export default function ChatInput({
   chatMode = "normal",
   onModeChange,
   autoMode,
-  extendedThinking = false,
-  onToggleExtendedThinking,
 }) {
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -309,10 +287,8 @@ export default function ChatInput({
   }
 
   // ── Mode toggles ──────────────────────────────────────────────────────────
-  // deep_research visually activates the Web toggle too (deep ⊃ web)
 
-  const webActive    = chatMode === "web_search" || chatMode === "deep_research"
-  const deepActive   = chatMode === "deep_research"
+  const webActive    = chatMode === "web_search"
   const laymanActive = chatMode === "layman"
 
   function toggleLayman() {
@@ -321,24 +297,14 @@ export default function ChatInput({
   function toggleWeb() {
     onModeChange?.(chatMode === "web_search" ? "normal" : "web_search")
   }
-  function toggleDeep() {
-    onModeChange?.(chatMode === "deep_research" ? "normal" : "deep_research")
-  }
-  function toggleThinkHarder() {
-    onToggleExtendedThinking?.(!extendedThinking)
-  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   const modeHint = chatMode === "web_search"
     ? "Live web search active"
-    : chatMode === "deep_research"
-      ? "Deep research + web retrieval active"
-      : chatMode === "layman"
-        ? "Explain Simply mode active"
-        : extendedThinking
-          ? "Think Harder active — deeper reasoning"
-          : null
+    : chatMode === "layman"
+      ? "Explain Simply mode active"
+      : null
 
   return (
     <>
@@ -414,20 +380,6 @@ export default function ChatInput({
                     variant="blue"
                   />
                   <ModeMenuItem
-                    active={deepActive}
-                    onClick={() => { toggleDeep(); setMenuOpen(false) }}
-                    icon={<FlaskIcon />}
-                    label="Deep Research"
-                    variant="violet"
-                  />
-                  <ModeMenuItem
-                    active={extendedThinking}
-                    onClick={() => { toggleThinkHarder(); setMenuOpen(false) }}
-                    icon={<ThinkHarderIcon />}
-                    label="Think Harder"
-                    variant="emerald"
-                  />
-                  <ModeMenuItem
                     active={false}
                     onClick={() => { setMenuOpen(false); fileInputRef.current?.click() }}
                     disabled={attachments.length >= MAX_ATTACHMENTS}
@@ -472,17 +424,17 @@ export default function ChatInput({
               title={disabled ? "Stop generating" : uploadingCount > 0 ? "Waiting for upload to finish…" : "Send (Enter)"}
               aria-label={disabled ? "Stop generating" : "Send message"}
               className={`
-                w-7 h-7 rounded-lg flex items-center justify-center
+                h-7 rounded-lg flex items-center justify-center
                 transition-all duration-150 flex-shrink-0
                 ${disabled
-                  ? "bg-slate-700 text-slate-100 hover:bg-slate-600 active:scale-95"
+                  ? "min-w-[62px] gap-1.5 px-2 bg-blue-600 text-white shadow-sm shadow-blue-950/40 hover:bg-blue-500 active:scale-95"
                   : (hasText || readyAttachments.length > 0) && uploadingCount === 0
-                    ? "bg-slate-100 text-slate-900 hover:bg-white shadow-sm active:scale-95"
-                    : "bg-white/[0.05] text-slate-600 cursor-default"
+                    ? "w-7 bg-slate-100 text-slate-900 hover:bg-white shadow-sm active:scale-95"
+                    : "w-7 bg-white/[0.05] text-slate-600 cursor-default"
                 }
               `}
             >
-              {disabled ? <StopIcon /> : uploadingCount > 0 ? <SpinnerIcon /> : <ArrowUpIcon />}
+              {disabled ? <><StopIcon /><span className="text-[11px] font-semibold">Cancel</span></> : uploadingCount > 0 ? <SpinnerIcon /> : <ArrowUpIcon />}
             </button>
           </div>
         </div>

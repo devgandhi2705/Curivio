@@ -433,3 +433,16 @@ code, pre, kbd, samp {
   background-color: rgba(59,130,246,0.25);
   color: inherit;
 }
+
+/* Phase P: crossfade for the pre-content filler word (ChatMessage.jsx
+   StreamingDots). Tailwind ships no fade utility, and a CSS *animation*
+   rather than a transition is what makes the fade-in start from opacity 0 on
+  mount without a requestAnimationFrame dance. 800ms is half the shortest
+  cycling interval (1600ms), so a fade always finishes before the next word. */
+@keyframes chat-filler-fade-in  { from { opacity: 0 } to { opacity: 1 } }
+@keyframes chat-filler-fade-out { from { opacity: 1 } to { opacity: 0 } }
+.chat-filler-in  { animation: chat-filler-fade-in  800ms ease forwards; }
+.chat-filler-out { animation: chat-filler-fade-out 800ms ease forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-filler-in, .chat-filler-out { animation-duration: 1ms; }
+}

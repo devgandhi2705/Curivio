@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import BookmarkButton from "../bookmarks/BookmarkButton.jsx"
 import MessageText from "../shared/MarkdownText.jsx"
-import { normalizeResponse } from "../shared/responseAdapter.js"
+import { normalizeResponse, cleanContent } from "../shared/responseAdapter.js"
 import { fetchDocumentText, fetchAttachmentBlob } from "../../api/chat.js"
 
 // ─── Human-paced text reveal ─────────────────────────────────────────────────
@@ -39,8 +39,8 @@ function useDrip(text, active, { charsPerTick = 2, intervalMs = 22 } = {}) {
 // Thinking panel reads noticeably slower than the answer text/tool query/code.
 const THINKING_DRIP = { charsPerTick: 1, intervalMs: 40 }
 
-function DrippedMessageText({ text, streaming, variant, className, dripOptions }) {
-  return <MessageText text={useDrip(text, streaming, dripOptions)} variant={variant} className={className} />
+function DrippedMessageText({ text, streaming, variant, className, dripOptions, sources }) {
+  return <MessageText text={useDrip(text, streaming, dripOptions)} variant={variant} className={className} sources={sources} />
 }
 
 // ─── Structured response metadata ───────────────────────────────────────────
@@ -85,18 +85,142 @@ function StreamingCursor() {
   return <span className="chat-stream-cursor ml-0.5 inline-block h-4 w-[2px] align-text-bottom" />
 }
 
+// Chat-R17 / Phase P: fillers shown ONLY before any real status/tool/thinking/
+// content signal has arrived (see `active` below) — deliberately don't claim a
+// specific action (no "Searching…", no "Analyzing…") since no tool decision has
+// been made yet at this point in the turn. Phase P replaced the six sentence-
+// length phrases with this single-word list, rendered as "{Word}…"; the cycling
+// mechanism, its random 800-2200ms interval, and the hard rule that real
+// content pre-empts instantly are all unchanged from Chat-R17.
+const _FILLER_WORDS = [
+  "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking",
+  "Beaming", "Beboppin'", "Befuddling", "Billowing", "Blanching",
+  "Bloviating", "Boogieing", "Boondoggling", "Booping", "Bootstrapping",
+  "Brewing", "Bunning", "Burrowing", "Calculating", "Canoodling",
+  "Caramelizing", "Cascading", "Catapulting", "Cerebrating", "Channeling",
+  "Channelling", "Choreographing", "Churning", "Clauding", "Coalescing",
+  "Cogitating", "Combobulating", "Composing", "Computing", "Concocting",
+  "Considering", "Contemplating", "Cooking", "Crafting", "Creating",
+  "Crunching", "Crystallizing", "Cultivating", "Deciphering", "Deliberating",
+  "Determining", "Dilly-dallying", "Discombobulating", "Doing", "Doodling",
+  "Drizzling", "Ebbing", "Effecting", "Elucidating", "Embellishing",
+  "Enchanting", "Envisioning", "Evaporating", "Fermenting", "Fiddle-faddling",
+  "Finagling", "Flambéing", "Flibbertigibbeting", "Flowing", "Flummoxing",
+  "Fluttering", "Forging", "Forming", "Frolicking", "Frosting",
+  "Gallivanting", "Galloping", "Garnishing", "Generating", "Gesticulating",
+  "Germinating", "Gitifying", "Grooving", "Gusting", "Harmonizing",
+  "Hashing", "Hatching", "Herding", "Honking", "Hullaballooing",
+  "Hyperspacing", "Ideating", "Imagining", "Improvising", "Incubating",
+  "Inferring", "Infusing", "Ionizing", "Jitterbugging", "Julienning",
+  "Kneading", "Leavening", "Levitating", "Lollygagging", "Manifesting",
+  "Marinating", "Meandering", "Metamorphosing", "Misting", "Moonwalking",
+  "Moseying", "Mulling", "Mustering", "Musing", "Nebulizing",
+  "Nesting", "Newspapering", "Noodling", "Nucleating", "Orbiting",
+  "Orchestrating", "Osmosing", "Perambulating", "Percolating", "Perusing",
+  "Philosophising", "Photosynthesizing", "Pollinating", "Pondering", "Pontificating",
+  "Pouncing", "Precipitating", "Prestidigitating", "Processing", "Proofing",
+  "Propagating", "Puttering", "Puzzling", "Quantumizing", "Razzle-dazzling",
+  "Razzmatazzing", "Recombobulating", "Reticulating", "Roosting", "Ruminating",
+  "Sautéing", "Scampering", "Schlepping", "Scurrying", "Seasoning",
+  "Shenaniganing", "Shimmying", "Simmering", "Skedaddling", "Sketching",
+  "Slithering", "Smooshing", "Sock-hopping", "Spelunking", "Spinning",
+  "Sprouting", "Stewing", "Sublimating", "Swirling", "Swooping",
+  "Symbioting", "Synthesizing", "Tempering", "Thinking", "Thundering",
+  "Tinkering", "Tomfoolering", "Topsy-turvying", "Transfiguring", "Transmuting",
+  "Twisting", "Undulating", "Unfurling", "Unravelling", "Vibing",
+  "Waddling", "Wandering", "Warping", "Whatchamacalliting", "Whirlpooling",
+  "Whirring", "Whisking", "Wibbling", "Working", "Wrangling",
+  "Zesting", "Zigzagging",
+]
+
+function _shuffled(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+// Chat-R17: self-cycling filler text for the genuinely-silent pre-content
+// window. `active` is false the instant any real signal exists (statusMsg) —
+// StreamingDots itself also unmounts the instant the parent's blocks[]/
+// hasVisibleContent gate flips (any real chunk/thinking/tool_start event
+// updates blocks[] in the same tick, per ChatWorkspace.jsx's onChunk/
+// onThinking/onStatus handlers), so React's own unmount cleanup clears the
+// pending timer — no manual coordination with those handlers needed, and no
+// stray timer can ever fire after real content starts. Never delays real
+// content: `label` below reads `statusMsg` directly on every render,
+// independent of whatever the timer last set — there's no minimum display
+// duration and no queued transition.
+function _useCyclingFiller(active) {
+  const queueRef = useRef(null)
+  if (queueRef.current === null) queueRef.current = _shuffled(_FILLER_WORDS)
+  const idxRef = useRef(0)
+  const [phrase, setPhrase] = useState(() => queueRef.current[0])
+
+  useEffect(() => {
+    if (!active) return
+    // 1600-4400ms, randomized per step so each filler word has time to land.
+    const delay = 1600 + Math.random() * 2800
+    const timer = setTimeout(() => {
+      idxRef.current += 1
+      if (idxRef.current >= queueRef.current.length) {
+        queueRef.current = _shuffled(_FILLER_WORDS)
+        idxRef.current = 0
+      }
+      setPhrase(queueRef.current[idxRef.current])
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [active, phrase])
+
+  return phrase
+}
+
 function StreamingDots({ statusMsg }) {
+  const active = !statusMsg
+  const filler = _useCyclingFiller(active)
+
+  // Phase P: the outgoing word is kept for one cycle so it can fade OUT while
+  // the incoming word fades IN — a real crossfade, not a swap. Both sit in the
+  // same CSS grid cell (gridArea "1/1"), so they overlap instead of stacking
+  // and the box sizes itself to the wider of the two. The outgoing layer is
+  // replaced on the next change rather than cleared on a timer: it has already
+  // animated to opacity 0 and holds there (`forwards`), so no extra timer is
+  // needed to hide it.
+  const prevRef = useRef(null)
+  const shownRef = useRef(filler)
+  if (shownRef.current !== filler) {
+    prevRef.current = shownRef.current
+    shownRef.current = filler
+  }
+
+  // Real status text pre-empts the filler immediately and is rendered with no
+  // animation at all — the Chat-R17 constraint that real content is never
+  // delayed by the placeholder is a hard rule, and a crossfade here would
+  // delay it by exactly the fade duration.
+  if (statusMsg) {
+    return (
+      <p className="text-[14px] px-1 w-fit" style={{ color: "var(--dk-accent)" }}>{statusMsg}</p>
+    )
+  }
+  if (!filler) return null
+
   return (
-    <div className="w-fit inline-flex flex-col items-start gap-1.5">
-      {statusMsg ? (
-        <p className="text-xs px-1 animate-pulse" style={{ color: "var(--dk-accent)" }}>{statusMsg}</p>
+    <p className="text-[14px] px-1 w-fit grid" style={{ color: "var(--dk-accent)" }}>
+      {prevRef.current ? (
+        <span
+          key={`out-${prevRef.current}`}
+          className="chat-filler-out"
+          style={{ gridArea: "1 / 1" }}
+        >{prevRef.current}…</span>
       ) : null}
-      <div className="inline-flex items-center gap-1.5 px-4 py-3 bg-slate-900 border border-slate-800 rounded-full w-fit">
-        <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-        <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-        <span className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" />
-      </div>
-    </div>
+      <span
+        key={`in-${filler}`}
+        className="chat-filler-in"
+        style={{ gridArea: "1 / 1" }}
+      >{filler}…</span>
+    </p>
   )
 }
 
@@ -971,6 +1095,17 @@ function ToolCallBlock({ block, streaming }) {
 // are plain MessageText.
 function BlocksRenderer({ blocks, streaming, srObject }) {
   const lastTextIdx = blocks.reduce((acc, b, i) => (b.type === "text" ? i : acc), -1)
+  // Phase E: real, ordered {title,url} list for this turn's [N] citation
+  // markers — flattened from every tool_call block's own `sources` (Chat-R10e
+  // already carries these per-block; real evidence, 0/118 real turns ever
+  // produced more than one tool_call block, but flattening rather than
+  // assuming exactly one keeps this correct either way). Derived from
+  // `blocks` itself (not a separate message.sources field) because blocks is
+  // what actually gets persisted — this must resolve identically live and on
+  // reload from history.
+  const citationSources = blocks
+    .filter(b => b.type === "tool_call")
+    .flatMap(b => b.sources || [])
   return (
     <>
       {blocks.map((block, i) => {
@@ -981,9 +1116,16 @@ function BlocksRenderer({ blocks, streaming, srObject }) {
           return <ToolCallBlock key={i} block={block} streaming={streaming} />
         }
         if (block.type === "text") {
+          // Defense-in-depth (backstop, not the real fix — see
+          // chat_title_service.advance_stream_state for that): the backend
+          // strips [TITLE: ...] before this ever reaches the wire, but this
+          // block.text is rendered raw with no other cleaning step, live
+          // AND on reload — cleanContent() is a second, independent layer
+          // in case a future provider's chunking ever defeats the backend
+          // fix in some new way.
           return i === lastTextIdx && srObject
             ? <StructuredResponseRenderer key={i} sr={srObject} />
-            : <DrippedMessageText key={i} text={block.text} streaming={streaming} />
+            : <DrippedMessageText key={i} text={cleanContent(block.text)} streaming={streaming} sources={citationSources} />
         }
         return null
       })}
@@ -1068,19 +1210,6 @@ function ThinkingGapNote({ text }) {
   )
 }
 
-// Chat-R5b: "think harder" was on, but the leg that answered has no reasoning
-// step at all (Groq) — unlike ThinkingGapNote above, nothing ran, so the
-// wording says so plainly instead of "ran but isn't visible".
-function ExtendedThinkingGapNote({ text }) {
-  if (!text) return null
-  return (
-    <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-slate-700/40 text-xs text-slate-500 italic">
-      <ThinkingIcon />
-      <span>{text}</span>
-    </div>
-  )
-}
-
 // Chat-R5b: task_type=="coding" but the leg that answered can't run
 // code_execution (every Gemini 3+ leg exhausted, or landed on 2.5's
 // write-only tier) — shown alongside CodeExecutionPanel, not in place of it,
@@ -1109,6 +1238,17 @@ function SearchStatusNote({ text }) {
       <GlobeIcon />
       <span>{text.replace(/…$/, "")}</span>
     </div>
+  )
+}
+
+function MessageTimestamp({ value }) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return (
+    <span className="px-2 py-1 text-[11px] text-slate-600 tabular-nums">
+      {date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+    </span>
   )
 }
 
@@ -1187,6 +1327,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
                   <EditIcon />
                 </button>
               )}
+              <MessageTimestamp value={message.created_at} />
             </div>
           )}
         </div>
@@ -1201,9 +1342,9 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
   const showStreamingCursor = message.streaming && hasVisibleContent
 
   return (
-    <div className="flex gap-2.5 sm:gap-3 max-w-4xl group/msg">
-      <div className="hidden sm:flex sm:flex-shrink-0 sm:w-7 sm:h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 items-center justify-center shadow-md shadow-violet-950/50 mt-0.5">
-        <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
+    <div className={`flex gap-2.5 sm:gap-3 max-w-4xl group/msg ${message.streaming && !hasVisibleContent ? "items-center" : ""}`}>
+      <div className={`hidden sm:flex sm:flex-shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 items-center justify-center shadow-md shadow-violet-950/50 ${message.streaming && !hasVisibleContent ? "sm:w-9 sm:h-9" : "sm:w-7 sm:h-7 mt-0.5"}`}>
+        <svg className={`w-3 h-3 text-white ${message.streaming && !hasVisibleContent ? "sm:w-[18px] sm:h-[18px]" : "sm:w-3.5 sm:h-3.5"}`} viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
       </div>
@@ -1212,14 +1353,13 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
         {!message.streaming && message.action && <ActionBadge action={message.action} />}
 
         <div className={!message.streaming && message.action ? "mt-2" : ""}>
-          {/* R5 gap notes key off the flat `thinking`/`extendedThinking` fields
-              (chat_service.py still fills these alongside blocks[] — see
-              _stream_agent's gap yields, which bypass block tagging entirely),
-              so they apply the same regardless of which branch below renders —
-              a Gemini-3+ turn with a real blocks[] (e.g. just a text block)
-              still needs thinking_gap to show, not just the null-blocks path. */}
+          {/* R5 gap note keys off the flat `thinking` field (chat_service.py
+              still fills this alongside blocks[] — see _stream_agent's gap
+              yields, which bypass block tagging entirely), so it applies the
+              same regardless of which branch below renders — a Gemini-3+ turn
+              with a real blocks[] (e.g. just a text block) still needs
+              thinking_gap to show, not just the null-blocks path. */}
           {!message.thinking && <ThinkingGapNote text={message.thinkingGap} />}
-          {!message.thinking && <ExtendedThinkingGapNote text={message.extendedThinkingGap} />}
           {message.blocks?.length ? (
             // Chat-R10e: real chronological order (thinking/tool_call/text
             // interleaved as they actually happened) — one renderer for both
@@ -1246,7 +1386,11 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
               ) : srObject ? (
                 <StructuredResponseRenderer sr={srObject} />
               ) : (
-                <DrippedMessageText text={message.streaming ? message.content : displayContent} streaming={message.streaming} />
+                // Defense-in-depth, same as BlocksRenderer's text-block case above —
+                // displayContent already runs message.content through cleanContent()
+                // post-stream (normalizeResponse), so only the live-streaming branch
+                // needs the explicit wrap here.
+                <DrippedMessageText text={message.streaming ? cleanContent(message.content) : displayContent} streaming={message.streaming} />
               )}
             </>
           )}
@@ -1284,6 +1428,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
                 <span>Regenerate</span>
               </button>
             )}
+            <MessageTimestamp value={message.created_at} />
           </div>
         )}
       </div>

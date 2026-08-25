@@ -1,18 +1,17 @@
 """
 Chat mode orchestration — feed-context system note formatting.
 
-Three modes
------------
+Two modes
+---------
   normal        — memory/context only, fastest, no external retrieval
   web_search    — Tavily search injected before LLM call
-  deep_research — full DeepResearchWorkflow; always uses web retrieval
 
-Retrieval for web_search/deep_research is now driven by the model itself via
-real tool calls (chat_agent.py + chat_tools.py, Chat-4.1) — this module no
-longer pre-fetches or builds mode-flag system notes for chat_stream(). It
-still formats the feed-context note (build_feed_context_note) and the two
-tool-result formatters chat_tools.py calls after a live tool invocation
-(format_reasoning_search_note, format_research_note).
+Retrieval for web_search is now driven by the model itself via real tool
+calls (chat_agent.py + chat_tools.py, Chat-4.1) — this module no longer
+pre-fetches or builds mode-flag system notes for chat_stream(). It still
+formats the feed-context note (build_feed_context_note) and the tool-result
+formatter chat_tools.py calls after a live tool invocation
+(format_reasoning_search_note).
 
 prepare_mode_context/build_mode_system_note (the old backend-orchestrated
 mode-flag pre-fetch) and their private helpers/formatters were removed —
@@ -23,7 +22,6 @@ Public API
 ----------
 build_feed_context_note(feed_context)       → str
 format_reasoning_search_note(reasoning)     → str
-format_research_note(result)                → str
 """
 
 from __future__ import annotations
@@ -31,9 +29,6 @@ from __future__ import annotations
 import logging
 
 logger = logging.getLogger(__name__)
-
-_DEEP_RESEARCH_SUMMARY_LEN = 600
-_DEEP_RESEARCH_FINDINGS    = 4
 
 
 def build_feed_context_note(feed_context: dict) -> str:
@@ -44,14 +39,17 @@ def build_feed_context_note(feed_context: dict) -> str:
     the user is discussing without requiring a retrieval call.  The action
     field guides the model on how much context to assume is complete.
 
-    All three zoom modes (explain_simply, web_search, deep_research) receive the
-    same shared learning context — mechanism, project, day, difficulty — so they
-    feel like depth layers of the same card, not disconnected tools.
+    All zoom modes (explain_simply, web_search) receive the same shared
+    learning context — mechanism, project, day, difficulty — so they feel
+    like depth layers of the same card, not disconnected tools.
     """
     action       = feed_context.get("action",           "ask_about")
     title        = feed_context.get("insight_title",    "")
     summary      = feed_context.get("insight_summary",  "")
     why          = feed_context.get("why_it_matters",   "")
+    explanation  = feed_context.get("educational_explanation", "")
+    blocks       = feed_context.get("blocks",             [])
+    source_links = feed_context.get("source_links",       [])
     sources      = feed_context.get("source_urls",      [])
     project      = feed_context.get("project_name",     "")
     domain       = feed_context.get("domain",           "")
@@ -66,7 +64,6 @@ def build_feed_context_note(feed_context: dict) -> str:
     _ACTION_LABELS = {
         "ask_about":         "Discussion",
         "continue_research": "Extended Research",
-        "deep_research":     "Deep Research",
         "explain_simply":    "Simple Explanation",
     }
     label = _ACTION_LABELS.get(action, "Feed Insight")
@@ -92,13 +89,30 @@ def build_feed_context_note(feed_context: dict) -> str:
     parts.append("")
     parts.append(f"Card: {title}")
     if summary:
-        parts.append(f"Summary: {summary[:500]}")
+        parts.append(f"Summary: {summary}")
     if why:
-        parts.append(f"Mechanism: {why[:400]}")
+        parts.append(f"Why it matters: {why}")
+    if explanation:
+        parts.append(f"Educational explanation: {explanation}")
+    if blocks:
+        parts.append("Card content blocks:")
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type", "content")
+            content = block.get("content", "")
+            if content:
+                parts.append(f"  [{block_type}] {content}")
     if sources:
         parts.append("Sources:")
-        for url in sources[:3]:
-            parts.append(f"  • {url}")
+        for index, url in enumerate(sources):
+            link = source_links[index] if index < len(source_links) else None
+            if isinstance(link, dict):
+                source_title = link.get("title", "")
+                label = f"{source_title}: {url}" if source_title else url
+            else:
+                label = url
+            parts.append(f"  • {label}")
 
     # Prior mechanisms this user has covered in this project
     if recent_mechanisms:
@@ -113,8 +127,10 @@ def build_feed_context_note(feed_context: dict) -> str:
     if action == "ask_about":
         parts.append(
             "The user opened this card from their feed and wants to discuss it. "
-            "Answer directly from the context above — do NOT search the web. "
-            "Reference the summary and sources naturally."
+            "Use the complete card above as the starting point, then use web search "
+            "to inspect the provided source URLs and gather current evidence, source "
+            "verification, or additional context when that would improve the answer. "
+            "Reference the card and sources naturally."
         )
     elif action == "explain_simply":
         if mechanism:
@@ -132,7 +148,7 @@ def build_feed_context_note(feed_context: dict) -> str:
                 "Do NOT search the web — the context above is sufficient. "
                 "Follow the Explain Simply mode instructions in your system prompt."
             )
-    elif action == "continue_research":
+    else:  # continue_research
         if mechanism:
             parts.append(
                 f"ZOOM LEVEL: Reality Validation. "
@@ -147,32 +163,15 @@ def build_feed_context_note(feed_context: dict) -> str:
                 "Use the feed context as background knowledge and the web search results "
                 "below to expand with new angles and recent developments."
             )
-    else:  # deep_research
-        if mechanism:
-            parts.append(
-                f"ZOOM LEVEL: Strategic Expansion. "
-                f"The card's mechanism is the seed: \"{mechanism[:200]}\" "
-                f"Branch outward from here — explore adjacent systems, strategic implications, "
-                f"what the surface framing consistently misses, and second-order consequences. "
-                f"Do NOT re-explain what the card already established. "
-                f"Use the deep research results below to extend into new territory."
-            )
-        else:
-            parts.append(
-                "The user wants comprehensive research starting from this feed insight. "
-                "Use the feed context as the seed and the deep research results below "
-                "to produce a thorough, multi-angle analysis."
-            )
 
-    # Learning system layer note — positions this in the depth hierarchy
-    try:
-        from .learning_system_context_service import build_feed_layer_note
-        layer_note = build_feed_layer_note(action, title)
-        if layer_note:
-            parts.append("")
-            parts.append(layer_note)
-    except Exception:
-        pass
+    # Structured-mode fix (Task 1): the LEARNING SYSTEM layer note used to be
+    # appended here too, via learning_system_context_service.build_feed_layer_note()
+    # — a second copy of the same framing the composer's own "learning_system"
+    # section already adds in _build_structured_prompt, previously hardcoded to
+    # a generic mode="deep_research" label so the two could actively disagree.
+    # That section now reads the real feed action (chat_service.py threads it
+    # into context as feed_action/feed_topic) and produces this exact note
+    # itself — this is no longer the place that adds it.
 
     return "\n".join(parts)
 
@@ -227,14 +226,28 @@ def format_reasoning_search_note(reasoning: dict) -> str:
     )
 
     # Supporting results
+    #
+    # Web-search fix: content is already truncate_at_sentence()-capped at 2000
+    # chars upstream (tavily_service._to_article / tinyfish_service.
+    # fetch_as_articles, the shared per-result ingestion cap every consumer of
+    # these results — Feed, deep_research, chat — reads). The [:280] cut here
+    # predates that upstream cap by ~7 weeks (git blame: this line landed
+    # 2026-05-24, the 2000-char cap 2026-07-11) and was never revisited once it
+    # became redundant — confirmed no comment or commit message anywhere states
+    # a real reason for 280 specifically (UI space, token budget), and this
+    # content only ever reaches the model (chat_tools.py's own docstring: the
+    # tool's `content` return is what the model reads; `artifact`, the only
+    # user-facing part, carries just {title, url} — never this snippet text).
+    # Recon's real numbers: 2000 sentence-aware chars vs. a hard 280-char
+    # midsentence cut was routinely starving the model of the part of a
+    # result that actually answered the question.
     if supporting:
         lines.append("\nSUPPORTING EVIDENCE — confirms or elaborates the mainstream understanding:")
         for i, a in enumerate(supporting, 1):
             title   = a.get("title", "").strip()
             content = (a.get("content") or "").strip()
             url     = a.get("url", "")
-            snippet = content[:280] + ("…" if len(content) > 280 else "")
-            lines.append(f"\n  [{i}] {title}\n      {snippet}\n      Source: {url}")
+            lines.append(f"\n  [{i}] {title}\n      {content}\n      Source: {url}")
 
     # Complicating results
     if complicating:
@@ -247,8 +260,7 @@ def format_reasoning_search_note(reasoning: dict) -> str:
             title   = a.get("title", "").strip()
             content = (a.get("content") or "").strip()
             url     = a.get("url", "")
-            snippet = content[:280] + ("…" if len(content) > 280 else "")
-            lines.append(f"\n  [{i}] ⚑ {title}\n      {snippet}\n      Source: {url}")
+            lines.append(f"\n  [{i}] ⚑ {title}\n      {content}\n      Source: {url}")
 
     # Synthesis requirements
     lines.append("\nSYNTHESIS REQUIREMENTS — enforce every rule:")
@@ -256,7 +268,11 @@ def format_reasoning_search_note(reasoning: dict) -> str:
         "- Extract cross-source PATTERNS — never summarise articles one by one."
     )
     lines.append(
-        "- Cite inline naturally: 'According to Bloomberg…', 'A recent study found…' — not as footnotes."
+        "- Cite claims to their source using the bracketed number shown next to each result above — "
+        "e.g. 'the market grew 5% [1]'. Stack multiple numbers when a claim draws on more than one "
+        "source, e.g. '[1][3]'. Only cite a number for a claim that source genuinely supports — never "
+        "invent a number, and leave genuinely uncited claims (your own synthesis, general knowledge) "
+        "unmarked."
     )
     if has_complicating:
         lines.append(
@@ -278,52 +294,5 @@ def format_reasoning_search_note(reasoning: dict) -> str:
         "\n- The response must feel like informed, updated reasoning — not a digest of search results."
     )
 
-    return "\n".join(lines)
-
-
-def format_research_note(result: dict) -> str:
-    topic    = result.get("topic", "")
-    summary  = (result.get("research_summary") or result.get("executive_summary") or "").strip()
-    findings = result.get("key_findings", [])
-    lines    = [f"[DEEP RESEARCH REPORT: {topic}]"]
-    if summary:
-        lines.append(f"Core finding: {summary[:_DEEP_RESEARCH_SUMMARY_LEN]}")
-    if findings:
-        lines.append("Evidence points:")
-        for f in findings[:_DEEP_RESEARCH_FINDINGS]:
-            lines.append(f"  • {f}")
-    # viewpoint_comparison is the correct key from deep_research_prompt.py
-    viewpoints = result.get("viewpoint_comparison", []) or result.get("viewpoints", [])
-    if viewpoints:
-        lines.append("Perspectives in tension:")
-        for v in viewpoints[:2]:
-            perspective = v.get("perspective") or v.get("angle") or v.get("label", "")
-            stance      = (v.get("stance") or v.get("summary") or v.get("insight", ""))[:160]
-            if perspective:
-                lines.append(f"  [{perspective}] {stance}")
-    contrarian = result.get("contrarian_view", "")
-    if contrarian:
-        lines.append(f"Contrarian view: {contrarian[:200]}")
-    shifts = result.get("what_shifts_next", "")
-    if shifts:
-        lines.append(f"What shifts next: {shifts[:200]}")
-    lines.append(
-        "\nAnalytical framework — work through ALL of these before writing:"
-        "\n1. What do sources AGREE on? (establish the foundation — avoid restating the obvious)"
-        "\n2. Where do they CONTRADICT? (surface disagreement explicitly — name what each position claims)"
-        "\n3. Hidden TRADEOFFS and costs that most coverage underweights?"
-        "\n4. What does HISTORICAL EVOLUTION reveal about why this is the way it is?"
-        "\n5. STRATEGIC IMPLICATIONS — what concrete decision does this create for a practitioner?"
-        "\n6. What remains GENUINELY UNRESOLVED — where do experts still actively disagree?"
-        "\n7. CONTRARIAN VIEW — what is the conventional framing getting wrong or underweighting?"
-        "\n\nWrite like an analyst memo, not a research summary:"
-        "\n- Open with the single most important synthesised insight — not background or topic introduction"
-        "\n- For every claim: name the causal mechanism — not 'X is growing' but 'X grows because Y'"
-        "\n  creates incentive Z, which produces outcome W'"
-        "\n- Include a 'What Shifts Next' section: name the specific force that will change the equilibrium"
-        "\n- Surface the underpriced risk: what is the market or conventional wisdom getting wrong?"
-        "\n- Use ## headers for clearly distinct analytical dimensions — they should aid navigation"
-        "\n- Prioritise insight density over exhaustive coverage"
-    )
     return "\n".join(lines)
 

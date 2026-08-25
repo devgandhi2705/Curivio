@@ -123,9 +123,9 @@ def test_coding_question_routes_to_coding_task_type() -> None:
     captured_task_type = {}
     orig_get_agent = chat_agent._get_agent
 
-    def _spy_get_agent(tools_enabled, vision_only=False, extended_thinking=False, task_type=None):
+    def _spy_get_agent(tools_enabled, vision_only=False, task_type=None):
         captured_task_type["value"] = task_type
-        return orig_get_agent(tools_enabled, vision_only=vision_only, extended_thinking=extended_thinking, task_type=task_type)
+        return orig_get_agent(tools_enabled, vision_only=vision_only, task_type=task_type)
 
     with patch.object(chat_agent, "_get_agent", side_effect=_spy_get_agent):
         result = _run_turn(
@@ -145,10 +145,10 @@ def test_attachments_force_task_type_none() -> None:
     captured = {}
     orig_get_agent = chat_agent._get_agent
 
-    def _spy_get_agent(tools_enabled, vision_only=False, extended_thinking=False, task_type=None):
+    def _spy_get_agent(tools_enabled, vision_only=False, task_type=None):
         captured["task_type"] = task_type
         captured["vision_only"] = vision_only
-        return orig_get_agent(tools_enabled, vision_only=vision_only, extended_thinking=extended_thinking, task_type=task_type)
+        return orig_get_agent(tools_enabled, vision_only=vision_only, task_type=task_type)
 
     with patch.object(chat_agent, "_get_agent", side_effect=_spy_get_agent), \
          patch.object(chat_router, "classify_message") as router_spy:

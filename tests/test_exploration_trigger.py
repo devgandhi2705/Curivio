@@ -191,7 +191,7 @@ class TestExplorationDecision:
             should_explore=should_explore,
             total_score=0.6 if should_explore else 0.2,
             signals=[],
-            recommended_actions=["deep_research"] if should_explore else [],
+            recommended_actions=["learning_path"] if should_explore else [],
             cooldown_active=cooldown_active,
             reason="test",
         )
@@ -202,7 +202,7 @@ class TestExplorationDecision:
         assert d.should_explore is True
         assert d.total_score    == 0.6
         assert d.signals        == []
-        assert "deep_research"  in d.recommended_actions
+        assert "learning_path"  in d.recommended_actions
         assert d.cooldown_active is False
         assert d.reason         == "test"
 
@@ -402,12 +402,11 @@ class TestRecommendActions:
 
     def test_user_engagement_actions(self):
         actions = _recommend_actions([_fired_signal("user_engagement")])
-        assert "deep_research" in actions
         assert "learning_path" in actions
 
     def test_news_frequency_actions(self):
         actions = _recommend_actions([_fired_signal("news_frequency")])
-        assert actions == ["deep_research"]
+        assert actions == ["learning_path"]
 
     def test_educational_importance_actions(self):
         actions = _recommend_actions([_fired_signal("educational_importance")])
@@ -416,10 +415,10 @@ class TestRecommendActions:
         assert "github_repos"    in actions
 
     def test_deduplicates_across_signals(self):
-        # both user_engagement and news_frequency recommend deep_research
+        # both user_engagement and news_frequency recommend learning_path
         signals = [_fired_signal("user_engagement"), _fired_signal("news_frequency")]
         actions = _recommend_actions(signals)
-        assert actions.count("deep_research") == 1
+        assert actions.count("learning_path") == 1
 
     def test_empty_list_produces_no_actions(self):
         # _recommend_actions is called with already-filtered fired signals;
@@ -431,7 +430,7 @@ class TestRecommendActions:
             _fired_signal("user_engagement"),
             _fired_signal("educational_importance"),
         ])
-        assert actions.index("deep_research") < actions.index("topic_expansion")
+        assert actions.index("learning_path") < actions.index("topic_expansion")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -535,7 +534,7 @@ class TestExploreEndpoint:
             signals=[
                 TriggerSignal("user_engagement", 0.8, True, "3 likes"),
             ],
-            recommended_actions=["deep_research"] if should_explore else [],
+            recommended_actions=["learning_path"] if should_explore else [],
             cooldown_active=False,
             reason="test fixture",
         )

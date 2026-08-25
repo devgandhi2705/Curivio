@@ -64,7 +64,7 @@ def _log_raw(
     RAW response — before search()'s 2000-char snippet truncation and
     _MAX_SEARCH_RESULTS slice, before fetch()'s per-URL normalisation. Shared
     by every caller (legacy feed direct calls, retrieval_router, chat's
-    web_search, deep_research) so the raw capture lives in exactly one place
+    web_search) so the raw capture lives in exactly one place
     instead of being duplicated per caller. meta carries trace_id/user_id/
     project_id/day_ref/surface/is_test from whichever caller made the request;
     omitted (None) meta still logs, just ungrouped. Never raises."""

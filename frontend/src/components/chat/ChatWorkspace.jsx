@@ -59,6 +59,7 @@ function apiMessageToLocal(msg) {
     attachments: msg.attachments ?? null, // no previewUrl — history has no bytes, see ChatMessage's expiry chip
     thinking: msg.thinking ?? null,
     blocks: msg.blocks ?? null, // Chat-R10e: ordered thinking/tool_call/text segments; null for pre-R10d rows
+    created_at: msg.created_at ?? null,
   }
 }
 
@@ -90,7 +91,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   const [isLoading, setIsLoading]     = useState(false)
   const [error, setError]             = useState(null)
   const [chatMode, setChatMode]         = useState("normal")
-  const [extendedThinking, setExtendedThinking] = useState(false)
   const [statusMsg, setStatusMsg]       = useState(null)
   const [statusHistory, setStatusHistory] = useState([])
   const [autoMode, setAutoMode]         = useState(null)
@@ -164,7 +164,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setActiveFeedCtx(null)
 
     // Derive effective chat mode — feed context > conversationMode > chatMode toggle
-    const _FEED_ACTION_TO_MODE = { ask_about: "normal", deep_research: "deep_research", explain_simply: "layman" }
+    const _FEED_ACTION_TO_MODE = { ask_about: "normal", explain_simply: "layman" }
     const effectiveMode = feedCtx
       ? (_FEED_ACTION_TO_MODE[feedCtx.action] ?? "normal")
       : (conversationMode === "layman" ? "layman" : chatMode)
@@ -173,6 +173,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       id:              `user-${Date.now()}`,
       role:            "user",
       content:         text,
+      created_at:      new Date().toISOString(),
       streaming:       false,
       action:          null,
       recommendations: null,
@@ -187,10 +188,10 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       id:              streamId,
       role:            "assistant",
       content:         "",
+      created_at:      new Date().toISOString(),
       statusMsg:       "",
       thinking:        "",
       thinkingGap:     null,
-      extendedThinkingGap: null,
       codeExecutionGap:    null,
       searchStatus:    null,
       codeBlocks:      [],
@@ -209,7 +210,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     let accumulated = ""
     let thinkingAccumulated = ""
     let thinkingGapText = null
-    let extendedThinkingGapText = null
     let codeExecutionGapText = null
     let codeBlocksAccumulated = []
     let toolStatusText = null
@@ -257,12 +257,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         thinkingGapText = text
         setMessages(prev =>
           prev.map(m => m.id === streamId ? { ...m, thinkingGap: text } : m)
-        )
-      },
-      onExtendedThinkingGap(text) {
-        extendedThinkingGapText = text
-        setMessages(prev =>
-          prev.map(m => m.id === streamId ? { ...m, extendedThinkingGap: text } : m)
         )
       },
       onCodeExecutionGap(text) {
@@ -357,10 +351,10 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
                   id:                  `asst-${meta.message_id ?? Date.now()}`,
                   role:                "assistant",
                   content:             accumulated,
+                  created_at:          m.created_at,
                   statusMsg:           "",
                   thinking:            thinkingAccumulated || null,
                   thinkingGap:         thinkingGapText,
-                  extendedThinkingGap: extendedThinkingGapText,
                   codeExecutionGap:    codeExecutionGapText,
                   searchStatus:        toolStatusText,
                   codeBlocks:          codeBlocksAccumulated.length ? codeBlocksAccumulated : null,
@@ -408,9 +402,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         setError(err || "Something went wrong. Please try again.")
         setIsLoading(false)
       },
-    }, effectiveMode, feedCtx, attachments.map(({ previewUrl, ...a }) => a), extendedThinking)
+    }, effectiveMode, feedCtx, attachments.map(({ previewUrl, ...a }) => a))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode, extendedThinking])
+  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode])
 
   const handleNewChat = useCallback(() => {
     setSessionId(generateSessionId())
@@ -418,7 +412,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setError(null)
     setConversationMode(null)
     setChatMode("normal")
-    setExtendedThinking(false)
     navigate('/chat')
   }, [navigate])
 
@@ -430,7 +423,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     setError(null)
     setConversationMode(null)
     setChatMode("normal")
-    setExtendedThinking(false)
     setIsLoading(true)
     try {
       const history = await fetchHistory(session.session_id, 50)
@@ -661,8 +653,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
               else if (conversationMode === "layman" && mode !== "layman") setConversationMode(null)
             }}
             autoMode={autoMode}
-            extendedThinking={extendedThinking}
-            onToggleExtendedThinking={setExtendedThinking}
           />
         </div>
       </div>
@@ -674,7 +664,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
 
 const _ACTION_LABEL = {
   ask_about:      "Asking about",
-  deep_research:  "Deep research on",
   explain_simply: "Explaining simply",
 }
 
@@ -741,7 +730,7 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, onSelectSession, use
   const recentSessions = sessions.slice(0, 3)
 
   if (activeFeedCtx) {
-    const actionLabel = { ask_about: "Ask about", deep_research: "Deep-dive into", explain_simply: "Generating simple explanation for" }
+    const actionLabel = { ask_about: "Ask about", explain_simply: "Generating simple explanation for" }
     const isLayman = activeFeedCtx.action === "explain_simply"
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 pb-16">
@@ -789,8 +778,7 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, onSelectSession, use
       </div>
       <h2 className="text-sm font-semibold text-slate-200 mb-1">{getGreeting(userName, greetingRand)}</h2>
       <p className="text-xs text-slate-500 mb-4 max-w-[210px] leading-relaxed">
-        Use <span className="text-blue-400/80">Web Search</span> for live data or{" "}
-        <span className="text-violet-400/80">Deep Research</span> for analysis.
+        Use <span className="text-blue-400/80">Web Search</span> for live data.
       </p>
 
       {recentSessions.length > 0 ? (

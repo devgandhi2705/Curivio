@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from uuid import uuid4
@@ -31,6 +33,21 @@ from .chat_prompt_service import build_messages
 
 logger = logging.getLogger(__name__)
 
+# Chat-R4b: classify_message() is a real, blocking LLM round-trip (1-8s) with
+# no data dependency on anything context-prep computes (message text is its
+# only real input) — submitted here as soon as chat_mode is final (Chat-R4b
+# insertion point below) so it overlaps with context prep instead of
+# following it serially. Module-level pool so a thread isn't spun up fresh
+# per turn; sized well above realistic concurrent-turn counts since each
+# task is network-bound, not CPU-bound.
+_ROUTER_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="chat-router")
+
+# Phase U: how many turns AFTER a crisis turn (fresh or fail-safe) still get
+# CRISIS AND DISTRESS SUPPORT injected regardless of that turn's own
+# classification. See the set_session_crisis_expiry call site for the full
+# reasoning (generous but bounded, not permanent-for-session).
+_CRISIS_WINDOW_TURNS = 5
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
@@ -39,9 +56,34 @@ logger = logging.getLogger(__name__)
 _FEED_ACTION_TO_MODE: dict[str, str] = {
     "ask_about":         "normal",
     "continue_research": "web_search",
-    "deep_research":     "deep_research",
     "explain_simply":    "layman",
 }
+
+# Layman-fix pass: chat_mode=="normal" alone can't distinguish an explicit exit
+# (the frontend's mode toggle really does send "normal" when the user picks it)
+# from a stale default (frontend's local sticky state lost on reload, message
+# sent with whatever chat_mode defaults to, session still mid-layman server-side)
+# — both produce the exact same request. Message text is the only reliable
+# unambiguous signal available without a frontend wire-protocol change, so an
+# explicit exit phrase is what actually clears the sticky flag; a bare "normal"
+# with no such phrase still restores layman, preserving the original "stay
+# simplified without re-asking every message" intent.
+_LAYMAN_EXIT_RE = re.compile(
+    r'\b(back to normal|stop simplifying|exit (?:layman|simple) mode|'
+    r'normal mode|regular mode|stop explaining simply)\b',
+    re.I,
+)
+
+
+def _requests_layman_exit(message: str) -> bool:
+    return bool(_LAYMAN_EXIT_RE.search(message))
+
+
+# Document persistence: real minimal-excerpt size for the budget gate — one
+# document_memory_service chunk (_CHUNK_CHARS=800) at the project's 4-chars/
+# token heuristic. If less than this remains in the real prompt budget, a
+# session document is marked unavailable rather than injected.
+_MIN_EXCERPT_TOKENS = 200
 
 
 def chat_stream(
@@ -51,9 +93,10 @@ def chat_stream(
     chat_mode:    str         = "normal",
     feed_context: dict | None = None,
     user_id:      str | None  = None,
+    user_name:    str | None  = None,
     attachments:  list[dict] | None = None,
-    extended_thinking: bool  = False,
     is_test:      bool       = False,
+    client_timezone: str | None = None,
 ):
     """
     Sync generator — yields NDJSON lines for a single conversational turn.
@@ -75,8 +118,8 @@ def chat_stream(
     persisted `blocks` column (see get_history) — order is otherwise only
     implicit in arrival. tool/query/sources on the status events (Chat-R10e)
     let the frontend build the same tool_call block live, without waiting
-    for reload. R5's gap-note events (thinking_gap/extended_thinking_gap/
-    code_execution_gap) are exempt: one-shot, no ordering concept needed.
+    for reload. R5's gap-note events (thinking_gap/code_execution_gap) are
+    exempt: one-shot, no ordering concept needed.
 
     Callers should iterate until exhaustion or until an "error" event is seen.
     """
@@ -127,11 +170,63 @@ def chat_stream(
         # Layman mode: restore from session if request didn't override
         if chat_mode == "normal":
             try:
-                from .chat_title_service import get_session_conversation_mode
+                from .chat_title_service import get_session_conversation_mode, set_session_conversation_mode
                 if get_session_conversation_mode(session_id) == "layman":
-                    chat_mode = "layman"
+                    if _requests_layman_exit(message):
+                        # Real exit, not a stale default — clear the sticky flag so
+                        # later plain turns in this session don't fall back into it.
+                        set_session_conversation_mode(session_id, "normal")
+                    else:
+                        chat_mode = "layman"
             except Exception:
                 pass
+        elif chat_mode == "web_search":
+            # An explicit tool-mode toggle is never ambiguous (unlike bare "normal")
+            # — clear any stale layman stickiness now so a later plain message
+            # doesn't silently fall back into it either.
+            try:
+                from .chat_title_service import set_session_conversation_mode
+                set_session_conversation_mode(session_id, "normal")
+            except Exception:
+                pass
+
+        # History load moved ahead of the router submission below (Phase W,
+        # 2026-08-25 follow-up) — classify_message() now takes a slice of it
+        # (see that submit call). Still a plain SQLite read, not an LLM call,
+        # so this doesn't meaningfully cost the concurrency Chat-R4b set up
+        # (the router's own LLM latency still overlaps every LLM-dependent
+        # step below — detect_intent/inject_memory/domain_context/
+        # action_router/detect_depth/build_messages).
+        history       = _load_history_messages(session_id, limit=50)
+        history_turns = len(history) // 2
+
+        # Chat-R4b: submit the task-based router NOW — chat_mode is final as of
+        # the block above, so the exact same gate the old call site used
+        # ("normal" mode, no image attachment) can be evaluated here instead,
+        # letting classify_message() run on a background thread concurrently
+        # with the context-prep work below (detect_intent/inject_memory/
+        # domain_context/action_router/detect_depth/build_messages). Joined at
+        # the original call site further down. Still runs unconditionally for
+        # every qualifying turn — only WHEN it runs moved, not WHETHER.
+        router_future = None
+        if chat_mode == "normal" and not image_attachments:
+            from ..llm.chat_router import classify_message
+            from .chat_prompt_service import MAX_HISTORY_TURNS
+            _router_metadata = {
+                "trace_id": trace_id, "surface": "chat", "is_test": is_test,
+            }
+            if user_id:
+                _router_metadata["user_id"] = user_id
+            # Phase W (2026-08-25 follow-up): the same recent-turns window
+            # chat_turn itself is about to answer with (build_messages()
+            # applies the identical MAX_HISTORY_TURNS slice) — real,
+            # session-consistent context for the classifier's tool/query
+            # judgment, not a context-blind guess. Confirmed previously
+            # empty in both exactly_what_change_I_want.md and fuck_it.md.
+            _router_history = history[-(MAX_HISTORY_TURNS * 2):]
+            router_future = _ROUTER_EXECUTOR.submit(
+                classify_message, message, _router_metadata, _router_history,
+            )
 
         # Chat-4.1: regex mode auto-upgrade retired (the model decides via real
         # tools now, see resolve_tools_and_hint below); detect_intent() still
@@ -142,9 +237,6 @@ def chat_stream(
         # format_intent drives response structure regardless of mode-switching
         _format_intent = intent.get("format_intent", "default")
 
-        history       = _load_history_messages(session_id, limit=50)
-        history_turns = len(history) // 2
-
         from .memory_injection_service import inject_memory as _inject
         context = _inject(session_id, topic_hint, user_id=user_id)
 
@@ -152,6 +244,34 @@ def chat_stream(
         context["format_intent"]   = _format_intent
         context["intent_profile"]  = intent.get("intent_profile", {})
         context["current_message"] = message
+        # Chat identity pass: threaded through for _build_persona_section's
+        # "use their name naturally" instruction — natural mode only reads this;
+        # structured mode's persona (_PERSONA) never looks at it.
+        context["user_name"]       = (user_name or "").strip()
+        # Phase K: the browser's IANA timezone for this turn — the app's only
+        # locale signal, and the one crisis_support_service resolves to a country
+        # so a distressed user gets their own country's helplines instead of a US
+        # default. Request-scoped and never persisted; validated by exact lookup
+        # against pytz's zone table there, so an unrecognised value degrades to
+        # "we don't know where you are" rather than reaching the prompt.
+        context["client_timezone"]  = (client_timezone or "").strip()
+
+        # Phase T: whether this turn genuinely carries attachment content —
+        # this turn's own image/document upload, or a still-relevant document
+        # from earlier in the session that document-reinjection (below) will
+        # pull back in. chat_prompt_service only emits ATTACHMENT AWARENESS
+        # when this is true — previously unconditional on every turn, image
+        # or not (confirmed live: the section is real text weight on 100% of
+        # turns for a feature most turns never use).
+        context["has_attachment"] = bool(image_attachments) or bool(document_attachments)
+        if not context["has_attachment"]:
+            try:
+                from .document_memory_service import list_session_documents as _list_docs, is_relevant as _doc_relevant
+                context["has_attachment"] = any(
+                    _doc_relevant(d["attachment_id"], message) for d in _list_docs(session_id)
+                )
+            except Exception:
+                pass
 
         # Inject layman mode flag into context for system prompt
         if chat_mode == "layman":
@@ -173,7 +293,7 @@ def chat_stream(
 
         # Depth detection — calibrates response verbosity before prompt assembly
         from .chat_prompt_service import detect_depth as _detect_depth
-        context["response_depth"] = _detect_depth(message, chat_mode)
+        context["response_depth"] = _detect_depth(message)
 
         # Phase 4.6: shared learning context (stream path)
         _pid_slc = (feed_context or {}).get("project_id", "") if feed_context else ""
@@ -221,10 +341,74 @@ def chat_stream(
         # feed_entry_anchor covers every turn after — together, no gap.
         context["feed_linked"] = bool(feed_context) or bool(context.get("feed_entry_anchor"))
 
+        # Structured-mode fix (Task 1): real feed action + card title, only
+        # present on the same turn feed_context itself is (see union comment
+        # above) — learning_system_context_service uses these instead of
+        # hardcoding mode="deep_research" when building its LEARNING SYSTEM
+        # section, so the composer's own copy and the note this file used to
+        # append separately can't disagree. On turns 2+ (feed_context absent,
+        # feed_entry_anchor carries the link instead) these stay unset and
+        # that section falls back to its generic depth-hierarchy framing.
+        if feed_context:
+            context["feed_action"] = feed_context.get("action", "ask_about")
+            context["feed_topic"]  = feed_context.get("insight_title", "")
+
+        # Phase U: join the router now, before build_messages() — the crisis
+        # field decides whether CRISIS AND DISTRESS SUPPORT even goes into the
+        # prompt, so build_messages() needs it up front, not after. Still
+        # overlaps with everything submitted-to-here above (detect_intent/
+        # inject_memory/domain_context/action_router/detect_depth/feed
+        # context/vector_memory/feed_entry_anchor) — only the tail (document
+        # reinjection, token-budget instrumentation) loses the overlap, and
+        # latency is explicitly not a priority here (Phase W). Future.result()
+        # is safe to call again later (idempotent) for the task_type/mode_hint
+        # block further down, which reuses this same `decision`.
+        decision = router_future.result() if router_future is not None else None
+
+        # HARD CONSTRAINT (Phase U): a real, valid classification is required
+        # to say "no crisis this turn". Anything else — both legs exhausted,
+        # or the router never ran at all (web_search/layman mode, an image
+        # attachment turn: none of those are a classify FAILURE, but none of
+        # them produced a real answer either) — defaults to True at the code
+        # level. This must never depend on the model successfully reasoning
+        # its way to true.
+        fresh_crisis = decision.crisis if decision is not None else True
+
+        # Session persistence (Task 3): a crisis turn keeps the section alive
+        # for the next few turns even if a follow-up ("fuck you", a topic
+        # swerve) wouldn't independently classify as crisis on its own — see
+        # chat_prompt_service._CRISIS_CONDUCT's AFTER A DISTRESS TURN section,
+        # which exists specifically because that's the ordinary shape distress
+        # comes back out in. Turn-count decay, not wall-clock: a long pause
+        # mid-conversation shouldn't silently expire it, and a slow reply
+        # shouldn't race it either.
+        from .chat_title_service import get_session_crisis_expiry, set_session_crisis_expiry
+        turn_number = history_turns + 1
+        persisted_expiry = get_session_crisis_expiry(session_id)
+        persisted_active = persisted_expiry is not None and turn_number <= persisted_expiry
+        context["crisis_active"] = fresh_crisis or persisted_active
+        if context["crisis_active"]:
+            # _CRISIS_WINDOW_TURNS: generous on purpose — a false continue costs
+            # a slightly warmer tone and one skipped structured-output turn; a
+            # premature cutoff mid-distress is exactly the failure AFTER A
+            # DISTRESS TURN exists to prevent. NOT permanent-for-session: that
+            # would silently disable JSON/structured output (crisis_support
+            # overrides format rules) for the rest of a long conversation over
+            # one early turn. Refreshed every turn the window is live, so it
+            # keeps rolling forward as long as it stays active.
+            set_session_crisis_expiry(session_id, turn_number + _CRISIS_WINDOW_TURNS)
+
         from .chat_prompt_service import build_messages as _build
         messages_payload = _build(history, message, context, mode=chat_mode, attachments=image_attachments or None)
 
         # Inject feed context note first (background knowledge)
+        #
+        # Structured-mode fix (Task 1, was a KNOWN BUG): build_feed_context_note() used
+        # to append its own second LEARNING SYSTEM-labeled note here, on top of the one
+        # _build_structured_prompt's composer already adds — double injection. Fixed at
+        # the source: context["feed_action"]/["feed_topic"] (set above) feed the
+        # composer's own "learning_system" section the real action, and
+        # build_feed_context_note() no longer appends a second copy.
         if feed_context:
             from .chat_modes_service import build_feed_context_note
             feed_note = build_feed_context_note(feed_context)
@@ -234,13 +418,65 @@ def chat_stream(
         # build_messages "media" part (that path is Gemini-vision-only, images
         # only). Retrieval-trimmed automatically by document_memory_service
         # when a document's full text exceeds its token budget.
+        _turn_attachment_ids: set[str] = set()
         for doc in document_attachments:
             attachment_id = (doc.get("uri") or "").removeprefix("doc://")
             if not attachment_id:
                 continue
+            _turn_attachment_ids.add(attachment_id)
             from .document_memory_service import get_context as _doc_context
             doc_note = _doc_context(attachment_id, doc.get("filename") or "document", message or topic_hint or "")
             messages_payload = _inject_mode_note(messages_payload, doc_note)
+
+        # Document persistence: reinject documents attached on EARLIER turns of
+        # this session (not this turn's own attachments, handled above), gated
+        # on genuine relevance to the current message so an unrelated later
+        # question doesn't silently drag in a document from three turns ago.
+        # unavailable_documents (real, code-level signal — see the "done" event
+        # below) covers the two things that can stop a genuinely relevant
+        # document from being included: no room left in the real prompt budget,
+        # or its chunks are missing. Never relies on the model to mention this.
+        unavailable_documents: list[dict] = []
+        try:
+            from .document_memory_service import (
+                list_session_documents as _list_session_docs,
+                is_relevant as _doc_is_relevant,
+                get_context as _doc_context2,
+            )
+            from .token_budget import estimate_messages as _estimate_messages
+            from .model_registry import get_model_config as _get_model_cfg
+            from ..config import GEMINI_MODEL as _budget_model
+
+            _session_docs = _list_session_docs(session_id)
+            if _session_docs:
+                _budget_cfg = _get_model_cfg(_budget_model)
+                for _doc in _session_docs:
+                    _aid, _fname = _doc["attachment_id"], _doc["filename"]
+                    if _aid in _turn_attachment_ids:
+                        continue  # already injected above via this turn's own attachments
+                    if not _doc_is_relevant(_aid, message):
+                        continue  # not relevant to this message — correctly not reinjected
+
+                    # Real budget gate: room left for even one minimal chunk-sized
+                    # excerpt (_MIN_EXCERPT_TOKENS ~= document_memory_service's own
+                    # _CHUNK_CHARS at the project's 4-chars/token heuristic)?
+                    _remaining = _budget_cfg.prompt_budget - _estimate_messages(messages_payload)
+                    if _remaining < _MIN_EXCERPT_TOKENS:
+                        unavailable_documents.append({
+                            "attachment_id": _aid, "filename": _fname, "reason": "budget",
+                        })
+                        continue
+
+                    _note = _doc_context2(_aid, _fname, message)
+                    if "no extracted content found" in _note or "content temporarily unavailable" in _note:
+                        unavailable_documents.append({
+                            "attachment_id": _aid, "filename": _fname, "reason": "missing",
+                        })
+                        continue
+
+                    messages_payload = _inject_mode_note(messages_payload, _note)
+        except Exception:
+            logger.debug("[chat_service] session document reinjection failed (non-fatal)", exc_info=True)
 
     except Exception:
         logger.exception("chat_stream: context preparation failed")
@@ -250,32 +486,41 @@ def chat_stream(
     # ── Tool policy (Chat-4.1) ────────────────────────────────────────────────
     # Retired backend pre-fetch (prepare_mode_context/stream_research_progress,
     # still used unchanged by the sync chat() path above). chat_mode now only
-    # decides tool availability + an optional bias hint — web_search/deep_research
-    # are real tools the model calls itself; layman gets tools=None structurally.
+    # decides tool availability + an optional bias hint — web_search is a real
+    # tool the model calls itself; layman gets tools=None structurally.
     from ..llm.chat_agent import resolve_tools_and_hint, build_mode_hint
     tools_enabled, mode_hint = resolve_tools_and_hint(chat_mode)
 
     # ── Chat-R4: task-based router ────────────────────────────────────────────
-    # Only for "normal" mode (no explicit web_search/deep_research toggle) and
+    # Only for "normal" mode (no explicit web_search toggle) and
     # never for IMAGE attachment turns — an explicit toggle always wins outright
     # (R1: 10/10 hit rate), and the vision hard gate (Chat-5) is untouched by
     # task-based routing. Document-only turns route normally (Chat-R6a) — a
     # document isn't a structural gate the way an image is. Non-fatal:
     # classify_message returns None on any failure, leaving task_type=None
     # (today's default fixed chain, no hint).
+    # Chat-R4b/Phase U: classify_message() itself already ran and was already
+    # joined (right before build_messages() above, so the crisis field could
+    # gate the prompt) — `decision` is that same result, reused here for
+    # routing. Still gated to "normal" mode only: decision is real for every
+    # mode now (crisis needs it everywhere), but an explicit web_search/layman
+    # toggle must keep winning outright regardless of what routing fields it
+    # carries (R1: 10/10 explicit-toggle hit rate) — unchanged from before.
     task_type = None
-    if chat_mode == "normal" and not image_attachments:
-        from ..llm.chat_router import classify_message, map_to_task_type
-        _router_metadata = {
-            "trace_id": trace_id, "surface": "chat", "is_test": is_test,
-        }
-        if user_id:
-            _router_metadata["user_id"] = user_id
-        decision = classify_message(message, metadata=_router_metadata)
-        if decision is not None:
-            task_type = map_to_task_type(decision)
-            if decision.needs_tool:
-                mode_hint = build_mode_hint(decision.tool_name, decision.shaped_query)
+    # Phase M: the router already computes RoutingDecision.complexity on every
+    # message, but map_to_task_type() below never consults it on a tool-using
+    # turn (needs_tool wins first and returns "tool_use"), so on exactly the
+    # web_search turns this phase cares about the signal was computed and then
+    # discarded. Captured here and forwarded on the agent call metadata so
+    # chat_tools.web_search can size that turn's source count with it. Stays
+    # None whenever the router failed — the fixed 3+3 fallback.
+    router_complexity: str | None = None
+    if chat_mode == "normal" and decision is not None:
+        from ..llm.chat_router import map_to_task_type
+        task_type = map_to_task_type(decision)
+        router_complexity = decision.complexity
+        if decision.needs_tool:
+            mode_hint = build_mode_hint(decision.tool_name, decision.shaped_query)
 
     if mode_hint:
         messages_payload = _inject_mode_note(messages_payload, mode_hint)
@@ -332,7 +577,6 @@ def chat_stream(
     tool_used:       str | None = None
     _TOOL_STATUS_LABELS = {
         "web_search":    "Searching the web…",
-        "deep_research": "Running deep research…",
     }
 
     # Chat-R10d: ordered {type: "thinking"|"tool_call"|"text", ...} segments,
@@ -362,9 +606,14 @@ def chat_stream(
         }
         if user_id:
             _call_metadata["user_id"] = user_id
+        # Phase M — read by chat_tools.web_search via _tool_meta(config).
+        # Only set when the router actually produced a decision; absent means
+        # "unknown", which web_search_reasoning_service maps to today's 3+3.
+        if router_complexity:
+            _call_metadata["complexity"] = router_complexity
         for event in ask_chat_stream(
             messages_payload, metadata=_call_metadata, tools_enabled=tools_enabled,
-            has_attachments=bool(image_attachments), extended_thinking=extended_thinking,
+            has_attachments=bool(image_attachments),
             task_type=task_type,
         ):
             if event["type"] == "status":
@@ -422,11 +671,6 @@ def chat_stream(
                 # One-shot honest note when the Gemini 3+ leg answers — see
                 # chat_agent._THINKING_GAP_TEXT for why thinking never arrives here.
                 yield json.dumps({"t": "thinking_gap", "v": event["text"]}) + "\n"
-                continue
-            if event["type"] == "extended_thinking_gap":
-                # Chat-R5b: one-shot note when extended_thinking was requested
-                # but the leg answering is Groq (no reasoning config exists there).
-                yield json.dumps({"t": "extended_thinking_gap", "v": event["text"]}) + "\n"
                 continue
             if event["type"] == "code_execution_gap":
                 # Chat-R5b: one-shot note when task_type=="coding" but the leg
@@ -595,6 +839,13 @@ def chat_stream(
         "recommendations":     recommendations,
         "structured_response": _parse_structured_response(response_text),
         "tension_scores":      tension_scores,
+        # Document persistence: real, deterministic signal for a session
+        # document that was genuinely relevant to this message but couldn't be
+        # reinjected (budget or missing chunks) — the frontend can render this
+        # directly instead of relying on the model to mention it (the existing
+        # "no extracted content found" in-context note is model-relayed only;
+        # this is the code-level counterpart for this specific mechanism).
+        "unavailable_documents": unavailable_documents,
         "context_used": {
             "has_deep_research":     research.get("has_deep_research",    False),
             "has_learning_path":     research.get("has_learning_path",    False),

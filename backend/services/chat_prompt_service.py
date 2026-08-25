@@ -17,8 +17,25 @@ import json
 import re
 
 from ..prompts.prompt_composer import PromptComposer
+# Phase K: imported at module scope, not lazily inside a try/except like the
+# other section builders. A swallowed ImportError here would silently strip the
+# crisis-support section out of every prompt — i.e. exactly the regression this
+# phase forbids — so this dependency is allowed to fail loudly at startup
+# instead of quietly at the worst possible moment. It imports only pytz, so
+# there is no circular-import reason for it to be lazy.
+from .crisis_support_service import build_crisis_support_section
 
-MAX_HISTORY_TURNS = 6
+# Phase T: was 6. Real data (llm_call_log/chat_messages, 665 real turns):
+# average turn pair ~439 tokens (4-chars/token heuristic), p95 assistant
+# reply ~1200 tokens. The smallest real prompt budget actually seen serving
+# chat traffic is the OpenRouter nemotron-nano fallback (~16.4K tokens,
+# unregistered in model_registry.py -> conservative default) and Groq's
+# llama-3.1-8b-instant on-demand tier (~17.5K effective) — both close to
+# 16-17.5K. Reserving ~3K for system prompt + dynamic context sections and
+# ~3K headroom for a document excerpt, ~10K is safely left for history; at
+# p95-per-turn sizing (~1.2K) that's ~8 turns without risking a budget
+# failure on the weakest model actually in the pool.
+MAX_HISTORY_TURNS = 8
 
 # ── Depth detection ───────────────────────────────────────────────────────────
 
@@ -54,20 +71,16 @@ _DETAILED_PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in _DETAIL
 _RESEARCH_PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in _RESEARCH_TRIGGERS) + r")\b")
 
 
-def detect_depth(message: str, mode: str = "normal") -> str:
+def detect_depth(message: str) -> str:
     """
     Classify the intended response depth from user phrasing and mode.
 
     Returns one of: "quick" | "standard" | "detailed" | "research"
 
-    - Mode deep_research always → research
     - Short / casual / greeting → quick
     - Explicit depth phrases (phrase-matched, see _DETAILED_PATTERN/_RESEARCH_PATTERN) → detailed or research
     - Default → standard
     """
-    if mode == "deep_research":
-        return "research"
-
     m = message.strip().lower()
 
     # Typo or nonsense: very short, no real words
@@ -95,53 +108,6 @@ def detect_depth(message: str, mode: str = "normal") -> str:
         return "detailed"
 
     return "standard"
-
-
-# ── Depth instructions injected into system prompt ────────────────────────────
-
-_DEPTH_INSTRUCTIONS: dict[str, str] = {
-    "quick": """\
-RESPONSE DEPTH: Quick
-- Reply in 1–3 short paragraphs. Conversational prose — no headers, no bullet lists.
-- For greetings or casual inputs: match the energy — brief and warm.
-- For typos or gibberish: one sentence asking what they meant.
-- Never generate code unless a one-liner IS the entire answer.
-- Stop the moment the question is answered. No summaries, no suggestions.""",
-
-    "standard": """\
-RESPONSE DEPTH: Standard
-- Open with the direct answer in the first sentence — not a definition, not background context.
-- Follow with 1–2 paragraphs that add mechanism, causality, or non-obvious implication.
-- Explain WHY, not just WHAT — surface the underlying reason things work this way.
-- Use a concrete named example: name the company, event, or person — not "companies often do this."
-- No headers for responses under 4 paragraphs — continuous prose is clearer.
-- No code for conceptual, economics, history, or social questions.
-- End when the essential point has been made. No "in summary" closer, no padding.""",
-
-    "detailed": """\
-RESPONSE DEPTH: Detailed
-- Structure: intuition first → mechanism → concrete named example → implications and significance.
-- Every claim needs causality: not "X is important" but "X matters because Y, which causes Z."
-- Name specifics: actor, event, data point, company, framework. Never "some organisations do this."
-- Surface the non-obvious: hidden dependencies, second-order effects, counterintuitive results.
-- Insight density over paragraph count — every sentence must earn its place. Cut anything redundant.
-- ## headers only for 3+ genuinely distinct analytical sections.
-- No code for economics, history, social sciences, or conceptual explanations.
-- Connect to what the user has already asked or explored in this conversation.""",
-
-    "research": """\
-RESPONSE DEPTH: Research-Grade
-- Analyse, do not survey. The goal is genuine understanding, not encyclopedic coverage.
-- Dimensions to address: causal mechanisms, competing viewpoints, hidden tradeoffs, structural
-  dynamics, second-order effects, historical roots, strategic implications, genuine uncertainties.
-- Synthesise across perspectives — build a coherent analytical argument, not a list of facts.
-- Name specifics: mechanisms, actors, data points, dates, frameworks — generic statements fail.
-- Surface contradictions and expert disagreement where they exist — do not paper over them.
-- Second-order effects and hidden dependencies often matter more than obvious surface findings.
-- Acknowledge genuine uncertainty clearly — it increases the quality of reasoning, not the doubt.
-- Feel like a genuine analyst memo: insight-dense, argument-driven, intellectually honest.
-- ## headers for clearly distinct analytical dimensions — aid navigation, not decoration.""",
-}
 
 
 # ── Intent-aware format directives ────────────────────────────────────────────
@@ -230,13 +196,13 @@ def build_system_prompt(context: dict, mode: str = "normal") -> str:
     """
     Assemble the system prompt from all available context sections.
 
-    Routing (Chat-R7b — was mode-based: web_search/deep_research/roadmap/
-    compare/trend_analysis always got the JSON schema regardless of whether
+    Routing (Chat-R7b — was mode-based: web_search/roadmap/compare/
+    trend_analysis always got the JSON schema regardless of whether
     the turn had anything to do with Feed. That forced a Key Takeaways/
     Resources/Explore Next card onto plain conversational answers like "top
     10 github trends" — confirmed live, R1/R7 recon. roadmap/compare/
     trend_analysis were never even reachable in practice: ChatRequest.
-    chat_mode only ever validates to normal/web_search/deep_research/layman.)
+    chat_mode only ever validates to normal/web_search/layman.)
     ------------
     context["feed_linked"] present and truthy (chat_service.py: feed_context
     for this turn, OR a resolved feed_entry_anchor from a prior turn's
@@ -247,8 +213,7 @@ def build_system_prompt(context: dict, mode: str = "normal") -> str:
         JSON format directive so the renderer can display rich sections —
         this is a genuine Feed-linked conversation, structure is warranted.
 
-    Everything else (normal / web_search / deep_research / layman with no
-    Feed link)
+    Everything else (normal / web_search / layman with no Feed link)
         Minimal prompt: persona + conversation memory + natural guidelines.
         No JSON schema. No research dumps. Adaptive free-form prose — the
         default for an ordinary chat turn, whichever tool answered it.
@@ -324,36 +289,26 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
     """
     Minimal, natural-feeling system prompt for normal and layman chat.
 
-    Injects: persona + depth instruction + format directive + conversation memory +
-             optional layman directive + natural guidelines.
+    Injects: persona (with response principles folded in) + conversation memory +
+             optional layman directive + attachment awareness.
     Omits: research dumps, exploration history, JSON schema.
+
+    Chat identity pass: RESPONSE DEPTH / FORMAT GUIDANCE / NARRATIVE MODE /
+    CONVERSATIONAL RULES / CODE GENERATION RULES are gone from this function —
+    replaced by _RESPONSE_PRINCIPLES (judgment-based, no classifier gating length
+    or structure). learning_system_context_service's tactical section is also
+    gone here; the identity addition in _PERSONA_NATURAL carries that framing now.
+    detect_intent()/detect_depth() still run upstream in chat_service.py — their
+    output still feeds recommendations enrichment and the tension directive below,
+    just no longer injected as prompt text in this function.
     """
     composer = PromptComposer()
-    composer.add_section("persona",        _PERSONA_NATURAL,
+    composer.add_section("persona",        _build_persona_section(context.get("user_name", "")),
                          priority=1, required=True,  source_pack="")
-
-    # Learning system framing — positions this interaction in the depth hierarchy.
-    # Injected first so every subsequent directive is read within the learning journey context.
-    composer.add_section("learning_system", _build_learning_system_section(context, mode),
-                         priority=2, required=False, source_pack="dynamic")
-
-    # Depth instruction — calibrates verbosity and structure before anything else
-    depth = context.get("response_depth", "standard")
-    composer.add_section("depth",          _DEPTH_INSTRUCTIONS.get(depth, _DEPTH_INSTRUCTIONS["standard"]),
-                         priority=2, required=True,  source_pack="")
-
-    # Intent-aware format directive — structural guidance for detected response shape.
-    # Skipped in layman mode: the Explain Simply directive is fully self-contained.
-    # Passes intent_profile so blended multi-intent prompts get composed directives.
-    if mode != "layman":
-        composer.add_section("format_directive", _build_format_directive_section(
-            context.get("format_intent", "default"),
-            intent_profile=context.get("intent_profile"),
-        ),                   priority=3, required=False, source_pack="")
 
     # Conversation memory: most important for continuity (always inject if present)
     composer.add_section("conversation_memory", _build_conversation_memory_section(
-        context.get("conversation_memory", {})
+        context.get("conversation_memory", {}), include_recency=False
     ),                   priority=2, required=False, source_pack="dynamic")
 
     # Active analytical thread — mechanisms, unresolved tensions, comparative frame.
@@ -382,14 +337,8 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
                              priority=3, required=False, source_pack="dynamic")
 
     # User profile: only inject a one-liner if interesting
-    composer.add_section("user_profile",   _build_compact_profile(context.get("user_profile", {})),
+    composer.add_section("user_profile",   _build_compact_profile(context),
                          priority=3, required=False, source_pack="dynamic")
-
-    # Dynamic narrative rhythm — rotates structural mode to prevent response homogeneity.
-    # Skipped for layman (has its own structure) and quick depth (no structure needed).
-    if mode != "layman":
-        composer.add_section("narrative",  _build_narrative_section(context, mode),
-                             priority=5, required=False, source_pack="dynamic")
 
     # Layman directive when explain-simply mode is active
     if mode == "layman":
@@ -402,8 +351,32 @@ def _build_natural_prompt(context: dict, mode: str) -> str:
             composer.add_section("layman_anchors", slc,
                                  priority=2, required=False, source_pack="dynamic")
 
-    composer.add_section("guidelines",     _NATURAL_GUIDELINES,
+    composer.add_section("response_principles",
+                         _RESPONSE_PRINCIPLES_LAYMAN if mode == "layman" else _RESPONSE_PRINCIPLES,
                          priority=3, required=True,  source_pack="")
+
+    # Phase T: conditional on context["has_attachment"] (chat_service.py — set
+    # from this turn's own image/document attachments, or a relevant document
+    # persisted from earlier in the session). Was unconditional: real text
+    # weight on every turn regardless of whether the feature was in play.
+    if context.get("has_attachment"):
+        composer.add_section("attachment_awareness", _ATTACHMENT_AWARENESS,
+                             priority=3, required=True,  source_pack="")
+
+    # Phase K -> Phase U: was unconditional (see crisis_support_service's module
+    # docstring for why, at the time). Gated now on context["crisis_active"]
+    # (chat_service.py — chat_router.classify_message's real crisis field, with
+    # a code-level fail-safe defaulting to True on any classify failure or
+    # skip, plus a few-turn carry-forward after a real crisis turn — never
+    # left to the model alone). Still deliberately last when present, so it's
+    # the final thing the model reads and can override what precedes it
+    # (specifically the RESPONSE PRINCIPLES line about pushback meaning
+    # "change your approach", which is what turned a real crisis follow-up
+    # into an apology and a retraction).
+    if context.get("crisis_active"):
+        composer.add_section("crisis_support",
+                             build_crisis_support_section(context.get("client_timezone")),
+                             priority=1, required=True,  source_pack="")
     return composer.build()
 
 
@@ -412,62 +385,120 @@ def _build_structured_prompt(context: dict) -> str:
     Full context injection for specialized research/analysis modes.
 
     Injects all available sections + structured JSON format directive.
+
+    Structured-mode fix (Task 2): response_depth is computed upstream
+    regardless of feed_linked, but this function used to never read it — a
+    feed-linked "hi" got the exact same 19-section, mandatory-JSON-schema
+    treatment as a genuinely complex feed-linked question. is_quick below
+    gates out the sections that are analytical-depth aids (irrelevant to a
+    short exchange regardless of what triggered it — research, session,
+    knowledge_state, exploration_breadth, preference_snapshot,
+    explanation_directive, domain_directive, continuity, format_directive,
+    tension) and swaps the mandatory JSON schema for RESPONSE PRINCIPLES
+    (conversational, closer to natural mode) — confirmed via the frontend's
+    real rendering code that this is safe: StructuredResponseRenderer's
+    children (KeyTakeawaysList, ResourceLinksPanel, etc.) all early-return
+    null on an empty/absent array, and _parse_structured_response's only
+    validity check is the presence of a "response_type" key, so a fuller
+    JSON response was never actually required by anything downstream.
+    conversation_memory, vector_memory, and feed_entry_anchor stay
+    unconditional — continuity/context about what the user is discussing,
+    not analytical depth, so orthogonal to how complex this message is.
+    action_result stays unconditional too — real per-turn workflow data a
+    prior step already produced for this exact turn, not a depth aid.
     """
+    is_quick = context.get("response_depth") == "quick"
+
     composer = PromptComposer()
     composer.add_section("persona",        _PERSONA,
                          priority=1, required=True,  source_pack="")
 
     # Learning system framing — anchors the structured response to the user's learning journey.
-    # Structured modes (web_search, deep_research) carry the most state; this ensures the AI
+    # Structured mode (web_search) carries the most state; this ensures the AI
     # builds on established mechanisms rather than re-starting from scratch each time.
-    composer.add_section("learning_system", _build_learning_system_section(context, mode="deep_research"),
+    #
+    # Structured-mode fix (Task 1, was a KNOWN BUG deferred out of the natural-mode
+    # identity pass): mode="web_search" here is only the fallback framing for turns
+    # 2+ of a feed-linked session — learning_system_context_service checks context's
+    # feed_action/feed_topic (set by chat_service.py only on the turn feed_context
+    # itself is present) and uses the real action's framing instead when available.
+    # chat_modes_service.build_feed_context_note() no longer appends a second copy.
+    composer.add_section("learning_system", _build_learning_system_section(context, mode="web_search"),
                          priority=2, required=False, source_pack="dynamic")
 
-    composer.add_section("user_profile",        _build_profile_section(context.get("user_profile", {})),
+    composer.add_section("user_profile",        _build_profile_section(context),
                          priority=2, required=False, source_pack="dynamic")
-    composer.add_section("research",            _build_research_section(context.get("research", {})),
-                         priority=1, required=False, source_pack="dynamic")
-    composer.add_section("session",             _build_session_section(context.get("session", {})),
-                         priority=3, required=False, source_pack="dynamic")
+
+    if not is_quick:
+        composer.add_section("research",        _build_research_section(context.get("research", {})),
+                             priority=1, required=False, source_pack="dynamic")
+        composer.add_section("session",         _build_session_section(context.get("session", {})),
+                             priority=3, required=False, source_pack="dynamic")
+
     composer.add_section("conversation_memory", _build_conversation_memory_section(context.get("conversation_memory", {})),
                          priority=2, required=False, source_pack="dynamic")
-    composer.add_section("knowledge_state",     _build_knowledge_state_section(context.get("conversation_knowledge", {})),
-                         priority=2, required=False, source_pack="dynamic")
+
+    if not is_quick:
+        composer.add_section("knowledge_state", _build_knowledge_state_section(context.get("conversation_knowledge", {})),
+                             priority=2, required=False, source_pack="dynamic")
+
     # Chat-3: semantic long-term memory recall + Feed-entry persistent anchor
     # (see _build_natural_prompt for full rationale — same sections, same
-    # context keys, mirrored here for structured modes).
+    # context keys, mirrored here for structured modes). Unconditional: both
+    # are continuity/context about what's being discussed, not depth aids.
     composer.add_section("vector_memory",       context.get("vector_memory", ""),
                          priority=2, required=False, source_pack="dynamic")
     composer.add_section("feed_entry_anchor",   context.get("feed_entry_anchor", ""),
                          priority=2, required=False, source_pack="dynamic")
-    composer.add_section("exploration_breadth", _build_exploration_breadth_section(context.get("exploration_breadth", {})),
-                         priority=3, required=False, source_pack="dynamic")
-    composer.add_section("preference_snapshot", _build_preference_snapshot_section(context.get("preference_snapshot", {})),
-                         priority=3, required=False, source_pack="dynamic")
-    composer.add_section("explanation_directive", _build_explanation_directive_section(context.get("learner_profile", {})),
-                         priority=3, required=False, source_pack="dynamic")
-    composer.add_section("domain_directive",    _build_domain_directive_section(context.get("domain_context", {})),
-                         priority=3, required=False, source_pack="dynamic")
-    composer.add_section("continuity",          _build_continuity_section(context.get("continuity", {})),
-                         priority=2, required=False, source_pack="dynamic")
+
+    if not is_quick:
+        composer.add_section("exploration_breadth", _build_exploration_breadth_section(context.get("exploration_breadth", {})),
+                             priority=3, required=False, source_pack="dynamic")
+        composer.add_section("preference_snapshot", _build_preference_snapshot_section(context.get("preference_snapshot", {})),
+                             priority=3, required=False, source_pack="dynamic")
+        composer.add_section("explanation_directive", _build_explanation_directive_section(context.get("learner_profile", {})),
+                             priority=3, required=False, source_pack="dynamic")
+        composer.add_section("domain_directive", _build_domain_directive_section(context.get("domain_context", {})),
+                             priority=3, required=False, source_pack="dynamic")
+        composer.add_section("continuity",      _build_continuity_section(context.get("continuity", {})),
+                             priority=2, required=False, source_pack="dynamic")
+
+    # action_result: real per-turn workflow data a prior step already produced
+    # for this exact turn — unconditional, not a depth aid (its own builder
+    # already returns "" when there's nothing to present).
     composer.add_section("action_result",       _build_action_result_section(context.get("action_result", {})),
                          priority=2, required=False, source_pack="dynamic")
 
-    # Intent-aware format directive — guides response structure for the detected intent.
-    # Passes intent_profile so blended multi-intent prompts get composed directives.
-    composer.add_section("format_directive", _build_format_directive_section(
-        context.get("format_intent", "default"),
-        intent_profile=context.get("intent_profile"),
-    ),                   priority=3, required=False, source_pack="")
+    if not is_quick:
+        # Intent-aware format directive — guides response structure for the detected intent.
+        # Passes intent_profile so blended multi-intent prompts get composed directives.
+        composer.add_section("format_directive", _build_format_directive_section(
+            context.get("format_intent", "default"),
+            intent_profile=context.get("intent_profile"),
+        ),                   priority=3, required=False, source_pack="")
 
-    # Cognitive tension — short version for structured modes; informs key_takeaway quality.
-    composer.add_section("tension",        _build_tension_section(context, mode="deep_research"),
-                         priority=3, required=False, source_pack="dynamic")
+        # Cognitive tension — short version for structured modes; informs key_takeaway quality.
+        composer.add_section("tension",    _build_tension_section(context, mode="web_search"),
+                             priority=3, required=False, source_pack="dynamic")
 
     composer.add_section("guidelines",     _GUIDELINES,
                          priority=3, required=True,  source_pack="")
-    composer.add_section("format_schema",  _STRUCTURED_FORMAT_DIRECTIVE,
+    composer.add_section("format_schema",
+                         _RESPONSE_PRINCIPLES if is_quick else _STRUCTURED_FORMAT_DIRECTIVE,
                          priority=1, required=True,  source_pack="")
+
+    # Phase K -> Phase U: same section, same gate (context["crisis_active"], see
+    # _build_natural_prompt) in the Feed-linked path too — distress isn't less
+    # likely just because the session started from a Feed card. Placed after
+    # format_schema on purpose: it carries the one instruction allowed to
+    # override the mandatory-JSON directive above (a crisis answer must be plain
+    # prose, not a response schema). chat_service._parse_structured_response returns
+    # None for non-JSON and the frontend then renders raw text — the same path every
+    # natural-mode turn already takes, so this is an exercised fallback, not a new one.
+    if context.get("crisis_active"):
+        composer.add_section("crisis_support",
+                             build_crisis_support_section(context.get("client_timezone")),
+                             priority=1, required=True,  source_pack="")
     return composer.build()
 
 
@@ -484,32 +515,66 @@ and are honest about uncertainty."""
 _PERSONA_NATURAL = """\
 You are Curivio — an intelligent research and learning companion.
 Help the user understand ideas, explore topics, and think more clearly.
-Be direct, thoughtful, and conversational. Match your depth to what the user needs."""
+Be direct, thoughtful, and conversational. Match your depth to what the user needs.
 
-_NATURAL_GUIDELINES = """\
-CONVERSATIONAL RULES:
-- Match response length to the question. A two-sentence question rarely needs a five-paragraph answer.
-- Do NOT open every reply by naming yourself. Don't say "I'm Curivio" or "Great question!" — just answer.
-- Conversational questions get conversational answers: prose, not bullet lists.
+You're a learning companion this person comes back to, not a one-off chatbot — lean on
+what you know about how they think and what they've explored before, the way someone
+who's worked with them for a while would. When you know their name, use it where it
+feels human — greeting them by name when a conversation opens, or in a genuinely warm
+or personal moment — not stapled onto the start of every reply."""
+
+
+def _build_persona_section(user_name: str = "") -> str:
+    """
+    Natural-mode persona, with the user's name folded in when available (Chat
+    identity pass) so "use their name naturally" has a real name to work with.
+    Empty/missing name: omit the line entirely, no placeholder fallback.
+    """
+    if user_name:
+        return f"{_PERSONA_NATURAL}\n\nThe user's name is {user_name}."
+    return _PERSONA_NATURAL
+
+# Chat identity pass: replaces the old RESPONSE DEPTH / FORMAT GUIDANCE / NARRATIVE
+# MODE / CONVERSATIONAL RULES / CODE GENERATION RULES stack in natural mode — one
+# block, judgment-based instead of mechanically classified. Structured mode is
+# untouched and keeps _GUIDELINES below unchanged.
+_RESPONSE_PRINCIPLES = """\
+RESPONSE PRINCIPLES:
+- Decide the length and depth yourself, based on what this specific question actually needs. A quick factual question deserves a few sentences. A real "explain this to me" deserves real depth — and when the conversation, memory, or source material already in front of you genuinely supports going deeper (real prior discussion, a real document, real history here), draw on it rather than staying generic. Don't pad either way, and don't force a fixed length onto an answer that doesn't need one.
+- Lead with the actual answer — not a definition, not throat-clearing, not "great question."
 - Prioritise causality over description: explain WHY things work the way they do, not just WHAT they are.
-- Name specifics rather than generalities: the company, the event, the mechanism, the person.
-- Surface the non-obvious: second-order effects and hidden implications are more valuable than
-  restating what the user likely already knows.
-- Use markdown only when it genuinely aids clarity: code blocks for code, bullets for genuinely
-  parallel items, headers only for 4+ genuinely distinct sections — never for prose that naturally
-  fits 2–3 paragraphs.
-- If a topic came up earlier in this conversation, build on it — do not re-explain from scratch.
-- If the user sends a greeting or very short message, reply briefly and warmly. Do not lecture.
-- Be honest when uncertain. End when you've said the essential thing — no padding, no "in summary" closers.
+- Name specifics and surface what's non-obvious — the company, the event, the mechanism, the second-order effect the user probably hasn't considered — rather than restating what they likely already know.
+- Decide the shape yourself too, the same way you decide length — a genuine comparison can be a table, a genuine multi-step process can be numbered, a genuine list of options can be bulleted, and a genuine short conversational answer can still just be prose. Match the structure to what this content actually is, not a default in either direction.
+- Write code whenever it's genuinely the clearest way to answer — a worked example, a specific technique, a syntax question — regardless of the subject. Skip code when prose serves better. Never tack code onto the end of a prose answer as an unrequested bonus. Always put code in a fenced block tagged with its language — unfenced code loses its indentation when it renders, which for Python makes it wrong rather than merely ugly.
+- When code is the answer, give it a line of framing — what the approach is and why it's shaped that way. One or two sentences, before or after the block, not a preamble. Drop it only when the user actually said they want code only ("just the code", "no explanation"), or when the answer is a single obvious line that explains itself.
+- Say plainly what you're actually sure of. When you're inferring, generalising, or working from memory rather than something concrete in front of you, say so ("as far as I know," "I'd want to check this") instead of stating it with more confidence than you have — and never manufacture a source or citation to sound more certain than you are.
+- If the user tells you your last answer missed the mark, that's a real signal — change your approach. Don't just apologise and repeat the same thing with more words.
+- Don't open by naming yourself. Just answer.
+- If a topic came up earlier in this conversation, build on it — don't re-explain from scratch.
+- Default to continuity, not a hard cut: when a short or fragmentary message COULD plausibly extend what you were just discussing, assume it does — answer with that topic's version of the new phrase, not the generic, context-free reading, the way someone mid-conversation defaults to assuming the next thing relates rather than treating every short message as a reset. Only answer it as genuinely standalone when the wording actively rules out a connection (a real subject change signaled by the user, or a topic the conversation truly has no bearing on) — the bar is whether this plausibly extends the thread, not whether it explicitly references it."""
 
-CODE GENERATION RULES:
-- Only include code when code IS the answer (e.g. "write me a function", "show me the syntax").
-- Never add code to conceptual explanations, history, economics, or social science questions.
-- Never include code as a "bonus" at the end of a prose answer.
-- When code is appropriate: show a minimal working example — not a full application scaffold.
-- Match language to what the user specified, or infer from context.
-- Add inline comments only if the code does something non-obvious.
+# Layman-fix pass: same principles minus the two lines that structurally conflict
+# with LAYMAN_SIMPLIFICATION_DIRECTIVE's mandated 5-step sequence (core idea ->
+# analogy -> mechanism -> why it exists -> insight) — "decide length/structure
+# yourself" and "headers only when genuinely list-like" both contradict a directive
+# that mandates the response's shape outright. Every other line is orthogonal
+# (uncertainty honesty, code judgment, pushback responsiveness, causality,
+# specificity, continuity) and applies exactly as much in layman mode as anywhere
+# else — kept verbatim, not reworded.
+_RESPONSE_PRINCIPLES_LAYMAN = """\
+RESPONSE PRINCIPLES:
+- Lead with the actual answer — not a definition, not throat-clearing, not "great question."
+- Prioritise causality over description: explain WHY things work the way they do, not just WHAT they are.
+- Name specifics and surface what's non-obvious — the company, the event, the mechanism, the second-order effect the user probably hasn't considered — rather than restating what they likely already know.
+- Write code whenever it's genuinely the clearest way to answer — a worked example, a specific technique, a syntax question — regardless of the subject. Skip code when prose serves better. Never tack code onto the end of a prose answer as an unrequested bonus. Always put code in a fenced block tagged with its language — unfenced code loses its indentation when it renders, which for Python makes it wrong rather than merely ugly.
+- When code is the answer, give it a line of framing — what the approach is and why it's shaped that way. One or two sentences, before or after the block, not a preamble. Drop it only when the user actually said they want code only ("just the code", "no explanation"), or when the answer is a single obvious line that explains itself.
+- Say plainly what you're actually sure of. When you're inferring, generalising, or working from memory rather than something concrete in front of you, say so ("as far as I know," "I'd want to check this") instead of stating it with more confidence than you have — and never manufacture a source or citation to sound more certain than you are.
+- If the user tells you your last answer missed the mark, that's a real signal — change your approach. Don't just apologise and repeat the same thing with more words.
+- Don't open by naming yourself. Just answer.
+- If a topic came up earlier in this conversation, build on it — don't re-explain from scratch.
+- Default to continuity, not a hard cut: when a short or fragmentary message COULD plausibly extend what you were just discussing, assume it does — answer with that topic's version of the new phrase, not the generic, context-free reading, the way someone mid-conversation defaults to assuming the next thing relates rather than treating every short message as a reset. Only answer it as genuinely standalone when the wording actively rules out a connection (a real subject change signaled by the user, or a topic the conversation truly has no bearing on) — the bar is whether this plausibly extends the thread, not whether it explicitly references it."""
 
+_ATTACHMENT_AWARENESS = """\
 ATTACHMENT AWARENESS:
 - Images: when this turn includes an image, you genuinely receive and see its actual visual
   content through this interface — describe what you actually observe. Never say you cannot
@@ -598,14 +663,24 @@ Synthesis quality rules:
 - Increase insight density per sentence — if a sentence doesn't add something new, cut it"""
 
 
-def _build_profile_section(profile: dict) -> str:
+def _build_profile_section(context: dict) -> str:
+    """
+    Structured-mode profile block. Task 3 (structured-mode fix pass): now
+    routes "level" through the same resolve_user_level() natural mode uses,
+    instead of reading user_profile.learning_stage directly — that was an
+    entirely separate, independently-contradicting level signal from the
+    "Learner context: N topics — {level} level" line the learning_system
+    section could also emit (different vocabulary, different thresholds).
+    Both modes now share one resolution path.
+    """
+    profile = context.get("user_profile", {})
     if not profile:
         return ""
 
     lines = ["User learning profile:"]
-    stage = profile.get("learning_stage")
-    if stage:
-        lines.append(f"- Learning stage: {stage}")
+    level = resolve_user_level(context)
+    if level:
+        lines.append(f"- Learning stage: {level}")
 
     diff = profile.get("difficulty_preference")
     if diff:
@@ -622,20 +697,45 @@ def _build_profile_section(profile: dict) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _build_compact_profile(profile: dict) -> str:
+def resolve_user_level(context: dict) -> str:
+    """
+    Single user-level signal, shared by natural mode (Chat identity pass)
+    and structured mode (structured-mode fix pass, Task 3).
+
+    Previously two independent, differently-scaled paths could both reach the
+    prompt: recommendation_service.get_learning_stage() (early/developing/
+    proficient, liked-topic count) via user_profile.learning_stage, and
+    adaptive_explanation_service's 4-signal inferred_level (beginner/
+    intermediate/advanced) via learning_system_context_service's "Learner
+    context" line. That second path is gone from natural mode along with the
+    rest of the learning_system section (see _build_natural_prompt) — this
+    resolver just picks which single value is worth surfacing here: the richer
+    multi-signal inferred_level once there's enough history to trust it
+    (5+ explored topics), the coarser liked-topic stage before that.
+    """
+    total_explored = context.get("exploration_breadth", {}).get("total_explored", 0)
+    if total_explored >= 5:
+        level = context.get("learner_profile", {}).get("inferred_level", "")
+        if level:
+            return level
+    return context.get("user_profile", {}).get("learning_stage", "")
+
+
+def _build_compact_profile(context: dict) -> str:
     """One-liner profile hint for natural mode — avoids verbose context dumps."""
-    if not profile:
-        return ""
-    stage     = profile.get("learning_stage", "")
+    profile   = context.get("user_profile", {})
     interests = profile.get("top_interests", [])
-    if not stage and not interests:
+    level     = resolve_user_level(context)
+    if not interests and not level:
         return ""
     parts = []
     if interests:
-        parts.append(f"interests: {', '.join(interests[:3])}")
-    if stage:
-        parts.append(f"level: {stage}")
-    return f"User context — {'; '.join(parts)}." if parts else ""
+        parts.append(f"has shown interest in {', '.join(interests[:3])}")
+    if level:
+        # "the {level} stage", not "a/an {level} stage" — sidesteps a/an agreement
+        # (early/advanced/intermediate all take "an", developing/proficient/beginner take "a").
+        parts.append(f"is currently at the {level} stage")
+    return f"What you know about this user: {' and '.join(parts)}." if parts else ""
 
 
 def _build_research_section(research: dict) -> str:
@@ -700,15 +800,30 @@ def _build_session_section(session: dict) -> str:
     )
 
 
-def _build_conversation_memory_section(conv: dict) -> str:
+def _build_conversation_memory_section(conv: dict, include_recency: bool = True) -> str:
+    """
+    include_recency=True (default — structured mode, untouched this pass): keeps
+    the turn-count header and the "Most recent question" line.
+
+    include_recency=False (natural mode, Chat identity pass): drops both. Recon
+    confirmed both are redundant — last_user_messages[0] duplicates the prior
+    turn already present verbatim in the truncated history array build_messages()
+    sends alongside this system prompt; session_turns adds nothing the model
+    needs. topics_discussed + the "do not re-explain" instruction (genuinely
+    additive — aggregated across the session, not derivable from the last-N-turn
+    array alone) are kept in both modes.
+    """
     if not conv or conv.get("message_count", 0) == 0:
         return ""
 
-    turns   = conv.get("session_turns", 0)
-    topics  = conv.get("topics_discussed", [])
-    last_qs = conv.get("last_user_messages", [])
+    topics = conv.get("topics_discussed", [])
+    lines: list[str] = []
 
-    lines = [f"This conversation ({turns} turn{'s' if turns != 1 else ''} so far):"]
+    if include_recency:
+        turns = conv.get("session_turns", 0)
+        lines.append(f"This conversation ({turns} turn{'s' if turns != 1 else ''} so far):")
+    else:
+        lines.append("This conversation:")
 
     if topics:
         lines.append(f"- Topics discussed: {', '.join(topics)}")
@@ -717,9 +832,11 @@ def _build_conversation_memory_section(conv: dict) -> str:
             "Build on what has already been covered."
         )
 
-    if last_qs:
-        # Show the most recent user question for continuity context
-        lines.append(f"- Most recent question: \"{last_qs[0][:120]}\"")
+    if include_recency:
+        last_qs = conv.get("last_user_messages", [])
+        if last_qs:
+            # Show the most recent user question for continuity context
+            lines.append(f"- Most recent question: \"{last_qs[0][:120]}\"")
 
     return "\n".join(lines) if len(lines) > 1 else ""
 
@@ -886,39 +1003,13 @@ def _build_knowledge_state_section(knowledge: dict) -> str:
         return ""
 
 
-def _build_narrative_section(context: dict, mode: str = "normal") -> str:
-    """
-    Inject the dynamic narrative rhythm directive.
-
-    Skipped for layman mode (its own structure is complete) and for quick-depth
-    responses (greetings, one-liners). The service records the selected mode in
-    its session fingerprint so subsequent turns automatically rotate away from it.
-    """
-    if mode == "layman":
-        return ""
-    depth = context.get("response_depth", "standard")
-    if depth == "quick":
-        return ""
-    session_id = (context.get("conversation_memory", {}) or {}).get("session_id", "")
-    try:
-        from .narrative_rhythm_service import build_narrative_directive
-        return build_narrative_directive(
-            session_id     = session_id,
-            intent_profile = context.get("intent_profile", {}),
-            domain         = context.get("domain_context", {}).get("domain", ""),
-            response_depth = depth,
-        )
-    except Exception:
-        return ""
-
-
 def _build_tension_section(context: dict, mode: str = "normal") -> str:
     """
     Inject cognitive tension directive from the tension engine.
 
     Skipped for layman mode, trivial messages, and when no message is in context.
-    Short version used for structured modes (web_search, deep_research) since
-    the JSON format directive already enforces insight density.
+    Short version used for structured mode (web_search) since the JSON
+    format directive already enforces insight density.
     """
     message = context.get("current_message", "")
     if not message:

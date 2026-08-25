@@ -43,10 +43,10 @@ Chat-4.1 — real tool binding (was tools=None)
 ----------------------------------------------
 Two cached agents, not one: layman mode needs tools genuinely unbound (a hard
 structural gate, not a prompt instruction the model could ignore), so it gets
-its own zero-tool agent — everything else shares one agent with both tools
-bound. web_search/deep_research mode is now just a hint (an extra system
-note biasing which tool to prefer) injected by the caller — it does not
-change which agent or tools are used, so it needs no separate cached agent.
+its own zero-tool agent — everything else shares one agent with the tool
+bound. web_search mode is now just a hint (an extra system note biasing
+which tool to prefer) injected by the caller — it does not change which
+agent or tools are used, so it needs no separate cached agent.
 
 resolve_tools_and_hint(chat_mode) is the single place that translates a
 chat_mode string into (tools_enabled, hint) — pure, no I/O, unit-testable
@@ -62,9 +62,8 @@ shares one block_id) — see _stream_agent's _emit for the exact rule:
   {"type": "text", "text": "...", "seq": int, "block_id": int}
   {"type": "thinking", "text": "...", "seq": int, "block_id": int}
   {"type": "thinking_gap", "text": "..."}
-  {"type": "extended_thinking_gap", "text": "..."}
   {"type": "code_execution_gap", "text": "..."}
-  {"type": "tool_start", "tool": "web_search" | "deep_research", "query": str | None, "seq": int, "block_id": int}
+  {"type": "tool_start", "tool": "web_search", "query": str | None, "seq": int, "block_id": int}
   {"type": "tool_end", "tool": "...", "sources": [{"title","url"}, ...], "seq": int, "block_id": int}
   {"type": "code", "text": "<source>", "language": "python", "seq": int, "block_id": int}
   {"type": "code_output", "text": "<stdout>", "success": true, "seq": int, "block_id": int}
@@ -84,11 +83,12 @@ the bare-model + ModelRetryMiddleware stack and with a tool bound (thinking
 arrives before the tool_call_chunks, not after the tool result). Reasoning
 tokens are billed as part of output_tokens (usage_metadata.output_token_details
 .reasoning is a subset, not additive) — real llm_call_log rows show this
-directly via output_tokens, no schema change needed. extended_thinking=True
-("think harder") raises the budget/level; only chat_agent.py opts individual
-Gemini legs into thinking at all — model_provider.get_chat_model() and
-get_structured_chat_model()'s other ~20 call sites are unaffected (thinking
-defaults off in _build_raw_models).
+directly via output_tokens, no schema change needed. Only chat_agent.py opts
+individual Gemini legs into thinking at all — model_provider.get_chat_model()
+and get_structured_chat_model()'s other ~20 call sites are unaffected
+(thinking defaults off in _build_raw_models); chat_agent.py's own legs always
+run at the baseline (low/1024) budget — the "think harder" toggle that used
+to escalate it was removed, no code path raises it anymore.
 
 Third framework wrinkle (see the module-docstring's opening section): verified
 live that agent.stream(..., stream_mode="messages", config={"callbacks":[...]})
@@ -135,8 +135,8 @@ only, added per-call via wrap_model_call so it sees the CURRENT leg
 (request.model), not the agent's original model. Two things verified live,
 neither guessable from the docs:
 
-1. Combining code_execution with a custom function-calling tool (web_search/
-   deep_research) in the same request 400s ("Please enable
+1. Combining code_execution with a custom function-calling tool (web_search)
+   in the same request 400s ("Please enable
    tool_config.include_server_side_tool_invocations to use Built-in tools
    with Function calling") unless that tool_config flag is set.
 2. ChatGroq.bind_tools([{"code_execution": {}}]) raises a client-side
@@ -173,9 +173,9 @@ chat-r1-recon.md Step 3 for the real timings this cost.
 Fix: wrap_model_call now also checks _is_gemini_3_plus(request.model.model)
 (model_provider's existing helper, already used elsewhere in this module)
 before adding code_execution/the tool_config override — Gemini 2.5 legs skip
-the override entirely and proceed with just their agent-bound custom tools
-(web_search/deep_research), confirmed live to work fine standalone since
-they're plain function-calling tools with no built-in-tool conflict.
+the override entirely and proceed with just their agent-bound custom tool
+(web_search), confirmed live to work fine standalone since it's a plain
+function-calling tool with no built-in-tool conflict.
 code_execution is simply unavailable on 2.5 legs as a result — not a
 fallback trigger, not degraded, just absent for that leg (mirrors Chat-7's
 Groq soft-degrade, same reasoning: code execution isn't structurally
@@ -194,7 +194,7 @@ Chat-R4 — task-based routing (chat_router.py + model_priority.py)
 --------------------------------------------------------------------
 chat_service.chat_stream() runs an LLM classifier (chat_router.classify_message,
 model_priority task_type "routing") ONLY for chat_mode=="normal" turns with no
-attachments — an explicit web_search/deep_research toggle always wins outright
+attachments — an explicit web_search toggle always wins outright
 (R1: proven 10/10 explicit-toggle hit rate; the classifier targets the
 "normal"-mode gap R1 measured at 2/10), and has_attachments turns never
 consult it (vision hard gate, Chat-5, untouched). The classification maps to
@@ -217,7 +217,7 @@ Public API
 resolve_tools_and_hint(chat_mode) -> (bool, str | None)
 build_mode_hint(tool_name, shaped_query="") -> str | None
 ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False,
-                 extended_thinking=False, task_type=None) -> Iterator[dict]
+                 task_type=None) -> Iterator[dict]
 """
 from __future__ import annotations
 
@@ -234,7 +234,6 @@ from .model_provider import (
     _build_raw_models,
     _is_daily_quota_exhausted,
     _is_gemini_3_plus,
-    _is_gemini_leg,
     _RETRY_ATTEMPTS,
     build_pooled_legs,
 )
@@ -252,7 +251,19 @@ class VisionUnavailableError(RuntimeError):
     """
 
 
-_agent_cache: dict[tuple[bool, bool, bool, str | None], object] = {}
+_agent_cache: dict[tuple[bool, bool, str | None], object] = {}
+
+# Phase W: task-routed chat_turn legs (build_pooled_legs below) never set
+# max_tokens, so every provider's own implicit default applied — 65536 for
+# the OpenRouter/Nemotron leg, confirmed live and in real llm_call_log rows
+# (PaymentRequiredResponseError: "requested up to 65536 tokens, but can only
+# afford ~25000"). Real data (1573 successful chat_turn rows): median 159,
+# p90 1079, p95 1531, p99 2392, max ever observed 4824 output tokens. 8192
+# gives >1.7x headroom over the largest real answer ever produced and >3x
+# over p99, while staying well clear of the ~24-25K OpenRouter has actually
+# been affording — unlike 65536, which was never a deliberate choice for
+# either the classifier or this call, just an unset default.
+_CHAT_TURN_MAX_TOKENS = 8192
 
 _MODE_HINT_TEMPLATES: dict[str, str] = {
     "web_search": (
@@ -260,20 +271,14 @@ _MODE_HINT_TEMPLATES: dict[str, str] = {
         "calling the web_search tool for this question unless it is already "
         "fully answerable from the conversation context above."
     ),
-    "deep_research": (
-        "[MODE HINT] The user has Deep Research mode active for this turn — "
-        "prefer calling the deep_research tool for this question for thorough "
-        "multi-source analysis, unless it is already fully answerable from the "
-        "conversation context above."
-    ),
 }
 
 
 def build_mode_hint(tool_name: str | None, shaped_query: str = "") -> str | None:
     """
     Bias text for the model toward a specific tool this turn. tool_name is
-    either an explicit chat_mode toggle ("web_search"/"deep_research") or the
-    Chat-R4 router's classified tool_name — same hint either way. shaped_query
+    either an explicit chat_mode toggle ("web_search") or the Chat-R4
+    router's classified tool_name — same hint either way. shaped_query
     (router only) appends a suggested, search-ready query; empty for the
     explicit-toggle path, which stays byte-identical to the old static
     _MODE_HINTS text.
@@ -292,8 +297,7 @@ def resolve_tools_and_hint(chat_mode: str) -> tuple[bool, str | None]:
 
     layman         -> (False, None)  tools genuinely unbound this call, not
                                       just discouraged in the prompt.
-    web_search /
-    deep_research  -> (True, hint)   tools bound; hint biases which one, the
+    web_search     -> (True, hint)   tools bound; hint biases the tool, the
                                       model still decides. Explicit toggle —
                                       Chat-R4's router is never consulted here.
     normal (or
@@ -317,9 +321,9 @@ class CodeExecutionToolMiddleware(AgentMiddleware):
     Gemini 2.5 legs 400 with a model-specific error ("Tool call context
     circulation is not enabled for models/gemini-2.5-flash") even with the
     flag set — a hard generation gate, not a config mistake. Skipping the
-    override on 2.5 legs leaves web_search/deep_research untouched (plain
-    function-calling tools, verified live to work fine on 2.5-flash alone)
-    and simply omits code_execution for that leg, not a fallback trigger."""
+    override on 2.5 legs leaves web_search untouched (a plain function-calling
+    tool, verified live to work fine on 2.5-flash alone) and simply omits
+    code_execution for that leg, not a fallback trigger."""
 
     def __init__(self, enabled: bool = True) -> None:
         super().__init__()
@@ -341,13 +345,13 @@ class CodeExecutionToolMiddleware(AgentMiddleware):
         ))
 
 
-def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = False, task_type: str | None = None):
+def _build_agent(tools, vision_only: bool = False, task_type: str | None = None):
     if vision_only or task_type is None:
         # Default fixed chain — unchanged for layman/explicit-toggle/vision
         # turns and for any caller that doesn't pass a task_type.
         pairs = _build_raw_models(
             streaming=True, legs="gemini" if vision_only else "all",
-            thinking=True, extended_thinking=extended_thinking,
+            thinking=True,
         )
         if vision_only:
             pairs = pairs[:1]  # primary Gemini key only — see module docstring
@@ -360,7 +364,7 @@ def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = Fal
         from .model_priority import get_model_priority_list
         pairs = build_pooled_legs(
             get_model_priority_list(task_type),
-            streaming=True, thinking=True, extended_thinking=extended_thinking,
+            streaming=True, thinking=True, max_tokens=_CHAT_TURN_MAX_TOKENS,
         )
     primary, *fallback_models = [m for m, _ in pairs]
     retry_on_types = tuple({exc for _, exc_types in pairs for exc in exc_types})
@@ -402,15 +406,15 @@ def _build_agent(tools, vision_only: bool = False, extended_thinking: bool = Fal
     return agent.with_config(callbacks=[LLMCallLogger()])
 
 
-def _get_agent(tools_enabled: bool, vision_only: bool = False, extended_thinking: bool = False, task_type: str | None = None):
-    key = (tools_enabled, vision_only, extended_thinking, task_type)
+def _get_agent(tools_enabled: bool, vision_only: bool = False, task_type: str | None = None):
+    key = (tools_enabled, vision_only, task_type)
     if key not in _agent_cache:
         tools = None
         if tools_enabled:
-            from .chat_tools import web_search, deep_research
-            tools = [web_search, deep_research]
+            from .chat_tools import web_search
+            tools = [web_search]
         _agent_cache[key] = _build_agent(
-            tools, vision_only=vision_only, extended_thinking=extended_thinking, task_type=task_type,
+            tools, vision_only=vision_only, task_type=task_type,
         )
     return _agent_cache[key]
 
@@ -495,7 +499,7 @@ def _split_content_chunks(content):
 
 def ask_chat_stream(
     messages: list[dict], metadata: dict | None = None, tools_enabled: bool = True,
-    has_attachments: bool = False, extended_thinking: bool = False, task_type: str | None = None,
+    has_attachments: bool = False, task_type: str | None = None,
 ):
     """
     Streaming version of the chat turn, answered by the Gemini-primary /
@@ -517,9 +521,8 @@ def ask_chat_stream(
     VisionUnavailableError instead of letting it fall through to a fallback
     leg that's guaranteed to fail anyway.
 
-    `extended_thinking=True` is the "think harder" toggle (Chat-6) — deeper
-    reasoning budget/level per Gemini leg, off by default. Baseline (visible)
-    thinking is always on regardless of this flag; see model_provider._thinking_kwargs.
+    Visible (baseline) thinking is always on for every Gemini leg — see
+    model_provider._thinking_kwargs.
 
     `task_type` (Chat-R4) selects a model-priority chain from model_priority.
     get_model_priority_list() instead of the default fixed chain — None uses
@@ -530,7 +533,7 @@ def ask_chat_stream(
     _preflight_check(messages)
     effective_task_type = None if has_attachments else task_type
     agent = _get_agent(
-        tools_enabled, vision_only=has_attachments, extended_thinking=extended_thinking,
+        tools_enabled, vision_only=has_attachments,
         task_type=effective_task_type,
     )
 
@@ -544,7 +547,7 @@ def ask_chat_stream(
     try:
         yield from _stream_agent(
             agent, messages, config,
-            extended_thinking=extended_thinking, task_type=effective_task_type,
+            task_type=effective_task_type,
             has_attachments=has_attachments,
         )
     except Exception as exc:
@@ -561,16 +564,6 @@ _THINKING_GAP_TEXT = (
     "billed), it just can't be shown."
 )
 
-# Chat-R5b — two more one-shot notes, same ls_model_name detection point as
-# _THINKING_GAP_TEXT above, opposite direction each: this one fires when the
-# leg ISN'T Gemini at all (extended_thinking has no config path on Groq,
-# see model_provider._build_pooled_leg's thinking branch — a pure no-op,
-# unlike the Gemini 3+ case above where reasoning genuinely runs and bills).
-_EXTENDED_THINKING_GAP_TEXT = (
-    "Extended reasoning was requested for this response, but the model that "
-    "answered has no native reasoning step — nothing ran."
-)
-
 # Fires when task_type=="coding" but the leg isn't Gemini 3+ (every
 # coding-capable leg exhausted, or landed on Gemini 2.5's write-only tier) —
 # CodeExecutionToolMiddleware only adds code_execution on Gemini 3+ legs (see
@@ -584,25 +577,21 @@ _CODE_EXECUTION_GAP_TEXT = (
 
 _TOOL_QUERY_ARG_KEYS = {
     # tc["args"] key holding the actual query text, per chat_tools.py's real
-    # per-tool parameter name (web_search(query: str) vs deep_research(topic: str)
-    # — confirmed live, NOT the same key across tools, so this can't be hardcoded).
-    "web_search":    "query",
-    "deep_research": "topic",
+    # per-tool parameter name (web_search(query: str)) — kept as a dict since
+    # a future tool's arg name isn't guaranteed to match.
+    "web_search": "query",
 }
 
 
 def _stream_agent(
     agent, messages: list[dict], config: dict, *,
-    extended_thinking: bool = False, task_type: str | None = None,
+    task_type: str | None = None,
     has_attachments: bool = False,
 ):
     seen_tool_call_ids: set[str] = set()
     thinking_gap_sent = False
     if has_attachments:
         yield {"type": "status", "text": "Reading attachment…"}
-    elif task_type == "deep_research":
-        yield {"type": "status", "text": "Analyzing results…"}
-    extended_thinking_gap_sent = False
     code_execution_gap_sent = False
 
     # Chat-R10d — explicit ordering for blocks[] reconstruction downstream
@@ -655,12 +644,6 @@ def _stream_agent(
             thinking_gap_sent = True
             yield {"type": "thinking_gap", "text": _THINKING_GAP_TEXT}
         if (
-            extended_thinking and not extended_thinking_gap_sent
-            and model_name and not _is_gemini_leg(model_name)
-        ):
-            extended_thinking_gap_sent = True
-            yield {"type": "extended_thinking_gap", "text": _EXTENDED_THINKING_GAP_TEXT}
-        if (
             task_type == "coding" and not code_execution_gap_sent
             and model_name and not _is_gemini_3_plus(model_name)
         ):
@@ -682,7 +665,6 @@ def _stream_agent(
                         pass
                     status_text = {
                         "web_search": "Searching…",
-                        "deep_research": "Analyzing results…",
                     }.get(name, f"Running {name}…")
                     yield _emit(
                         "tool_call", {"type": "tool_start", "tool": name, "query": query, "status_text": status_text},

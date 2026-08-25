@@ -174,7 +174,7 @@ def detect_intent(message: str) -> dict:
     -------
     {
         "intent":           "compare" | "research" | "analyze" | "normal",
-        "recommended_mode": "web_search" | "deep_research" | "normal",
+        "recommended_mode": "web_search" | "normal",
         "query_type":       "comparison" | "research" | "analysis" | "default",
         "subjects":         list[str],   # filled for comparison intent
         "topic":            str,         # cleaned topic string
@@ -208,7 +208,7 @@ def detect_intent(message: str) -> dict:
         topic = _clean_topic(msg, "research")
         result = {
             "intent":           "research",
-            "recommended_mode": "deep_research",
+            "recommended_mode": "web_search",
             "query_type":       "research",
             "subjects":         [topic] if topic else [],
             "topic":            topic,
@@ -220,7 +220,7 @@ def detect_intent(message: str) -> dict:
         topic = _clean_topic(msg, "analyze")
         result = {
             "intent":           "analyze",
-            "recommended_mode": "deep_research",
+            "recommended_mode": "web_search",
             "query_type":       "analysis",
             "subjects":         [topic] if topic else [],
             "topic":            topic,

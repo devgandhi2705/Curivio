@@ -34,7 +34,7 @@ LEARNING PATH (learning_context provided, typically mode="feed")
 
 STANDARD PATH (no learning_context)
   Five dimensions — keyword_relevance, technical_depth, content_quality,
-  educational_value, recency.  Used by chat, deep_research, and other services.
+  educational_value, recency.  Used by chat, feed, and other services.
 
 Public API
 ----------
@@ -99,13 +99,6 @@ _MODE_SCALE: dict[str, dict[str, float]] = {
         "technical_depth":   0.85,
         "recency":           0.75,
     },
-    "deep_research": {
-        "technical_depth":   1.45,   # analytical depth required
-        "recency":           1.25,   # current literature preferred
-        "keyword_relevance": 0.85,
-        "educational_value": 0.70,   # see note: trend signals blended in
-        "content_quality":   0.95,
-    },
 }
 
 
@@ -145,13 +138,6 @@ _EDU_SIGNALS = frozenset(
     "practical hands-on walkthrough example overview fundamentals basics "
     "deep-dive deep dive implementation guide primer cookbook recipe "
     "from scratch learn course lesson".split()
-)
-
-# Trend signals for deep_research mode: new findings, recent papers, benchmarks
-_TREND_SIGNALS = frozenset(
-    "breakthrough emerging state-of-the-art sota introduces launches released "
-    "latest novel new recent 2025 2026 benchmark outperforms surpasses "
-    "advancement progress development discovery finding".split()
 )
 
 _SPAM_DOMAINS: dict[str, float] = {
@@ -356,7 +342,7 @@ def score_article(
     kw   = _keyword_score(article, query)
     tech = _technical_depth_score(article)
     qual = _content_quality_score(article, authority_domains)
-    edu  = _educational_or_trend_score(article, mode)
+    edu  = _educational_value_score(article)
     rec  = _recency_score(article)
 
     base = (
@@ -893,21 +879,6 @@ def _content_quality_score(article: dict, authority_domains: dict[str, float]) -
     return length_score * 0.60 + domain_score * 0.40
 
 
-def _educational_or_trend_score(article: dict, mode: str) -> float:
-    """
-    Returns the educational_value dimension score, adapted for mode.
-
-    feed / chat   — educational signals: tutorials, guides, walkthroughs
-    deep_research — blends educational (40%) with trend signals (60%):
-                    benchmarks, new papers, SOTA, breakthrough findings.
-
-    In both cases the URL path provides a domain-level boost.
-    """
-    if mode == "deep_research":
-        return _trend_value_score(article) * 0.60 + _educational_value_score(article) * 0.40
-    return _educational_value_score(article)
-
-
 def _educational_value_score(article: dict) -> float:
     """Educational signals in title + content plus URL path bonus."""
     text = (article.get("title", "") + " " + article.get("content", "")).lower()
@@ -922,35 +893,6 @@ def _educational_value_score(article: dict) -> float:
     ) else 0.0
 
     return min(1.0, signal_score + domain_bonus)
-
-
-def _trend_value_score(article: dict) -> float:
-    """
-    Trend and research-frontier signals for deep_research mode.
-
-    Checks title and first 500 chars of content for trend vocabulary,
-    year mentions, and URL patterns indicating recent research artifacts.
-    """
-    title   = article.get("title", "").lower()
-    content = article.get("content", "")[:500].lower()
-    url     = article.get("url", "").lower()
-    text    = title + " " + content
-
-    trend_hits = sum(1 for s in _TREND_SIGNALS if s in text)
-    signal_score = min(1.0, trend_hits / 4)
-
-    # URL patterns indicating recent/research content
-    url_bonus = 0.25 if any(
-        seg in url for seg in (
-            "arxiv.org/abs", "paperswithcode", "openreview",
-            "proceedings.neurips", "aclanthology", "biorxiv",
-        )
-    ) else 0.0
-
-    # Year mentions in title indicate timely content
-    year_bonus = 0.15 if re.search(r"\b202[5-9]\b", title) else 0.0
-
-    return min(1.0, signal_score + url_bonus + year_bonus)
 
 
 def _recency_score(article: dict) -> float:
@@ -1028,8 +970,6 @@ def _supplemental_bonus(article: dict, mode: str) -> float:
 
     if mode == "feed":
         combined = practical * 0.35 + real_world * 0.30 + novelty * 0.20 + engagement * 0.15
-    elif mode == "deep_research":
-        combined = novelty * 0.40 + engagement * 0.35 + real_world * 0.15 + practical * 0.10
     else:  # chat
         combined = practical * 0.40 + engagement * 0.30 + real_world * 0.20 + novelty * 0.10
 

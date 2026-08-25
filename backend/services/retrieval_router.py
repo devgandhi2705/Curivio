@@ -9,13 +9,11 @@ The router selects the right Tavily operations (search / extract / crawl / map)
 based on the query domain, retrieval mode, and domain config rules — never
 blindly calling search() for everything.
 
-Three retrieval modes
----------------------
+Two retrieval modes
+-------------------
   chat          Fast, single query, minimal credits.  Prioritises latency.
   feed          Educational, trusted-source focused.  2 queries + targeted
                 extract for known high-value URLs in the domain.
-  deep_research Multi-query, analytical, higher depth.  Follows the domain
-                config's deep_research_rules; uses extract aggressively.
 
 Public API
 ----------
@@ -39,7 +37,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-VALID_MODES       = ("chat", "feed", "deep_research")
+VALID_MODES       = ("chat", "feed")
 _CONF_NORM        = 6     # keyword overlap ≥ this → confidence = 1.0
 _SECONDARY_FLOOR  = 0.15  # minimum confidence to be listed as a secondary domain
 _MOCK_RETRIEVAL   = os.getenv("VITE_USE_MOCK", "").lower() == "true" or \
@@ -69,7 +67,7 @@ class RetrievalPlan:
 
     Building a plan is pure (no I/O).  Executing it makes Tavily calls.
     """
-    mode:              str                   # "chat" | "feed" | "deep_research"
+    mode:              str                   # "chat" | "feed"
     classification:    ClassificationResult
     strategy:          str                   # from DomainRetrievalConfig
     operations:        list[str]             # ordered: e.g. ["extract", "search"]
@@ -149,12 +147,12 @@ def build_plan(
     Parameters
     ----------
     query            The user's raw query or topic string.
-    mode             "chat" | "feed" | "deep_research"
+    mode             "chat" | "feed"
     override_queries If provided, these queries are used for 'search' operations
                      instead of the templates in domain config.  Useful when a
-                     caller (e.g. deep_research_service) has already expanded
-                     domain-specific queries and wants the router to handle only
-                     the Tavily dispatch and extract steps.
+                     caller has already expanded domain-specific queries and
+                     wants the router to handle only the Tavily dispatch and
+                     extract steps.
     """
     from ..config.retrieval_config import get_domain_config
 
@@ -176,7 +174,7 @@ def build_plan(
         use_crawl     = False
         max_extracts  = 0
 
-    elif mode == "feed":
+    else:  # feed
         r             = cfg.feed_retrieval_rules
         search_count  = r.search_queries_per_package
         max_results   = r.max_results_per_query
@@ -184,15 +182,6 @@ def build_plan(
         use_extract   = r.use_extract_for_known_urls
         use_crawl     = False
         max_extracts  = 2
-
-    else:  # deep_research
-        r             = cfg.deep_research_rules
-        search_count  = r.max_search_queries
-        max_results   = 10
-        search_depth  = r.search_depth
-        use_extract   = True
-        use_crawl     = r.use_crawl
-        max_extracts  = r.max_extract_targets
 
     # ── Search queries ────────────────────────────────────────────────────────
     if override_queries:
@@ -314,7 +303,7 @@ def execute_plan(plan: RetrievalPlan, meta: dict | None = None) -> list[dict]:
 
         elif op == "crawl" and plan.crawl_url:
             try:
-                from .tavily_service import crawl_strategy  # deep_research-only; never reached by feed mode
+                from .tavily_service import crawl_strategy  # no mode sets use_crawl=True currently; kept for a future mode
                 query_hint = plan.search_queries[0] if plan.search_queries else None
                 _merge(crawl_strategy(
                     plan.crawl_url,
@@ -346,14 +335,14 @@ def route(
     Parameters
     ----------
     query             User query or topic string.
-    mode              "chat" | "feed" | "deep_research"
+    mode              "chat" | "feed"
     override_queries  Optional explicit search queries (bypasses template expansion).
     preferred_domains Trusted domain hints injected into Tavily include_domains.
                       Biases results toward these domains without restricting broader search.
     meta              Optional trace_id/user_id/project_id/surface/is_test — forwarded
                       to tinyfish_service's raw-capture logging (Phase B1). Every
-                      caller (legacy feed, chat's web_search, deep_research) may pass
-                      it; omitted, TinyFish calls still log, just ungrouped.
+                      caller (legacy feed, chat's web_search) may pass it;
+                      omitted, TinyFish calls still log, just ungrouped.
 
     Returns a list of article dicts.  Never raises — errors return an empty list.
     """

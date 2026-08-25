@@ -169,6 +169,48 @@ class TestStatusSort:
         assert order[-1] == "tB"
 
 
+class TestLatestAttemptStatus:
+    def test_group_status_comes_from_last_attempt(self, mem_db):
+        rows = [
+            ("r-classify-failed", "parent-classify", 0, "2026-08-13 10:00:00"),
+            ("r-classify-ok", "parent-classify", 1, "2026-08-13 10:00:01"),
+            ("r-chat-ok", "parent-chat", 1, "2026-08-13 10:00:02"),
+            ("r-final-failed", "parent-final", 0, "2026-08-13 10:00:03"),
+        ]
+        for run_id, parent_run_id, success, created_at in rows:
+            mem_db.execute(
+                """INSERT INTO llm_call_log
+                       (run_id, parent_run_id, trace_id, timestamp_start, timestamp_end,
+                        latency_ms, provider, call_type, input, success, created_at,
+                        surface, is_test)
+                                     VALUES (?, ?, ?, ?, ?, 100, 'gemini',
+                           'chat_router_classify', '', ?, ?, 'chat', 0)""",
+                                (run_id, parent_run_id, "latest-attempt-trace", created_at,
+                                 created_at, success, created_at),
+            )
+        mem_db.commit()
+
+        total, groups = admin_service.list_grouped_calls(
+            None, None, None, None, True, None, None, None, None,
+            limit=10, offset=0,
+        )
+
+        assert total == 1
+        assert groups[0]["all_succeeded"] is False
+
+        mem_db.execute(
+            "UPDATE llm_call_log SET success = 1 WHERE run_id = 'r-final-failed'"
+        )
+        mem_db.commit()
+
+        _, groups = admin_service.list_grouped_calls(
+            None, None, None, None, True, None, None, None, None,
+            limit=10, offset=0,
+        )
+
+        assert groups[0]["all_succeeded"] is True
+
+
 class TestInvalidSortKeyRejected:
     def test_bad_sort_by_raises_keyerror_at_service_level(self, seeded):
         with pytest.raises(KeyError):

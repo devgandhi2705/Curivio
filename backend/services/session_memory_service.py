@@ -6,10 +6,13 @@ enabling long-term learning continuity and redundancy avoidance.
 
 Tracked activities
 ------------------
-  deep_research     — autonomous or manual deep-dive analysis
   learning_path     — structured learning path generation
   topic_expansion   — prerequisite / related-topic tree
   github_repos      — GitHub repository discovery
+
+Historical note: "deep_research" rows also exist from before the deep-research
+feature was removed — no longer a writable activity type, but get_topic_memory/
+get_research_context still surface has_deep_research from those old rows.
 
 Public API
 ----------
@@ -37,7 +40,7 @@ from datetime import datetime, timezone
 from ..utils.db import get_connection
 
 ACTIVITY_TYPES: frozenset[str] = frozenset(
-    {"deep_research", "learning_path", "topic_expansion", "github_repos"}
+    {"learning_path", "topic_expansion", "github_repos"}
 )
 
 

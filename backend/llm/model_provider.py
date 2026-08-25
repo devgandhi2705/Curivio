@@ -60,6 +60,8 @@ from langchain_core.runnables.retry import RunnableRetry
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from langchain_groq import ChatGroq
+from langchain_openrouter import ChatOpenRouter
+from openrouter.errors import TooManyRequestsResponseError
 from tenacity import retry_if_exception
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
@@ -99,6 +101,18 @@ def _groq_keys() -> list[str]:
 
 def _groq_key() -> str:
     return _groq_keys()[0]
+
+
+def _openrouter_keys() -> list[str]:
+    """OPENROUTER_API_KEY (comma-separated pool) — same shape as
+    _gemini_keys()/_groq_keys(). Only consumed by task_types model_priority.py
+    actually assigns an openrouter leg to (Chat model routing phase); every
+    other caller of this module is unaffected."""
+    raw = os.getenv("OPENROUTER_API_KEY", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    if not keys:
+        raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
+    return keys
 
 
 def upload_attachment(file_bytes: bytes, mime_type: str, filename: str) -> dict:
@@ -147,27 +161,25 @@ def _is_gemini_3_plus(model_name: str) -> bool:
 
 def _is_gemini_leg(model_name: str) -> bool:
     """True for any Gemini leg (2.5 or 3+); False means Groq — the only other
-    provider in this pool. Same ls_model_name signal _is_gemini_3_plus reads
-    (Chat-R5b: extended_thinking has zero config on Groq regardless of
-    generation, see _build_pooled_leg's thinking branch below)."""
+    provider in this pool. Same ls_model_name signal _is_gemini_3_plus reads."""
     return "gemini" in (model_name or "").lower()
 
 
-def _thinking_kwargs(model_name: str, extended: bool) -> dict:
+def _thinking_kwargs(model_name: str) -> dict:
     """
     Per-leg thinking config — Gemini generations take different params, confirmed
-    live (see chat_agent.py module docstring for the recon). `extended=False` is
-    the always-on baseline (visible reasoning, modest cost); `extended=True` is
-    the opt-in "think harder" toggle.
+    live (see chat_agent.py module docstring for the recon). Always the baseline
+    (visible reasoning, modest cost) — the "think harder" toggle that used to
+    request a deeper budget/level here was removed.
     """
     if _is_gemini_3_plus(model_name):
-        return {"thinking_level": "high" if extended else "low", "include_thoughts": True}
-    return {"thinking_budget": -1 if extended else 1024, "include_thoughts": True}
+        return {"thinking_level": "low", "include_thoughts": True}
+    return {"thinking_budget": 1024, "include_thoughts": True}
 
 
 def _build_raw_models(
     model: str | None = None, legs: str = "all", streaming: bool = False,
-    thinking: bool = False, extended_thinking: bool = False,
+    thinking: bool = False,
 ) -> list[tuple]:
     """
     One raw model per Gemini key, then Groq — list order is fallback order.
@@ -191,8 +203,7 @@ def _build_raw_models(
     `thinking`: when True, each Gemini leg gets Gemini's native thinking enabled
     (see _thinking_kwargs) — default False so every existing caller (journey
     planner, writer_provider_router, retrieval_planner, etc.) is unaffected;
-    only chat_agent.py opts in. `extended_thinking` selects the deeper budget/
-    level within that (ignored when thinking=False).
+    only chat_agent.py opts in.
     """
     pairs = []
 
@@ -209,7 +220,7 @@ def _build_raw_models(
                 streaming=streaming,
             )
             if thinking:
-                gem_kwargs.update(_thinking_kwargs(model_name, extended_thinking))
+                gem_kwargs.update(_thinking_kwargs(model_name))
             gem_model = ChatGoogleGenerativeAI(**gem_kwargs)
             # ChatGoogleGenerativeAI catches google.genai.errors.ClientError internally
             # and re-raises ChatGoogleGenerativeAIError (chained via `from e`) — the raw
@@ -374,37 +385,52 @@ def get_structured_chat_model(schema, model: str | None = None, legs: str = "all
 # existing caller. _build_pooled_leg() below is a smaller, separate
 # leg-builder for an arbitrary (provider, model_name, key) triple — accepting
 # a little duplication of the kwargs dict over risking any change to the
-# proven chain above. streaming/thinking/extended_thinking kwargs mirror
-# _build_raw_models()'s signature so a task-routed leg behaves identically
-# (real per-token deltas, Gemini native thinking) to the default chain's legs.
+# proven chain above. streaming/thinking kwargs mirror _build_raw_models()'s
+# signature so a task-routed leg behaves identically (real per-token deltas,
+# Gemini native thinking) to the default chain's legs.
 
 def _keys_for_provider(provider: str) -> list[str]:
     if provider == "gemini":
         return _gemini_keys()
     if provider == "groq":
         return _groq_keys()
+    if provider == "openrouter":
+        return _openrouter_keys()
     raise ValueError(f"Unknown provider {provider!r}")
 
 
 def _build_pooled_leg(
     provider: str, model_name: str, key: str, *,
-    streaming: bool = False, thinking: bool = False, extended_thinking: bool = False,
+    streaming: bool = False, thinking: bool = False,
+    max_tokens: int | None = None,
 ) -> tuple:
-    """One (model_instance, retry_exception_types) leg for a single provider/model/key."""
+    """One (model_instance, retry_exception_types) leg for a single provider/model/key.
+
+    `max_tokens`: per-call output ceiling override. None (default) leaves every
+    provider's own implicit default untouched — unchanged behavior for every
+    existing caller. Only chat_router.py's classifier passes an explicit value
+    (its structured decision is a handful of short fields; the provider default
+    is a generic large-completion ceiling with no relation to that output size).
+    """
     if provider == "gemini":
         gem_kwargs = dict(
             model=model_name, api_key=key, temperature=_TEMPERATURE,
             max_retries=0, streaming=streaming,
         )
         if thinking:
-            gem_kwargs.update(_thinking_kwargs(model_name, extended_thinking))
+            gem_kwargs.update(_thinking_kwargs(model_name))
+        if max_tokens is not None:
+            gem_kwargs["max_output_tokens"] = max_tokens
         model = ChatGoogleGenerativeAI(**gem_kwargs)
         return model, (ChatGoogleGenerativeAIError, GeminiClientError)
     if provider == "groq":
-        model = ChatGroq(
+        groq_kwargs = dict(
             model=model_name, api_key=key, temperature=_TEMPERATURE,
             max_retries=0, streaming=streaming,
         )
+        if max_tokens is not None:
+            groq_kwargs["max_tokens"] = max_tokens
+        model = ChatGroq(**groq_kwargs)
         # groq.BadRequestError: confirmed live (Chat-R4 recon) that small/fast
         # Groq models occasionally stringify a boolean in a structured-output
         # tool call ("false" not false) — Groq's own server-side schema
@@ -414,12 +440,30 @@ def _build_pooled_leg(
         # attempt instead of paying for a fallback leg that (also confirmed
         # live) classifies less reliably for this task.
         return model, (GroqRateLimitError, GroqBadRequestError)
+    if provider == "openrouter":
+        # openrouter_api_key/openrouter_api_base are ChatOpenRouter's real
+        # per-instance fields (confirmed via model_fields introspection —
+        # langchain-openrouter, not the older ChatOpenAI+base_url pattern).
+        # Exceptions propagate UNWRAPPED from the raw `openrouter` SDK
+        # (confirmed live: bad model -> BadRequestResponseError, bad key ->
+        # UnauthorizedResponseError, both raw openrouter.errors types, no
+        # LangChain-side wrapper) — TooManyRequestsResponseError is that
+        # same raw SDK's real 429 class.
+        or_kwargs = dict(
+            model=model_name, openrouter_api_key=key, temperature=_TEMPERATURE,
+            max_retries=0, streaming=streaming,
+        )
+        if max_tokens is not None:
+            or_kwargs["max_tokens"] = max_tokens
+        model = ChatOpenRouter(**or_kwargs)
+        return model, (TooManyRequestsResponseError,)
     raise ValueError(f"Unknown provider {provider!r}")
 
 
 def build_pooled_legs(
     model_priority_list: list[tuple[str, str]], *,
-    streaming: bool = False, thinking: bool = False, extended_thinking: bool = False,
+    streaming: bool = False, thinking: bool = False,
+    max_tokens: int | None = None,
 ) -> list[tuple]:
     """
     Flatten a (provider, model_name) priority list (see model_priority.
@@ -428,13 +472,17 @@ def build_pooled_legs(
     order, before the next model in the list contributes any legs. Each leg
     still gets its own retry budget via _with_retry() — a model is only
     "dropped" once every one of its keys has exhausted retries.
+
+    `max_tokens`: see _build_pooled_leg — None (default) is a no-op for every
+    caller except chat_router.py's classifier.
     """
     legs = []
     for provider, model_name in model_priority_list:
         for key in _keys_for_provider(provider):
             legs.append(_build_pooled_leg(
                 provider, model_name, key,
-                streaming=streaming, thinking=thinking, extended_thinking=extended_thinking,
+                streaming=streaming, thinking=thinking,
+                max_tokens=max_tokens,
             ))
     return legs
 
@@ -459,11 +507,66 @@ def get_chat_model_for_task(task_type: str):
 _GROQ_BAD_REQUEST_RETRY_ATTEMPTS = 2  # confirmed live (Chat-R4 verify), see below
 
 
-def get_structured_chat_model_for_task(schema, task_type: str, *, streaming: bool = False):
+def _build_structured_legs(
+    schema, task_type: str, *, streaming: bool = False, max_tokens: int | None = None,
+    include_raw: bool = False,
+) -> list:
+    """
+    Shared leg-construction for get_structured_chat_model_for_task() and
+    get_structured_chat_model_legs_for_task() — same per-leg schema binding
+    and Groq stringified-boolean retry treatment either way; only the return
+    shape (combined chain vs. individual legs) and with_structured_output's
+    include_raw differ between the two public callers.
+
+    `include_raw`: False (default, matches prior behavior) returns the parsed
+    schema instance directly and RAISES if the leg's completion doesn't yield
+    a valid tool-call for it. True returns {"raw", "parsed", "parsing_error"}
+    instead — parsed is None (not a raised exception) on that same failure.
+    Needed by get_structured_chat_model_legs_for_task (Phase W): confirmed
+    live that at least one model in this pool (nemotron-3-nano) regularly
+    completes successfully at the raw-HTTP level but doesn't emit a valid
+    tool-call — with include_raw=False that's indistinguishable from every
+    other call outcome once wrapped in .with_fallbacks() (no exception means
+    no fallback attempt, confirmed live: exactly one llm_call_log row per
+    such call), so a caller needing to actually detect and react to this
+    failure mode needs the raw dict, not the chain's all-or-nothing shape.
+    """
+    from .model_priority import get_model_priority_list
+
+    legs = build_pooled_legs(
+        get_model_priority_list(task_type), streaming=streaming, max_tokens=max_tokens,
+    )
+    built = []
+    for m, exc_types in legs:
+        # Captured before wrapping — every _build_pooled_leg model instance
+        # (ChatGoogleGenerativeAI/ChatGroq/ChatOpenRouter) sets .model to the
+        # real model_name; tag carried alongside so a caller can dedupe
+        # same-model-different-key legs (see get_structured_chat_model_legs_
+        # for_task) without introspecting the wrapped Runnable afterward.
+        provider = {"ChatGoogleGenerativeAI": "gemini", "ChatGroq": "groq", "ChatOpenRouter": "openrouter"}.get(
+            type(m).__name__, type(m).__name__,
+        )
+        model_name = getattr(m, "model", None)
+        structured = m.with_structured_output(schema, include_raw=include_raw)
+        if GroqBadRequestError in exc_types:
+            structured = structured.with_retry(
+                retry_if_exception_type=(GroqBadRequestError,),
+                wait_exponential_jitter=False,
+                stop_after_attempt=_GROQ_BAD_REQUEST_RETRY_ATTEMPTS,
+            )
+            exc_types = tuple(t for t in exc_types if t is not GroqBadRequestError)
+        if exc_types:
+            structured = _with_retry(structured, exc_types)
+        built.append((provider, model_name, structured))
+    return built
+
+
+def get_structured_chat_model_for_task(
+    schema, task_type: str, *, streaming: bool = False, max_tokens: int | None = None,
+):
     """
     Same as get_chat_model_for_task() but each leg bound to a typed schema —
-    mirrors get_structured_chat_model()'s pattern. Used by chat_router.py's
-    classifier.
+    mirrors get_structured_chat_model()'s pattern.
 
     Groq legs get a SHORTER, separate retry budget for GroqBadRequestError
     than for GroqRateLimitError, with NO exponential backoff: confirmed live
@@ -482,22 +585,44 @@ def get_structured_chat_model_for_task(schema, task_type: str, *, streaming: boo
     keeps the standard _RETRY_ATTEMPTS budget WITH backoff — genuinely
     transient and worth waiting out.
     """
-    from .model_priority import get_model_priority_list
-
-    legs = build_pooled_legs(get_model_priority_list(task_type), streaming=streaming)
-    built = []
-    for m, exc_types in legs:
-        structured = m.with_structured_output(schema)
-        if GroqBadRequestError in exc_types:
-            structured = structured.with_retry(
-                retry_if_exception_type=(GroqBadRequestError,),
-                wait_exponential_jitter=False,
-                stop_after_attempt=_GROQ_BAD_REQUEST_RETRY_ATTEMPTS,
-            )
-            exc_types = tuple(t for t in exc_types if t is not GroqBadRequestError)
-        if exc_types:
-            structured = _with_retry(structured, exc_types)
-        built.append(structured)
+    built = [leg for _, _, leg in _build_structured_legs(schema, task_type, streaming=streaming, max_tokens=max_tokens)]
     primary, *fallbacks = built
     chain = primary.with_fallbacks(fallbacks) if fallbacks else primary
     return chain.with_config(callbacks=[LLMCallLogger()])
+
+
+def get_structured_chat_model_legs_for_task(
+    schema, task_type: str, *, streaming: bool = False, max_tokens: int | None = None,
+) -> list[tuple[str, str, object]]:
+    """
+    Phase W: same legs as get_structured_chat_model_for_task, as an ordered
+    list of (provider, model_name, leg) instead of one combined
+    .with_fallbacks() chain — each leg already carries its own per-leg retry
+    for transient network errors (unchanged) and its own LLMCallLogger, and
+    each returns {"raw", "parsed", "parsing_error"} (include_raw=True) rather
+    than raising on a structurally-invalid completion. Lets a caller
+    (chat_router.py) genuinely retry a DIFFERENT MODEL specifically on that
+    failure mode, which .with_fallbacks() cannot react to (see
+    _build_structured_legs docstring).
+
+    Deduplicated to (provider, model_name) — first key kept per model,
+    subsequent keys of an already-seen model dropped. Confirmed live
+    (2026-08-25): OPENROUTER_API_KEY currently holds a 2-key pool, so the raw
+    leg list is [nemotron/key1, nemotron/key2, gpt-oss-20b/groq, gemini-lite,
+    ...] — a caller retrying "the next leg" positionally would silently
+    retry the SAME model that just failed on a different key, which does
+    nothing for a structural/generation-shape failure (the failure mode this
+    function exists for). Used by chat_router.py's classifier.
+    """
+    built = _build_structured_legs(
+        schema, task_type, streaming=streaming, max_tokens=max_tokens, include_raw=True,
+    )
+    deduped: list[tuple[str, str, object]] = []
+    seen_models: set[tuple[str, str]] = set()
+    for provider, model_name, leg in built:
+        key = (provider, model_name)
+        if key in seen_models:
+            continue
+        seen_models.add(key)
+        deduped.append((provider, model_name, leg.with_config(callbacks=[LLMCallLogger()])))
+    return deduped

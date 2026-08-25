@@ -130,9 +130,9 @@ def advance_stream_state(state: dict, chunk: str) -> dict:
     # --- Buffering phase ---
     state["buf"] += chunk
     buf = state["buf"]
-
-    # Check if buffer contains a complete [TITLE: ...] marker
     stripped = buf.lstrip()
+
+    # Case 2: the full "[TITLE:" marker has arrived — look for the closing "]".
     if stripped.startswith(_TITLE_START):
         if "]" in stripped:
             # Complete title found — extract and switch to passthrough
@@ -151,11 +151,34 @@ def advance_stream_state(state: dict, chunk: str) -> dict:
                 "title":   title,
                 "phase":   "passthrough",
             }
-        # Title marker started but not yet closed — keep buffering
-        if len(buf) < _BUFFER_LIMIT:
-            return {"forward": None, "title": None, "phase": "buffering"}
+        # Marker opened but not yet closed — keep buffering (bounded below).
+        keep_buffering = True
+    else:
+        # Case 1: not the full marker yet, but everything seen so far is still
+        # a valid, unambiguous prefix of "[TITLE:" (including the empty/
+        # whitespace-only case) — genuinely not enough characters to know
+        # either way. Providers that stream token-by-token (real example:
+        # OpenRouter/Nemotron's real first chunk for this exact prompt is
+        # "\n[T" — 3 chars) hit this on nearly every first-turn call; Gemini's
+        # first chunk usually already contains the whole marker, landing
+        # straight in case 2 above instead. Keep buffering either way — this
+        # is the case the old code got wrong (it only ever checked
+        # stripped.startswith(_TITLE_START) in full, so a genuine prefix like
+        # "[T" read as "doesn't start with [TITLE:" and flushed immediately,
+        # with no way back once in passthrough).
+        #
+        # Case 3: buf has DIVERGED from "[TITLE:" at some character — it can
+        # never become the marker no matter what arrives next (e.g. a normal
+        # response starting "[Link text](url)" diverges at the 2nd character,
+        # 'L' != 'T'). Flush immediately below, same as before — this is what
+        # keeps a genuinely non-title response from waiting on _BUFFER_LIMIT.
+        keep_buffering = len(stripped) < len(_TITLE_START) and _TITLE_START.startswith(stripped)
 
-    # Buffer too large or doesn't start with [TITLE: — give up and flush
+    if keep_buffering and len(buf) < _BUFFER_LIMIT:
+        return {"forward": None, "title": None, "phase": "buffering"}
+
+    # Buffer too large (marker opened but never closed / never resolved
+    # within the limit) or genuinely diverged — give up and flush raw.
     state["phase"] = "passthrough"
     state["buf"]   = ""
     return {"forward": buf, "title": None, "phase": "passthrough"}
@@ -368,6 +391,35 @@ def set_session_conversation_mode(session_id: str, mode: str) -> None:
             )
     except Exception:
         logger.debug("[title] set_session_conversation_mode failed for %r", session_id)
+
+
+def get_session_crisis_expiry(session_id: str) -> int | None:
+    """Return the stored crisis_expires_at_turn for a session, or None (no active window)."""
+    try:
+        from ..utils.db import get_connection
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT crisis_expires_at_turn FROM chat_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return row["crisis_expires_at_turn"] if row else None
+    except Exception:
+        return None
+
+
+def set_session_crisis_expiry(session_id: str, expires_at_turn: int) -> None:
+    """Persist crisis_expires_at_turn for a session; creates the row if absent."""
+    try:
+        from ..utils.db import get_connection
+        with get_connection() as conn:
+            conn.execute(
+                """INSERT INTO chat_sessions (session_id, crisis_expires_at_turn)
+                   VALUES (?, ?)
+                   ON CONFLICT(session_id) DO UPDATE SET crisis_expires_at_turn = excluded.crisis_expires_at_turn""",
+                (session_id, expires_at_turn),
+            )
+    except Exception:
+        logger.debug("[title] set_session_crisis_expiry failed for %r", session_id)
 
 
 def list_sessions_with_titles(limit: int = 20, user_id: str | None = None) -> list[dict]:

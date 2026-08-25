@@ -297,7 +297,7 @@ def build_tension_directive(
     intent_profile : Output of semantic_intent_service.score_intents().
     domain         : Classified domain name (e.g. "Pharmaceutical", "AI").
     conv_state     : Current conversation knowledge state dict (optional).
-    mode           : Chat mode — "normal", "layman", "web_search", "deep_research".
+    mode           : Chat mode — "normal", "layman", "web_search".
     """
     conv_state = conv_state or {}
 
@@ -322,7 +322,7 @@ def build_tension_directive(
         parts.append(hook)
 
     # For structured mode: shorter version — framing rules + open loop only
-    if mode in ("web_search", "deep_research"):
+    if mode == "web_search":
         parts.append(_build_short_version(types, domain_key))
         return "\n\n".join(p for p in parts if p)
 

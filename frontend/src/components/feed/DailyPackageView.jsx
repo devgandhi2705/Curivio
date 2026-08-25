@@ -419,7 +419,6 @@ function PackageContent({
       onMarkRead:         onMarkRead   ? () => onMarkRead(pkg.id, ak, card.title || "") : undefined,
       onMarkUnread:       onMarkUnread ? () => onMarkUnread(pkg.id, ak)                 : undefined,
       onAskAbout:         onOpenInChat ? (c) => onOpenInChat(c, "ask_about")         : undefined,
-      onDeepResearch:     onOpenInChat ? (c) => onOpenInChat(c, "deep_research")     : undefined,
       onExplainSimply:    onOpenInChat ? (c) => onOpenInChat(c, "explain_simply")    : undefined,
       relatedChats:       relatedChatsMap?.get(ak) ?? null,
       onLoadRelatedChats: onLoadRelatedChats ? () => onLoadRelatedChats(pkg.id, ak)    : undefined,

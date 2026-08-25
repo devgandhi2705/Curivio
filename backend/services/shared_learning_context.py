@@ -1,9 +1,9 @@
 """
 Shared Learning Context — Phase 4.6
 
-Unifies Feed, Chat, Explain Simply, Web Search, and Deep Research by
-assembling a single, mode-aware context object from the Phase 4 knowledge
-stack and injecting it into every mode's system prompt.
+Unifies Feed, Chat, Explain Simply, and Web Search by assembling a single,
+mode-aware context object from the Phase 4 knowledge stack and injecting it
+into every mode's system prompt.
 
 What it provides
 ----------------
@@ -19,7 +19,6 @@ What it provides
 Mode-aware formatting
 ---------------------
   chat        : "Build on what they know — don't re-explain FDA."
-  deep_research: "These are foundations. Start from here, go further."
   layman      : "Use these as analogy anchors."
   web_search  : "Frame results to build on this background."
   feed        : Compact reminder of what was previously taught.
@@ -161,35 +160,7 @@ def format_for_mode(ctx: SharedLearningContext, mode: str) -> str:
     known_str = ", ".join(ctx.known_concepts[:6]) if ctx.known_concepts else "none yet"
     domains_str = ", ".join(ctx.active_domains) if ctx.active_domains else "not yet identified"
 
-    if mode == "deep_research":
-        lines = [
-            "LEARNER PRIOR KNOWLEDGE  <- build on this, do not re-explain",
-            f"Stage: {ctx.progression_stage.upper()}  |  Coverage: {ctx.coverage_pct}%",
-            f"Domains mapped: {domains_str}",
-            "",
-            f"Already understands (treat as foundations, not introductions):",
-            _fmt_list(ctx.known_concepts[:6]) or "  (first session — no prior graph)",
-        ]
-        if ctx.top_gaps:
-            lines += [
-                "",
-                "Learning gaps to bridge (the research should help close these):",
-                _fmt_list(ctx.top_gaps[:4]),
-            ]
-        if ctx.next_concepts:
-            lines += [
-                "",
-                f"What they are ready to learn next: {', '.join(ctx.next_concepts[:3])}",
-            ]
-        lines += [
-            "",
-            "MANDATE: Start from where the learner is. Do not re-introduce concepts they know. "
-            "Go directly to the next layer — mechanisms, implications, and what the standard "
-            "framing misses. The research should feel like Day 2, not Day 1.",
-        ]
-        return "\n".join(lines)
-
-    elif mode == "layman":
+    if mode == "layman":
         if not ctx.known_concepts:
             return ""
         lines = [

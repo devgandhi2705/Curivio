@@ -8,6 +8,7 @@ import {
   changePassword as apiChangePassword,
   deleteAccount as apiDeleteAccount,
   verifyCurrentPassword as apiVerifyPassword,
+  logoutRequest,
   getMe,
   getStoredUser,
   getToken,
@@ -122,7 +123,16 @@ export function AuthProvider({ children }) {
     return u
   }, [])
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Best-effort server-side revocation: the token is blocklisted by jti so
+    // it can't be replayed after logout. Local session is cleared regardless
+    // of whether the request succeeds — a network failure here must never
+    // trap the user in a logged-in UI.
+    try {
+      await logoutRequest()
+    } catch {
+      // ignore — clearing local state below is what actually logs the user out client-side
+    }
     clearSession()
     setUser(null)
   }, [])

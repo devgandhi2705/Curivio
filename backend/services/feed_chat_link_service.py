@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-_INTERACTION_TYPES = {"ask_about", "continue_research", "deep_research"}
+_INTERACTION_TYPES = {"ask_about", "continue_research"}
 
 
 def _now() -> str:

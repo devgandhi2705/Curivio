@@ -86,6 +86,23 @@ export function cancelStream(sessionId) {
   }
 }
 
+// Phase K — the browser's IANA timezone, the only locale signal this app has.
+// Sent on every turn, never only on sensitive ones: a field that appeared just
+// as someone said something alarming would itself be a tell, and the backend
+// needs it already in hand by the time it matters. Purely passive — no
+// geolocation prompt, no IP lookup, no third-party call — and the backend
+// resolves it against tzdb's own zone table (see crisis_support_service.py),
+// so an unrecognised value degrades to "we don't know", never to a guess.
+// try/catch because a throw here would take the whole chat request down; an
+// undefined result just means the backend treats the location as unknown.
+function clientTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+  } catch {
+    return ""
+  }
+}
+
 /**
  * Stream an AI response, calling callbacks as data arrives.
  * Returns an abort function; call it to cancel the stream early.
@@ -97,9 +114,6 @@ export function cancelStream(sessionId) {
  * @param {function} callbacks.onThinking    - called with (text, seq, blockId) for each reasoning delta (Chat-6; ordering Chat-R10d)
  * @param {function} callbacks.onThinkingGap - called once with an honest note when reasoning ran
  *                                              but can't stream on this turn's model (Chat-6 followup)
- * @param {function} callbacks.onExtendedThinkingGap - called once when extended_thinking was
- *                                              requested but the leg answering has no reasoning
- *                                              step at all — nothing ran (Chat-R5b)
  * @param {function} callbacks.onCodeExecutionGap - called once when task_type=="coding" but the
  *                                              leg answering can't run code_execution (Chat-R5b)
  * @param {function} callbacks.onCode        - called with (source, language) when Gemini executes code (Chat-7)
@@ -110,10 +124,9 @@ export function cancelStream(sessionId) {
  *                                              updates; tool/query/sources are only set on the two tool-derived
  *                                              lines (tool_start has query, tool_end has sources — Chat-R10e)
  * @param {function} callbacks.onTitle       - called with the auto-generated session title
- * @param {boolean}  extendedThinking        - "think harder" toggle (Chat-6), off by default
  * @returns {function} abort
  */
-export function sendMessageStream(sessionId, message, { onChunk, onThinking, onThinkingGap, onExtendedThinkingGap, onCodeExecutionGap, onCode, onCodeOutput, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null, attachments = null, extendedThinking = false) {
+export function sendMessageStream(sessionId, message, { onChunk, onThinking, onThinkingGap, onCodeExecutionGap, onCode, onCodeOutput, onDone, onError, onStatus, onTitle }, chatMode = "normal", feedContext = null, attachments = null) {
   if (USE_MOCK) {
     ;(async () => {
       const mock = selectMockResponse(message, sessionId)
@@ -133,8 +146,9 @@ export function sendMessageStream(sessionId, message, { onChunk, onThinking, onT
   const controller = new AbortController()
   _streamControllers.set(sessionId, controller)
 
-  // Deep research can take up to ~2.5 min; normal/web-search times out at 90 s
-  const TIMEOUT_MS = chatMode === "deep_research" ? 150_000 : 90_000
+  const tz = clientTimezone()
+
+  const TIMEOUT_MS = 90_000
   const timeoutId = setTimeout(() => {
     controller.abort()
     _streamControllers.delete(sessionId)
@@ -163,7 +177,7 @@ export function sendMessageStream(sessionId, message, { onChunk, onThinking, onT
           message,
           topic_hint: null,
           chat_mode: chatMode,
-          extended_thinking: extendedThinking,
+          ...(tz ? { client_timezone: tz } : {}),
           ...(feedContext ? { feed_context: feedContext } : {}),
           ...(attachments?.length ? { attachments } : {}),
         }),
@@ -210,7 +224,6 @@ export function sendMessageStream(sessionId, message, { onChunk, onThinking, onT
             if      (obj.t === "chunk")        onChunk(obj.v, obj.seq, obj.block_id)
             else if (obj.t === "thinking")     onThinking?.(obj.v, obj.seq, obj.block_id)
             else if (obj.t === "thinking_gap") onThinkingGap?.(obj.v)
-            else if (obj.t === "extended_thinking_gap") onExtendedThinkingGap?.(obj.v)
             else if (obj.t === "code_execution_gap")    onCodeExecutionGap?.(obj.v)
             else if (obj.t === "code")         onCode?.(obj.v, obj.language)
             else if (obj.t === "code_output")  onCodeOutput?.(obj.v, obj.success)

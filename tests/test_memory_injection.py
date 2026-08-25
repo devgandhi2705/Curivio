@@ -544,7 +544,7 @@ class TestExplorationBreadthPrompt:
             },
             "preference_snapshot": {},
         }
-        prompt = build_system_prompt(context, mode="deep_research")
+        prompt = build_system_prompt(context, mode="web_search")
         assert "LoRA" in prompt
 
 
@@ -621,7 +621,7 @@ class TestPreferenceSnapshotPrompt:
                 "engagement_level": "high",
             },
         }
-        prompt = build_system_prompt(context, mode="deep_research")
+        prompt = build_system_prompt(context, mode="web_search")
         assert "RAG Pipelines" in prompt
         assert "intermediate" in prompt
 

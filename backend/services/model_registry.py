@@ -126,6 +126,37 @@ _REGISTRY: dict[str, ModelConfig] = {
         },
         default_provider_tier = "on_demand",
     ),
+    # Phase F: real replacements for the two models above, which are gone
+    # from Groq's live catalog — context_window/tpm both confirmed via a
+    # real live call (GET /v1/models for context_window=131072;
+    # x-ratelimit-limit-tokens response header for tpm=8000 on this key's
+    # on_demand tier — not carried over from the old entries' numbers).
+    "openai/gpt-oss-120b": ModelConfig(
+        model_name            = "openai/gpt-oss-120b",
+        provider              = "groq",
+        context_window        = 131_072,
+        safe_utilization      = 0.80,
+        output_reserve        = 8_000,
+        safety_buffer         = 2_000,
+        tier_limits           = {
+            "on_demand": {"tpm": 8_000},
+            "dev":       {"tpm": 500_000},
+        },
+        default_provider_tier = "on_demand",
+    ),
+    "openai/gpt-oss-20b": ModelConfig(
+        model_name            = "openai/gpt-oss-20b",
+        provider              = "groq",
+        context_window        = 131_072,
+        safe_utilization      = 0.80,
+        output_reserve        = 8_000,
+        safety_buffer         = 2_000,
+        tier_limits           = {
+            "on_demand": {"tpm": 8_000},
+            "dev":       {"tpm": 500_000},
+        },
+        default_provider_tier = "on_demand",
+    ),
     "gemma2-9b-it": ModelConfig(
         model_name            = "gemma2-9b-it",
         provider              = "groq",
