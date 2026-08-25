@@ -22,10 +22,9 @@ function useIsMobile() {
 }
 
 /**
- * Positioned popover shell — desktop/tablet: a compact floating popover
- * clamped to the viewport near the selection rect. Mobile: docks to a
- * bottom sheet (same content/behavior, different placement). Outside-click
- * and Escape both dismiss. Content is passed in as children.
+ * Positioned popover shell — a compact floating popover clamped to the
+ * viewport near the selection rect. Outside-click and Escape both dismiss.
+ * Content is passed in as children.
  */
 export default function UnpackPopover({ rect, onClose, children }) {
   const ref = useRef(null)
@@ -34,7 +33,7 @@ export default function UnpackPopover({ rect, onClose, children }) {
 
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el || !rect || isMobile) return
+    if (!el || !rect) return
 
     // Content height changes as the mode switches (menu -> explain/translate)
     // and as the explain result streams in. A ResizeObserver repositions in
@@ -76,9 +75,7 @@ export default function UnpackPopover({ rect, onClose, children }) {
     }
   }, [onClose])
 
-  const positionStyle = isMobile
-    ? { left: 0, right: 0, bottom: 0, opacity: 1 }
-    : { top: style.top, left: style.left, width: POPOVER_WIDTH, opacity: style.opacity }
+  const positionStyle = { top: style.top, left: style.left, width: POPOVER_WIDTH, opacity: style.opacity }
 
   return createPortal(
     <div
@@ -87,7 +84,7 @@ export default function UnpackPopover({ rect, onClose, children }) {
       style={{ position: "fixed", ...positionStyle, zIndex: 1000 }}
       className={[
         "bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden transition-opacity duration-100",
-        isMobile ? "rounded-t-2xl pb-safe" : "rounded-xl",
+        "rounded-xl",
       ].join(" ")}
     >
       <div className="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between">
