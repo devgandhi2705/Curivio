@@ -9,6 +9,7 @@ Usage:
 import logging
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,21 @@ from ..services.feed_v2.schema import run_v2_migrations
 # Default falls back to the project root data/ directory for local development.
 _db_path_env = os.getenv("DB_PATH", "")
 DB_PATH = Path(_db_path_env) if _db_path_env else Path(__file__).resolve().parents[2] / "data" / "curivio.db"
+
+# Seen on HF Spaces: a rolling deploy briefly runs two containers against the
+# same persistent /data volume, both racing CREATE INDEX IF NOT EXISTS on
+# startup — SQLite ends up with a duplicate catalog entry, which then fails
+# every future connection with "malformed database schema". There's no
+# recovering that in place, so quarantine the file and rebuild fresh.
+_CORRUPTION_MARKERS = ("malformed database schema", "database disk image is malformed")
+
+
+def _quarantine_corrupt_db() -> None:
+    if DB_PATH.exists():
+        backup = DB_PATH.with_name(f"{DB_PATH.stem}.corrupt-{int(time.time())}{DB_PATH.suffix}")
+        DB_PATH.rename(backup)
+        logger.error("[db] %s had a malformed schema — quarantined to %s, rebuilding fresh", DB_PATH, backup)
+    init_db()
 
 
 def init_db() -> None:
@@ -97,7 +113,16 @@ def get_connection():
     """Yield a sqlite3 connection that auto-commits on success and rolls back on error."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row          # rows accessible as dicts
-    conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
+    try:
+        conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
+    except sqlite3.DatabaseError as exc:
+        if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
+            raise
+        conn.close()
+        _quarantine_corrupt_db()
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.enable_load_extension(True)        # extensions load per-connection, not globally
     sqlite_vec.load(conn)
