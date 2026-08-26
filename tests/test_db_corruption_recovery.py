@@ -5,6 +5,7 @@ with "malformed database schema" at the very first PRAGMA. get_connection()
 must quarantine the broken file and transparently rebuild a fresh one.
 """
 import sqlite3
+import threading
 
 import backend.utils.db as db
 
@@ -47,6 +48,39 @@ def test_get_connection_quarantines_and_rebuilds(tmp_path, monkeypatch):
     quarantined = list(tmp_path.glob("curivio.corrupt-*.db"))
     assert len(quarantined) == 1
     assert db_path.exists()  # fresh file rebuilt in its place
+
+
+def test_concurrent_requests_dont_stomp_each_others_rebuild(tmp_path, monkeypatch):
+    """
+    Reproduces the prod regression: FastAPI runs sync deps in a threadpool
+    even under --workers 1, so several requests hit the corrupted db at once.
+    Without the recovery lock, each thread quarantined independently and the
+    last one to finish left a fresh-but-empty db mid-rebuild ("no such table:
+    users") behind two-plus orphaned .corrupt- files instead of one.
+    """
+    db_path = tmp_path / "curivio.db"
+    _corrupt_db_with_duplicate_index(db_path)
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+
+    barrier = threading.Barrier(8)
+    errors = []
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            with db.get_connection() as conn:
+                conn.execute("SELECT COUNT(*) FROM users")
+        except Exception as exc:  # noqa: BLE001 - collecting for the assert below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert errors == []
+    assert len(list(tmp_path.glob("curivio.corrupt-*.db"))) == 1
 
 
 if __name__ == "__main__":

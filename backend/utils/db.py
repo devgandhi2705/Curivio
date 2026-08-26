@@ -9,6 +9,7 @@ Usage:
 import logging
 import os
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -37,13 +38,30 @@ DB_PATH = Path(_db_path_env) if _db_path_env else Path(__file__).resolve().paren
 # recovering that in place, so quarantine the file and rebuild fresh.
 _CORRUPTION_MARKERS = ("malformed database schema", "database disk image is malformed")
 
+# FastAPI runs sync route dependencies in a threadpool even under --workers 1,
+# so concurrent requests can all hit the corruption at once. Without this lock
+# each thread quarantined and rebuilt independently, stomping on whichever
+# rebuild was still mid-flight and leaving a fresh-but-empty db behind.
+_recovery_lock = threading.Lock()
 
-def _quarantine_corrupt_db() -> None:
-    if DB_PATH.exists():
+
+def _recover_from_corruption() -> None:
+    with _recovery_lock:
+        # Another thread may have already fixed it while we waited for the lock.
+        probe = sqlite3.connect(DB_PATH)
+        try:
+            probe.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.DatabaseError as exc:
+            if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
+                raise
+        finally:
+            probe.close()
+
         backup = DB_PATH.with_name(f"{DB_PATH.stem}.corrupt-{int(time.time())}{DB_PATH.suffix}")
         DB_PATH.rename(backup)
         logger.error("[db] %s had a malformed schema — quarantined to %s, rebuilding fresh", DB_PATH, backup)
-    init_db()
+        init_db()
 
 
 def init_db() -> None:
@@ -119,7 +137,7 @@ def get_connection():
         if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
             raise
         conn.close()
-        _quarantine_corrupt_db()
+        _recover_from_corruption()
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
