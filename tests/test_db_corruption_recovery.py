@@ -4,8 +4,12 @@ sqlite_master has a duplicate index entry, which makes every connection fail
 with "malformed database schema" at the very first PRAGMA. get_connection()
 must quarantine the broken file and transparently rebuild a fresh one.
 """
+import multiprocessing
+import os
 import sqlite3
 import threading
+
+import pytest
 
 import backend.utils.db as db
 
@@ -80,6 +84,39 @@ def test_concurrent_requests_dont_stomp_each_others_rebuild(tmp_path, monkeypatc
         t.join(timeout=10)
 
     assert errors == []
+    assert len(list(tmp_path.glob("curivio.corrupt-*.db"))) == 1
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX-only; protects the Docker/Linux deploy target")
+def test_cross_process_recovery_is_mutually_exclusive(tmp_path, monkeypatch):
+    """
+    The threading.Lock above only serializes threads in one process. Prod was
+    hit by a second *process* (an old container still shutting down, or a
+    stuck restart loop) racing the same rebuild — that needs an OS-level
+    lock, which only a real multi-process test can exercise.
+    """
+    db_path = tmp_path / "curivio.db"
+    _corrupt_db_with_duplicate_index(db_path)
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+
+    def _worker(q):
+        try:
+            with db.get_connection() as conn:
+                conn.execute("SELECT COUNT(*) FROM users")
+            q.put("ok")
+        except Exception as exc:  # noqa: BLE001 - collecting for the assert below
+            q.put(f"error: {exc}")
+
+    ctx = multiprocessing.get_context("fork")  # fork inherits the monkeypatched DB_PATH directly
+    q = ctx.Queue()
+    procs = [ctx.Process(target=_worker, args=(q,)) for _ in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=15)
+
+    results = [q.get(timeout=5) for _ in procs]
+    assert results == ["ok"] * len(procs)
     assert len(list(tmp_path.glob("curivio.corrupt-*.db"))) == 1
 
 

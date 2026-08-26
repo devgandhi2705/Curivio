@@ -44,10 +44,55 @@ _CORRUPTION_MARKERS = ("malformed database schema", "database disk image is malf
 # rebuild was still mid-flight and leaving a fresh-but-empty db behind.
 _recovery_lock = threading.Lock()
 
+# The in-process lock above doesn't stop a *second OS process* — e.g. an old
+# HF Spaces container still shutting down, or a stuck restart loop from an
+# earlier crashed deploy — from racing the same CREATE INDEX IF NOT EXISTS
+# statements against the same persistent /data volume. That race is what
+# corrupted sqlite_master in the first place. flock() is POSIX-only; local
+# Windows dev only ever has one process touching the db, so it's a no-op
+# there. Reentrant per-thread (via depth) because init_db() calls
+# get_connection(), which can itself call back into the recovery path that
+# also wants this same lock.
+_flock_state = threading.local()
+
+
+@contextmanager
+def _cross_process_lock():
+    if os.name != "posix":
+        yield
+        return
+    depth = getattr(_flock_state, "depth", 0)
+    if depth > 0:
+        _flock_state.depth = depth + 1
+        try:
+            yield
+        finally:
+            _flock_state.depth = depth
+        return
+
+    import fcntl
+    lock_path = DB_PATH.with_name(DB_PATH.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "w")
+    _flock_state.depth = 1
+    try:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except OSError:
+            logger.warning("[db] could not acquire cross-process db lock — proceeding unlocked", exc_info=True)
+        yield
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        fh.close()
+        _flock_state.depth = 0
+
 
 def _recover_from_corruption() -> None:
-    with _recovery_lock:
-        # Another thread may have already fixed it while we waited for the lock.
+    with _recovery_lock, _cross_process_lock():
+        # Another thread/process may have already fixed it while we waited.
         probe = sqlite3.connect(DB_PATH)
         try:
             probe.execute("PRAGMA journal_mode=WAL")
@@ -59,13 +104,33 @@ def _recover_from_corruption() -> None:
             probe.close()
 
         backup = DB_PATH.with_name(f"{DB_PATH.stem}.corrupt-{int(time.time())}{DB_PATH.suffix}")
-        DB_PATH.rename(backup)
+        _rename_with_retry(DB_PATH, backup)
         logger.error("[db] %s had a malformed schema — quarantined to %s, rebuilding fresh", DB_PATH, backup)
-        init_db()
+        _init_db_impl()
+
+
+def _rename_with_retry(src: Path, dst: Path, attempts: int = 5) -> None:
+    # Windows can transiently refuse to rename a just-closed WAL sqlite file
+    # until its -shm/-wal sidecar handles fully release; POSIX rename has no
+    # such delay. A few short retries absorb that lag rather than crashing.
+    for i in range(attempts):
+        try:
+            src.rename(dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
 
 
 def init_db() -> None:
-    """Create all tables and run additive migrations."""
+    """Create all tables and run additive migrations, holding the cross-process
+    lock so a second container/process can't race the same DDL."""
+    with _cross_process_lock():
+        _init_db_impl()
+
+
+def _init_db_impl() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
         for statement in ALL_TABLES:
@@ -129,22 +194,28 @@ def build_set_clause(keys) -> str:
 @contextmanager
 def get_connection():
     """Yield a sqlite3 connection that auto-commits on success and rolls back on error."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row          # rows accessible as dicts
-    try:
-        conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
-    except sqlite3.DatabaseError as exc:
-        if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
-            raise
-        conn.close()
-        _recover_from_corruption()
+    # Cross-process lock wraps only the connect + schema handshake below, not
+    # the query work after yield — otherwise every request would serialize on
+    # one global lock instead of just the moment that's actually vulnerable
+    # to a concurrent rebuild (a plain connect racing a mid-flight recovery
+    # in another process/thread and seeing a half-built db).
+    with _cross_process_lock():
         conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.enable_load_extension(True)        # extensions load per-connection, not globally
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+        conn.row_factory = sqlite3.Row          # rows accessible as dicts
+        try:
+            conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
+        except sqlite3.DatabaseError as exc:
+            if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
+                raise
+            conn.close()
+            _recover_from_corruption()
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.enable_load_extension(True)        # extensions load per-connection, not globally
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
     try:
         yield conn
         conn.commit()
