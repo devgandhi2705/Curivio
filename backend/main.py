@@ -211,6 +211,9 @@ async def generic_exception_handler(request, exc):
 from .routes.admin import router as admin_router
 app.include_router(admin_router)
 
+from .routes.db_recovery import router as db_recovery_router
+app.include_router(db_recovery_router)
+
 
 # --- Request models ---
 
