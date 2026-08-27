@@ -340,7 +340,10 @@ def _saver() -> SqliteSaver:
     get_connection stays untouched. Reads DB_PATH at call time so tests' monkeypatch
     of v2db.DB_PATH is honored."""
     conn = sqlite3.connect(str(v2db.DB_PATH), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
+    # DELETE, not WAL — see v2db.get_connection's comment: WAL doesn't work on
+    # HF Spaces' network-backed persistent volume and was corrupting this
+    # shared curivio.db file's schema catalog.
+    conn.execute("PRAGMA journal_mode=DELETE")
     return SqliteSaver(conn)
 
 

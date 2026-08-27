@@ -30,7 +30,11 @@ def get_connection():
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # DELETE, not WAL: WAL needs a memory-mapped -shm file shared between
+    # connections, which doesn't work on network-backed storage (HF Spaces'
+    # persistent /data volume) and was corrupting curivio.db's schema catalog.
+    # Matches backend/utils/db.py's get_connection — same shared file.
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)

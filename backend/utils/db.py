@@ -95,7 +95,7 @@ def _recover_from_corruption() -> None:
         # Another thread/process may have already fixed it while we waited.
         probe = sqlite3.connect(DB_PATH)
         try:
-            probe.execute("PRAGMA journal_mode=WAL")
+            probe.execute("PRAGMA journal_mode=DELETE")
             return
         except sqlite3.DatabaseError as exc:
             if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
@@ -203,7 +203,14 @@ def get_connection():
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row          # rows accessible as dicts
         try:
-            conn.execute("PRAGMA journal_mode=WAL") # safe for concurrent reads
+            # DELETE (rollback journal), not WAL: WAL needs a memory-mapped -shm
+            # file shared between connections, which SQLite's own docs say does
+            # not work on network-backed storage — HF Spaces' persistent /data
+            # volume is exactly that, and WAL is what caused the "malformed
+            # database schema" corruption to keep recurring hours after a clean
+            # rebuild, with no redeploy/second process involved. This is
+            # idempotent — a no-op once the on-disk file is already DELETE mode.
+            conn.execute("PRAGMA journal_mode=DELETE")
         except sqlite3.DatabaseError as exc:
             if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
                 raise
@@ -211,7 +218,7 @@ def get_connection():
             _recover_from_corruption()
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.enable_load_extension(True)        # extensions load per-connection, not globally
         sqlite_vec.load(conn)
