@@ -13,14 +13,18 @@ again. See tests/test_db_recovery.py for the repair technique verified
 against a manufactured version of the exact production corruption.
 """
 import hmac
-import shutil
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from ..services.auth_service import SECRET_KEY
+from ..services.backup_service import (
+    integrity_ok as _integrity_ok,
+    repair_copy as _repair_copy,
+    surrogate_pk_column as _surrogate_pk_column,
+    vec_table_prefixes as _vec_table_prefixes,
+)
 from ..utils.db import DB_PATH, get_connection
 
 router = APIRouter(prefix="/db-recovery", tags=["db-recovery"])
@@ -51,53 +55,6 @@ def list_backups(_: None = Depends(_require_secret)):
         {"filename": f.name, "size_bytes": f.stat().st_size, "mtime": f.stat().st_mtime}
         for f in files
     ]
-
-
-def _repair_copy(src: Path) -> tuple[Path, bool]:
-    """Copy src, delete duplicate sqlite_master catalog rows on the copy, and
-    return (repaired copy's path, integrity_ok). Never touches src itself.
-
-    Some backups have deeper damage than the one known corruption shape (a
-    few had raw btree page errors on top of it — likely from write attempts
-    that landed after the catalog duplicate but before the app crashed).
-    integrity_ok reflects that, but callers should still attempt to read
-    `users` directly: it's a tiny table created early, almost always on
-    completely different pages than whatever else is damaged."""
-    fd, tmp_name = tempfile.mkstemp(suffix=".db")
-    import os
-    os.close(fd)
-    tmp = Path(tmp_name)
-    shutil.copy2(src, tmp)
-
-    conn = sqlite3.connect(tmp)
-    try:
-        conn.execute("PRAGMA writable_schema=ON")
-        dup_names = [
-            r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master GROUP BY type, name HAVING COUNT(*) > 1"
-            ).fetchall()
-        ]
-        for name in dup_names:
-            rowids = [
-                r[0] for r in conn.execute(
-                    "SELECT rowid FROM sqlite_master WHERE name = ?", (name,)
-                ).fetchall()
-            ]
-            for rowid in rowids[1:]:  # keep the first, drop the rest
-                conn.execute("DELETE FROM sqlite_master WHERE rowid = ?", (rowid,))
-        conn.commit()
-        conn.execute("PRAGMA writable_schema=OFF")
-    finally:
-        conn.close()
-
-    check_conn = sqlite3.connect(tmp)
-    result = check_conn.execute("PRAGMA integrity_check").fetchall()
-    check_conn.close()
-    return tmp, _integrity_ok(result)
-
-
-def _integrity_ok(integrity_check_rows: list[tuple]) -> bool:
-    return integrity_check_rows == [("ok",)]
 
 
 def _read_users(path: Path) -> list[tuple]:
@@ -138,35 +95,6 @@ def inspect_backup(filename: str, _: None = Depends(_require_secret)):
         }
     finally:
         repaired.unlink(missing_ok=True)
-
-
-def _surrogate_pk_column(conn: sqlite3.Connection, table: str) -> str | None:
-    """The column name if `table` has a single-column INTEGER PRIMARY KEY
-    (SQLite's rowid alias, almost always paired with AUTOINCREMENT) — else
-    None. That id is meaningless outside its own database: two independently
-    created dbs both auto-assign 1 to their first row, so copying it verbatim
-    makes an unrelated live row with id=1 falsely "collide" with a backup row
-    that isn't actually a duplicate, silently dropping real data. Real keys
-    (users.user_id TEXT, etc.) aren't touched — only a single-column INTEGER
-    PK is ever a bare auto-assigned surrogate in this schema."""
-    pk_cols = [
-        (r[1], r[2]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall() if r[5] > 0
-    ]
-    if len(pk_cols) == 1 and pk_cols[0][1].upper() == "INTEGER":
-        return pk_cols[0][0]
-    return None
-
-
-def _vec_table_prefixes(conn: sqlite3.Connection) -> list[str]:
-    """Base names of any sqlite-vec virtual tables (vec0) — their shadow
-    tables share internal binary state that a naive per-table copy would
-    leave inconsistent. Embeddings are derived data (regenerable by
-    reprocessing documents), so recover-all skips anything under these
-    names rather than risk corrupting the live vector index."""
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE sql LIKE '%USING vec0%'"
-    ).fetchall()
-    return [r[0] for r in rows]
 
 
 def _ensure_recovery_log(conn: sqlite3.Connection) -> None:

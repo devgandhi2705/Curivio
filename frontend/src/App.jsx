@@ -16,6 +16,7 @@ import SyncStatus from './components/SyncStatus.jsx'
 import { runBackgroundSync } from './lib/backgroundSync.js'
 import { getToken } from './api/auth.js'
 import { checkIsAdmin } from './api/admin.js'
+import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -147,6 +148,92 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
           </svg>
         )}
       </button>
+    </div>
+  )
+}
+
+// ── DataLossSection ───────────────────────────────────────────────────────────
+// Lets a user report that their data is missing, so recovery starts from a real
+// record instead of a support message. The backend keeps one open request per
+// user, so re-submitting shows the existing one rather than queueing duplicates.
+function DataLossSection({ inputCls, btnPrimary }) {
+  const [description, setDescription] = useState("")
+  const [requests, setRequests] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState("")
+  const [err, setErr] = useState("")
+
+  useEffect(() => {
+    myDataLossRequests()
+      .then(d => setRequests(d.requests))
+      .catch(() => setRequests([]))
+  }, [])
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setBusy(true); setMsg(""); setErr("")
+    try {
+      const r = await raiseDataLossRequest(description.trim())
+      setMsg(r.duplicate
+        ? "You already have an open report — we're on it."
+        : "Reported. An admin will restore your data from the most recent backup.")
+      setDescription("")
+      const d = await myDataLossRequests()
+      setRequests(d.requests)
+    } catch (e2) {
+      setErr(e2.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const open = requests.find(r => r.status === "open")
+
+  return (
+    <div className="px-4 py-4 space-y-3">
+      <p className="text-xs text-slate-500">
+        Chats, projects or bookmarks missing? Report it and an admin can restore your
+        account from a backup. Nothing is deleted by a restore — it only puts data back.
+      </p>
+
+      {!open && (
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="What's missing? (e.g. all my chats from last week)"
+            className={`${inputCls} resize-none`}
+          />
+          <button type="submit" disabled={busy} className={btnPrimary}>
+            {busy ? "Reporting…" : "Report Missing Data"}
+          </button>
+        </form>
+      )}
+
+      {msg && <p className="text-xs text-emerald-400">{msg}</p>}
+      {err && <p className="text-xs text-red-400">{err}</p>}
+
+      {requests.length > 0 && (
+        <div className="space-y-2 pt-1">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">Your reports</p>
+          {requests.map(r => (
+            <div key={r.request_id} className="bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                  r.status === "open" ? "bg-amber-500/15 text-amber-400"
+                    : r.status === "resolved" ? "bg-emerald-500/15 text-emerald-400"
+                    : "bg-slate-700/40 text-slate-500"
+                }`}>{r.status}</span>
+                <span className="text-[10px] text-slate-600">{r.created_at?.slice(0, 10)}</span>
+              </div>
+              {r.description && <p className="text-xs text-slate-400 mt-1.5 break-words">{r.description}</p>}
+              {r.admin_note && <p className="text-xs text-slate-500 mt-1 italic">{r.admin_note}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -307,6 +394,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
   const SECTION_TITLE = {
     main: "Settings", profile: "Edit Profile",
     password: "Change Password", forgot: "Forgot Password", danger: "Delete Account",
+    dataloss: "Report Missing Data",
   }
   const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
@@ -379,6 +467,14 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           </div>
 
           <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Support</p>
+            <button onClick={() => setSection("dataloss")}
+              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors">
+              Report Missing Data…
+            </button>
+          </div>
+
+          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
             <button onClick={() => setSection("danger")}
               className="w-full text-left px-2 py-2 text-sm text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
               Delete Account…
@@ -386,6 +482,8 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           </div>
         </>
       )}
+
+      {section === "dataloss" && <DataLossSection inputCls={inputCls} btnPrimary={btnPrimary} />}
 
       {section === "profile" && (
         <form onSubmit={handleSaveProfile} className="px-4 py-4 space-y-3">

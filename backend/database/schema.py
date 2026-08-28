@@ -1118,6 +1118,46 @@ CREATE TABLE IF NOT EXISTS document_attachment_sessions (
 );
 """
 
+# ── Backup / restore bookkeeping (see backend/services/backup_service.py) ─────
+
+# Makes a repeated restore of the same snapshot a no-op. Necessary because
+# INSERT OR IGNORE only actually dedupes tables that carry their own UNIQUE
+# constraint — plain history tables (chat_messages, api_usage_log, ...) have
+# none, so without this a second restore of the same file silently inserts
+# every row a second time. `scope` is '*' for a whole-db restore or the
+# user_id for a per-user one, so the two never mask each other.
+CREATE_RESTORE_LOG = """
+CREATE TABLE IF NOT EXISTS restore_log (
+    filename      TEXT    NOT NULL,
+    table_name    TEXT    NOT NULL,
+    scope         TEXT    NOT NULL DEFAULT '*',
+    rows_inserted INTEGER NOT NULL DEFAULT 0,
+    restored_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (filename, table_name, scope)
+);
+"""
+
+# A user reporting their own data missing. Admin resolves it from the Backups
+# panel by running a per-user restore; the request row records who/when so a
+# report can't get silently lost in a support inbox.
+CREATE_DATA_LOSS_REQUESTS = """
+CREATE TABLE IF NOT EXISTS data_loss_requests (
+    request_id  TEXT NOT NULL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    description TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'open'
+                     CHECK(status IN ('open', 'resolved', 'rejected')),
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT,
+    admin_note  TEXT NOT NULL DEFAULT ''
+);
+"""
+
+CREATE_DATA_LOSS_REQUESTS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_data_loss_requests_status
+    ON data_loss_requests (status, created_at DESC);
+"""
+
 MIGRATIONS = [
     MIGRATE_ADD_DAILY_CORE_ARTICLE_COUNT,
     MIGRATE_DROP_FOCUS_AREAS,
@@ -1245,4 +1285,7 @@ ALL_TABLES = [
     CREATE_CONVERSATION_MEMORY_VEC,
     CREATE_DOCUMENT_CHUNKS_VEC,
     CREATE_DOCUMENT_ATTACHMENT_SESSIONS,
+    CREATE_RESTORE_LOG,
+    CREATE_DATA_LOSS_REQUESTS,
+    CREATE_DATA_LOSS_REQUESTS_IDX,
 ]

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { listAdminProjects, listAdminCallsGrouped, getAdminSummary, getAdminOperationSummary, getAdminCallVolume, getAdminCallTree, exportAdminCallsGrouped } from "../../api/admin.js"
+import BackupsPanel from "./BackupsPanel.jsx"
 
 // Real confirmed default from the live /admin/calls/grouped route (Phase D
 // precondition check) — B2's backend default, not assumed from memory.
@@ -1825,7 +1826,28 @@ function Pagination({ offset, limit, total, onPageChange }) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+function AdminTabs({ tab, onChange }) {
+  return (
+    <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60">
+      {[["calls", "LLM Calls"], ["backups", "Backups"]].map(([id, label]) => (
+        <button
+          key={id}
+          onClick={() => onChange(id)}
+          className={`px-3 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+            tab === id
+              ? "border-blue-500 text-slate-100"
+              : "border-transparent text-slate-500 hover:text-slate-300"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function AdminPage() {
+  const [tab, setTab] = useState("calls")
   const [projects, setProjects] = useState([])
   const [projectsLoading, setProjectsLoading] = useState(true)
 
@@ -2020,8 +2042,18 @@ export default function AdminPage() {
     filters.search, includeTestData, offset, sortBy, sortOrder,
   ])
 
+  if (tab === "backups") {
+    return (
+      <div>
+        <AdminTabs tab={tab} onChange={setTab} />
+        <BackupsPanel />
+      </div>
+    )
+  }
+
   return (
     <div>
+      <AdminTabs tab={tab} onChange={setTab} />
       <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Admin</h1>

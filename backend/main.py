@@ -157,10 +157,24 @@ async def lifespan(_app: FastAPI):
         logger.warning("[db] DB is NOT under /data — data will be LOST on rebuild/restart! "
                        "Set DB_PATH=/data/curivio.db in HF Spaces variables.")
 
+    # Snapshot BEFORE init_db() runs this deploy's migrations. If a new phase
+    # ships a migration that mangles or drops data, this is the copy taken while
+    # the DB was still on the old schema — the only moment that copy can exist.
+    # Never fatal: a failed snapshot must not stop the app from booting.
+    from .services.backup_service import create_snapshot, start_scheduler
+    try:
+        _snap = create_snapshot("premigration")
+        logger.info("[backup] pre-migration snapshot: %s", _snap)
+    except Exception:
+        logger.error("[backup] pre-migration snapshot crashed (non-fatal)", exc_info=True)
+
     init_db()
 
     _db_size_after = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     logger.info("[db] init_db() complete — size now %d bytes", _db_size_after)
+
+    # Periodic snapshots for the rest of this process's life.
+    start_scheduler()
 
     # Backfill intent profiles for existing projects that pre-date the intent architecture.
     # Runs in a daemon thread so startup is not blocked.
@@ -213,6 +227,10 @@ app.include_router(admin_router)
 
 from .routes.db_recovery import router as db_recovery_router
 app.include_router(db_recovery_router)
+
+from .routes.backups import admin_router as backups_admin_router, requests_router as backups_requests_router
+app.include_router(backups_admin_router)
+app.include_router(backups_requests_router)
 
 
 # --- Request models ---

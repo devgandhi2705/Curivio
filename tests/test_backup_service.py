@@ -1,0 +1,367 @@
+"""
+Covers the parts of backup_service that can silently lose or leak data:
+
+  * per-user scoping derived from the schema (does it find chat_messages via
+    chat_sessions? does it refuse to link on a meaningless INTEGER id?)
+  * schema drift — an old snapshot restoring into a newer table
+  * idempotency — the bug that duplicated production rows once already
+  * the empty-rebuild guard that stops the scheduler eating real snapshots
+
+Uses the REAL schema via db.init_db() rather than a hand-rolled subset, since
+the whole point of deriving scope from the schema is that it must track the
+actual tables as they change.
+"""
+
+import sqlite3
+
+import pytest
+
+import backend.utils.db as db
+import backend.services.backup_service as backup
+
+
+@pytest.fixture
+def live(tmp_path, monkeypatch):
+    """A live DB on the real schema, with backup_service pointed at it."""
+    db_path = tmp_path / "curivio.db"
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    monkeypatch.setattr(backup, "DB_PATH", db_path)
+    monkeypatch.setattr(backup, "BACKUP_DIR", tmp_path / "backups")
+    monkeypatch.setattr(backup, "_PREFIX", "curivio-")
+    db.init_db()
+    return db_path
+
+
+def _seed(conn, user_id, email, *, sessions=1, messages=3, projects=1):
+    conn.execute(
+        "INSERT INTO users (user_id, email, name, hashed_pw) VALUES (?,?,?,?)",
+        (user_id, email, email.split("@")[0], "hash"),
+    )
+    for s in range(sessions):
+        sid = f"{user_id}-sess-{s}"
+        conn.execute(
+            "INSERT INTO chat_sessions (session_id, title, user_id) VALUES (?,?,?)",
+            (sid, f"Session {s}", user_id),
+        )
+        for m in range(messages):
+            conn.execute(
+                "INSERT INTO chat_messages (session_id, role, content) VALUES (?,?,?)",
+                (sid, "user" if m % 2 == 0 else "assistant", f"msg {m}"),
+            )
+    for p in range(projects):
+        conn.execute(
+            "INSERT INTO learning_projects (project_id, name, user_id) VALUES (?,?,?)",
+            (f"{user_id}-proj-{p}", f"Project {p}", user_id),
+        )
+        conn.execute(
+            "INSERT INTO project_insights (project_id, insight_json) VALUES (?,?)",
+            (f"{user_id}-proj-{p}", '{"x":1}'),
+        )
+
+
+# ── scoping derivation ───────────────────────────────────────────────────────
+
+def test_scope_finds_direct_user_id_tables(live):
+    with db.get_connection() as conn:
+        scope = backup.derive_user_scope(conn)
+    assert scope["users"] == '"user_id" = ?'
+    assert scope["chat_sessions"] == '"user_id" = ?'
+    assert scope["learning_projects"] == '"user_id" = ?'
+
+
+def test_scope_reaches_children_with_no_foreign_key_declared(live):
+    """chat_messages.session_id has NO REFERENCES clause in this schema, so FK
+    introspection would miss the single biggest user-owned table. Name-based
+    linking must still find it."""
+    with db.get_connection() as conn:
+        scope = backup.derive_user_scope(conn)
+    assert "chat_messages" in scope
+    assert 'FROM main."chat_sessions"' in scope["chat_messages"]
+    assert scope["chat_messages"].count("?") == 1
+
+
+def test_scope_reaches_children_through_a_real_foreign_key(live):
+    with db.get_connection() as conn:
+        scope = backup.derive_user_scope(conn)
+    assert 'FROM main."learning_projects"' in scope["project_insights"]
+
+
+def test_scope_leaves_global_tables_alone(live):
+    """Caches and shared infrastructure are nobody's personal data — a per-user
+    restore must not drag them in."""
+    with db.get_connection() as conn:
+        scope = backup.derive_user_scope(conn)
+    for table in ("feed_cache", "search_cache", "unpack_cache"):
+        assert table not in scope
+
+
+def test_scope_never_links_on_a_surrogate_integer_id(live):
+    """Two independently created DBs both auto-assign id=1 to their first row.
+    Linking tables on that would join completely unrelated records together, so
+    only TEXT primary keys are allowed as parents."""
+    with db.get_connection() as conn:
+        for table in backup._real_tables(conn):
+            assert backup.linkable_pk_column(conn, table) != "id"
+        scope = backup.derive_user_scope(conn)
+    assert not any('"id" IN' in pred for pred in scope.values())
+
+
+def test_auth_state_tables_are_never_restored(live):
+    """A consumed password-reset token that comes back looking unused is a
+    downgrade, not a recovery. revoked_tokens is the deliberate exception:
+    restoring a blocklist only ever rejects more, so it fails safe."""
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    result = backup.restore(filename)
+    for table in ("password_reset_tokens", "pending_signups",
+                  "verification_lockouts", "resend_cooldowns"):
+        assert table not in result["tables"]
+    assert "revoked_tokens" in result["tables"]
+
+
+def test_scope_predicate_actually_selects_only_that_users_rows(live):
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+        _seed(conn, "u2", "b@example.com", sessions=2)
+    with db.get_connection() as conn:
+        scope = backup.derive_user_scope(conn)
+        n = conn.execute(
+            f'SELECT COUNT(*) FROM chat_messages WHERE {scope["chat_messages"]}', ("u1",)
+        ).fetchone()[0]
+    assert n == 3          # u1 has 1 session x 3 messages; u2's 6 must not leak in
+
+
+# ── snapshots ────────────────────────────────────────────────────────────────
+
+def test_snapshot_roundtrip(live):
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    result = backup.create_snapshot("test", force=True)
+    assert result["ok"], result
+    snap = backup.BACKUP_DIR / result["filename"]
+    conn = sqlite3.connect(snap)
+    assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 3
+    conn.close()
+
+
+def test_scheduler_refuses_to_snapshot_over_an_empty_rebuild(live):
+    """The exact production incident: corruption self-heal rebuilds the DB
+    empty, and the interval scheduler must NOT then snapshot the empty file
+    repeatedly until every real snapshot is pruned away."""
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    assert backup.create_snapshot("good", force=True)["ok"]
+
+    with db.get_connection() as conn:          # simulate the wipe
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM users")
+
+    auto = backup.create_snapshot("auto")
+    assert auto["ok"] is False
+    assert "0 accounts" in auto["reason"]
+    # an admin can still override deliberately
+    assert backup.create_snapshot("manual", force=True)["ok"] is True
+
+
+def test_prune_keeps_the_newest(live, monkeypatch):
+    monkeypatch.setattr(backup, "MAX_SNAPSHOTS", 3)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    names = []
+    for i in range(5):
+        monkeypatch.setattr(backup, "_snapshot_name", lambda label, i=i: f"curivio-2026010{i}-000000-t.db")
+        names.append(backup.create_snapshot("t", force=True)["filename"])
+    remaining = sorted(p.name for p in backup.BACKUP_DIR.glob("curivio-*.db"))
+    assert remaining == sorted(names[-3:])
+
+
+def test_resolve_source_rejects_path_traversal(live):
+    for bad in ("../../etc/passwd", "/etc/passwd", "curivio.db", "", ".."):
+        with pytest.raises(ValueError):
+            backup.resolve_source(bad)
+
+
+# ── restore ──────────────────────────────────────────────────────────────────
+
+def _snapshot_then_wipe(seed_fn):
+    """Seed, snapshot, then empty the live DB — the corruption-rebuild shape."""
+    with db.get_connection() as conn:
+        seed_fn(conn)
+    filename = backup.create_snapshot("t", force=True)["filename"]
+    with db.get_connection() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        for t in ("chat_messages", "chat_sessions", "project_insights",
+                  "learning_projects", "users"):
+            conn.execute(f"DELETE FROM {t}")
+    return filename
+
+
+def test_full_restore_brings_everything_back(live):
+    filename = _snapshot_then_wipe(lambda c: (_seed(c, "u1", "a@example.com"),
+                                              _seed(c, "u2", "b@example.com")))
+    result = backup.restore(filename)
+    assert result["rows_restored"] > 0
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 6
+        assert conn.execute("SELECT COUNT(*) FROM project_insights").fetchone()[0] == 2
+
+
+def test_per_user_restore_brings_back_only_that_user(live):
+    filename = _snapshot_then_wipe(lambda c: (_seed(c, "u1", "a@example.com"),
+                                              _seed(c, "u2", "b@example.com", sessions=2)))
+    backup.restore(filename, user_id="u1")
+    with db.get_connection() as conn:
+        emails = [r[0] for r in conn.execute("SELECT email FROM users").fetchall()]
+        msgs = conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
+        insights = conn.execute("SELECT COUNT(*) FROM project_insights").fetchone()[0]
+    assert emails == ["a@example.com"]
+    assert msgs == 3        # u1's only; u2's 6 stayed out
+    assert insights == 1
+
+
+def test_restore_is_idempotent(live):
+    """The regression that actually duplicated production data: tables with no
+    UNIQUE constraint of their own (chat_messages) cannot be deduped by
+    INSERT OR IGNORE, so a second restore must be stopped by restore_log."""
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    first = backup.restore(filename)
+    second = backup.restore(filename)
+
+    assert second["rows_restored"] == 0
+    assert second["tables"]["chat_messages"]["status"] == "already_restored"
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 3
+    assert first["rows_restored"] > 0
+
+
+def test_full_and_per_user_restores_do_not_mask_each_other(live):
+    """Different scopes are logged separately: having restored user u1 must not
+    make a later full restore think it has already run."""
+    filename = _snapshot_then_wipe(lambda c: (_seed(c, "u1", "a@example.com"),
+                                              _seed(c, "u2", "b@example.com")))
+    backup.restore(filename, user_id="u1")
+    full = backup.restore(filename)
+    assert full["rows_restored"] > 0
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
+        # u1's rows were already back and must not have doubled
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 6
+
+
+def test_restore_never_overwrites_a_newer_live_row(live):
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    with db.get_connection() as conn:
+        conn.execute("INSERT INTO users (user_id, email, name, hashed_pw) VALUES (?,?,?,?)",
+                     ("u1", "a@example.com", "NEWER NAME", "newhash"))
+    backup.restore(filename)
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT name FROM users WHERE user_id='u1'").fetchone()[0] == "NEWER NAME"
+
+
+def test_restore_survives_schema_drift_in_both_directions(live, monkeypatch):
+    """An old snapshot restoring into a newer table, and a snapshot holding a
+    column the live schema has since dropped. Neither may fail the table."""
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+        conn.execute("ALTER TABLE learning_projects ADD COLUMN since_removed TEXT")
+        conn.execute("UPDATE learning_projects SET since_removed = 'old value'")
+    filename = backup.create_snapshot("t", force=True)["filename"]
+
+    with db.get_connection() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM learning_projects")
+        conn.execute("ALTER TABLE learning_projects DROP COLUMN since_removed")   # drift A
+        conn.execute("ALTER TABLE learning_projects ADD COLUMN added_later TEXT DEFAULT 'dflt'")  # drift B
+
+    result = backup.restore(filename)
+    assert result["tables"]["learning_projects"]["status"] == "ok"
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT name, added_later FROM learning_projects WHERE user_id='u1'"
+        ).fetchone()
+    assert row["name"] == "Project 0"
+    assert row["added_later"] == "dflt"     # new column took its default
+
+
+def test_preview_writes_nothing(live):
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    preview = backup.restore(filename, dry_run=True)
+    assert preview["dry_run"] is True
+    assert preview["rows_available"] > 0
+    assert preview["tables"]["chat_messages"]["in_snapshot"] == 3
+    assert preview["tables"]["chat_messages"]["in_live_db"] == 0
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
+def test_preview_counts_live_rows_against_the_live_db_not_the_snapshot(live):
+    """Regression: the per-user live count has to resolve its subquery against
+    `main`, not `backup`. Using the snapshot's predicate for both made the live
+    count mean 'live rows whose session exists in the snapshot' — wrong, and
+    wrong in the flattering direction."""
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    filename = backup.create_snapshot("t", force=True)["filename"]
+    preview = backup.restore(filename, user_id="u1", dry_run=True)
+    assert preview["tables"]["chat_messages"]["in_live_db"] == 3
+
+
+def test_preview_flags_rows_no_per_user_restore_can_claim(live):
+    """user_id was added to several tables as a NULLABLE column by a later
+    migration, so pre-migration rows carry NULL and belong to nobody. An admin
+    must be able to see that a per-user restore will not find them."""
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+        conn.execute(
+            "INSERT INTO chat_sessions (session_id, title, user_id) VALUES (?,?,NULL)",
+            ("orphan-sess", "pre-migration session"),
+        )
+    filename = backup.create_snapshot("t", force=True)["filename"]
+    preview = backup.restore(filename, user_id="u1", dry_run=True)
+    assert preview["tables"]["chat_sessions"]["unattributed_in_snapshot"] == 1
+
+
+def test_vec_tables_are_skipped(live):
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    result = backup.restore(filename)
+    vec = {n: r for n, r in result["tables"].items() if "vec" in n.lower()}
+    assert vec, "real schema should contain vec0 tables"
+    assert all(r["status"] == "skipped_vec_table" for r in vec.values())
+
+
+def test_restore_of_a_quarantined_corrupt_file(live, tmp_path):
+    """The file db.py leaves behind after a corruption event is unopenable by
+    SQLite. Restore must repair a copy of it rather than refusing."""
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    quarantined = live.parent / "curivio.corrupt-999.db"
+    src = sqlite3.connect(live)
+    dst = sqlite3.connect(quarantined)
+    src.backup(dst)
+    dst.close()
+    src.close()
+
+    conn = sqlite3.connect(quarantined)      # reproduce the exact corruption
+    conn.execute("PRAGMA writable_schema=ON")
+    conn.execute(
+        "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) "
+        "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master "
+        "WHERE name='idx_chat_messages_session'"
+    )
+    conn.commit()
+    conn.close()
+    with pytest.raises(sqlite3.DatabaseError):
+        sqlite3.connect(quarantined).execute("SELECT COUNT(*) FROM users")
+
+    with db.get_connection() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM chat_messages")
+        conn.execute("DELETE FROM chat_sessions")
+        conn.execute("DELETE FROM users")
+
+    result = backup.restore("curivio.corrupt-999.db")
+    assert result["integrity_ok"] is True
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 3
