@@ -228,6 +228,7 @@ function FeedSubsection({
 export default function ProjectsPage({
   onOpenInChat, onOpenChat,
   targetProjectId, targetInsightId, targetArticleKey, onClearQueueTarget,
+  onboardingStep, onOnboardingEnter, onOnboardingGoToStep, onOnboardingBack, onOnboardingDone,
   userId, userName,
   onSidebarClose,
   onBeforeModal,
@@ -262,8 +263,9 @@ export default function ProjectsPage({
   // Sidebar content registration
   const [visitedOrder, setVisitedOrder] = useState([])
 
-  // Onboarding
-  const [showOnboarding, setShowOnboarding] = useState(false)
+  // Onboarding — active whenever the URL is on an onboarding step AND the
+  // user has no projects yet (guarded below against a stale/direct link).
+  const onboardingActive = Boolean(onboardingStep) && !loadingList && projects.length === 0
 
   // Notes-only filter — cross-project view, activeId is left untouched so
   // toggling off restores whatever project was previously selected.
@@ -371,9 +373,11 @@ export default function ProjectsPage({
   // ── Mount: load projects + all progressions in parallel ─────────────────────
 
   useEffect(() => {
+    let cancelled = false
     setLoadingList(true)
     listProjects()
       .then(async (data) => {
+        if (cancelled) return
         setProjects(data)
         saveProjectsList(data).catch(() => {})
         if (data.length > 0) {
@@ -381,15 +385,26 @@ export default function ProjectsPage({
           const ids = data.map(p => p.project_id)
           try {
             const map = await listAllProgressions(ids)
-            setProgressions(map)
+            if (!cancelled) setProgressions(map)
           } catch (_) {}
-        } else if (!hasCompletedOnboarding(userId)) {
-          setShowOnboarding(true)
+        } else if (!onboardingStep && !hasCompletedOnboarding(userId)) {
+          // navigate() isn't idempotent like setState — StrictMode's dev-only
+          // double-invoke would otherwise push a duplicate history entry.
+          onOnboardingEnter()
         }
       })
-      .catch(e => setListError(e.message))
-      .finally(() => setLoadingList(false))
+      .catch(e => { if (!cancelled) setListError(e.message) })
+      .finally(() => { if (!cancelled) setLoadingList(false) })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Bounce a stale/direct onboarding link once we know the user already has
+  // projects (e.g. onboarding was completed elsewhere and this tab is old).
+  useEffect(() => {
+    if (loadingList || !onboardingStep || projects.length === 0) return
+    onOnboardingDone()
+  }, [loadingList, onboardingStep, projects.length, onOnboardingDone])
 
   // ── Load insights + read state when active project changes ─────────────────
 
@@ -586,7 +601,7 @@ export default function ProjectsPage({
       const project = await createProject(fields)
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
-      setShowOnboarding(false)
+      onOnboardingDone(project.project_id)
       _generatingNow.add(project.project_id)
       setGenerating(true)
       const pid = project.project_id
@@ -600,7 +615,7 @@ export default function ProjectsPage({
       }
     } catch (_) {}
     finally { setCreating(false) }
-  }, [])
+  }, [onOnboardingDone])
 
   const handleDeleteRequest = useCallback((projectId) => {
     const project = projects.find(p => p.project_id === projectId)
@@ -756,8 +771,11 @@ export default function ProjectsPage({
         </>
       )}
 
-      {showOnboarding && (
+      {onboardingActive && (
         <OnboardingModal
+          step={onboardingStep}
+          onGoToStep={onOnboardingGoToStep}
+          onBack={onOnboardingBack}
           onCreate={handleOnboardingComplete}
           creating={creating}
           userId={userId}

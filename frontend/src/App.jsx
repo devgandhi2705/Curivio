@@ -17,6 +17,7 @@ import { runBackgroundSync } from './lib/backgroundSync.js'
 import { getToken } from './api/auth.js'
 import { checkIsAdmin } from './api/admin.js'
 import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
+import { parseOnboardingStep, onboardingStepPath } from './utils/onboardingRoute.js'
 
 // ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
 // Shared between the AppLayout badge and DataLossSection's mark-as-seen, so
@@ -1267,9 +1268,20 @@ export default function AppLayout() {
     : pathname.startsWith('/read-later') ? 'readlater'
     : 'feed'
 
+  // Onboarding step — derived from the URL, same as targetProjectId below.
+  const onboardingStep = parseOnboardingStep(pathname)
+  // Pushed (not replaced) so plain /feed stays in history — Back from the
+  // first onboarding step must land there, not skip past it.
+  const onOnboardingEnter    = useCallback(() => navigate(onboardingStepPath('project')), [navigate])
+  const onOnboardingGoToStep = useCallback((step) => navigate(onboardingStepPath(step)), [navigate])
+  const onOnboardingBack     = useCallback(() => navigate(-1), [navigate])
+  const onOnboardingDone     = useCallback((projectId) => {
+    navigate(projectId ? `/feed/${encodeURIComponent(projectId)}` : '/feed', { replace: true })
+  }, [navigate])
+
   // Deep-link targets — derived from the URL instead of App-level state.
   let targetProjectId = null, targetInsightId = null, targetArticleKey = null
-  if (pathname.startsWith('/feed/')) {
+  if (pathname.startsWith('/feed/') && !onboardingStep) {
     const parts = pathname.slice('/feed/'.length).split('/').filter(Boolean)
     targetProjectId  = parts[0] ? decodeURIComponent(parts[0]) : null
     targetInsightId  = parts[1] ? Number(parts[1]) : null
@@ -1628,6 +1640,11 @@ export default function AppLayout() {
               targetInsightId={targetInsightId}
               targetArticleKey={targetArticleKey}
               onClearQueueTarget={handleClearQueueTarget}
+              onboardingStep={onboardingStep}
+              onOnboardingEnter={onOnboardingEnter}
+              onOnboardingGoToStep={onOnboardingGoToStep}
+              onOnboardingBack={onOnboardingBack}
+              onOnboardingDone={onOnboardingDone}
               userId={user?.user_id}
               userName={user?.name}
               onSidebarClose={handleSidebarClose}
@@ -1665,7 +1682,7 @@ export default function AppLayout() {
         />
       )}
 
-      {(view === 'chat' || view === 'feed') && <UnpackListener />}
+      <UnpackListener />
     </div>
   )
 }

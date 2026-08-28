@@ -7,12 +7,27 @@
  */
 import { useState, useEffect } from "react"
 import { suggestKeywords } from "../../api/projects.js"
+import { ONBOARDING_STEPS, onboardingStepIndex } from "../../utils/onboardingRoute.js"
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
 
 const ONBOARDING_KEY = (userId) => userId ? `ra_onboarding_done_${userId}` : "ra_onboarding_done"
 export const hasCompletedOnboarding = (userId) => localStorage.getItem(ONBOARDING_KEY(userId)) === "1"
 export const markOnboardingDone     = (userId) => localStorage.setItem(ONBOARDING_KEY(userId), "1")
+
+// ── sessionStorage draft — survives a hard refresh mid-onboarding ─────────────
+
+const DRAFT_KEY = (userId) => userId ? `ra_onboarding_draft_${userId}` : "ra_onboarding_draft"
+
+function loadDraft(userId) {
+  try { return JSON.parse(sessionStorage.getItem(DRAFT_KEY(userId)) || "null") } catch { return null }
+}
+function saveDraft(userId, draft) {
+  try { sessionStorage.setItem(DRAFT_KEY(userId), JSON.stringify(draft)) } catch { /* storage unavailable */ }
+}
+function clearDraft(userId) {
+  try { sessionStorage.removeItem(DRAFT_KEY(userId)) } catch { /* storage unavailable */ }
+}
 
 // ── Style maps ────────────────────────────────────────────────────────────────
 
@@ -100,28 +115,42 @@ function StepDots({ step, onBack }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function OnboardingModal({ onCreate, creating, userId }) {
-  const [step,          setStep]          = useState(0)
+export default function OnboardingModal({ onCreate, creating, userId, step: stepSlug, onGoToStep, onBack }) {
+  const step = onboardingStepIndex(stepSlug)
+  const [draft] = useState(() => loadDraft(userId))
 
   // Step 0 — project title + description
-  const [title,         setTitle]         = useState("")
-  const [description,   setDescription]   = useState("")
+  const [title,         setTitle]         = useState(draft?.title ?? "")
+  const [description,   setDescription]   = useState(draft?.description ?? "")
 
   // Step 1 — suggested + custom keywords
   const [suggested,     setSuggested]     = useState([])
-  const [customKeywords, setCustomKeywords] = useState([])
-  const [selected,      setSelected]      = useState(new Set())
+  const [customKeywords, setCustomKeywords] = useState(draft?.customKeywords ?? [])
+  const [selected,      setSelected]      = useState(new Set(draft?.selected ?? []))
   const [kwInput,       setKwInput]       = useState("")
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [suggestError,  setSuggestError]  = useState(null)
 
   // Step 2 — level + name + color
-  const [difficulty,    setDifficulty]    = useState("intermediate")
-  const [articleCount,  setArticleCount]  = useState(4)
-  const [name,          setName]          = useState("")
-  const [color,         setColor]         = useState("blue")
+  const [difficulty,    setDifficulty]    = useState(draft?.difficulty ?? "intermediate")
+  const [articleCount,  setArticleCount]  = useState(draft?.articleCount ?? 4)
+  const [name,          setName]          = useState(draft?.name ?? "")
+  const [color,         setColor]         = useState(draft?.color ?? "blue")
 
   const canProceedFromIntro = title.trim().length > 0 && description.trim().length >= 10
+
+  // Persist the draft as the user types, so a hard refresh mid-onboarding
+  // doesn't lose it. Cleared on successful launch (see handleLaunch).
+  useEffect(() => {
+    saveDraft(userId, { title, description, customKeywords, selected: [...selected], difficulty, articleCount, name, color })
+  }, [userId, title, description, customKeywords, selected, difficulty, articleCount, name, color])
+
+  // Landed directly on a later step (stale link) with nothing filled in —
+  // bounce to the start instead of showing an empty Topics/Launch step.
+  useEffect(() => {
+    if (step > 0 && !title.trim()) onGoToStep("project")
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Fetch suggested keywords once, on entering the Topics step
   useEffect(() => {
@@ -133,7 +162,9 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
         if (cancelled) return
         const kws = result?.keywords || []
         setSuggested(kws)
-        setSelected(new Set(kws))
+        // A restored draft already carries the user's chosen selection —
+        // only default to "select everything" on a fresh onboarding start.
+        if (!draft) setSelected(new Set(kws))
       })
       .catch(() => {
         if (cancelled) return
@@ -146,7 +177,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
 
   function goToStep(n) {
     if (n === 2 && !name.trim()) setName(title.trim())
-    setStep(n)
+    onGoToStep(ONBOARDING_STEPS[n])
   }
 
   function addCustomKeyword() {
@@ -172,6 +203,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
     const finalName = name.trim() || title.trim() || "My Learning Project"
     const finalKeywords = [...suggested, ...customKeywords].filter(k => selected.has(k))
     markOnboardingDone(userId)
+    clearDraft(userId)
     await onCreate({
       name:                     finalName,
       description:              description.trim(),
@@ -479,7 +511,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
         ">
           <button
             type="button"
-            onClick={() => step > 0 && setStep(step - 1)}
+            onClick={() => step > 0 && onBack()}
             className={`text-[13px] sm:text-sm text-slate-500 hover:text-slate-300 transition-colors ${step === 0 ? "invisible pointer-events-none" : ""}`}
           >
             ← Back
@@ -490,7 +522,7 @@ export default function OnboardingModal({ onCreate, creating, userId }) {
               {!canProceedFromIntro && <span className="text-[11px] text-slate-600 hidden sm:block">Add a title and description to continue</span>}
               <button
                 type="button"
-                onClick={() => setStep(1)}
+                onClick={() => goToStep(1)}
                 disabled={!canProceedFromIntro}
                 className="px-5 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] sm:text-sm font-medium transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
               >
