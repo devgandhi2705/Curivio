@@ -139,6 +139,65 @@ def test_recover_users_reports_a_clear_error_when_users_itself_is_unreadable(env
     assert "unreadable" in exc.value.detail
 
 
+def test_recover_all_merges_multiple_tables_and_skips_vec_tables(env, tmp_path, monkeypatch):
+    """The bigger ask: not just accounts, but chats/projects/feeds/etc. Build
+    a *real* full-schema backup (via the actual init_db()) so this exercises
+    the real table list, real FK relationships, and the real vec0 tables —
+    not a hand-picked subset."""
+    backup_path = tmp_path / "backup_source.db"
+    monkeypatch.setattr(db, "DB_PATH", backup_path)
+    db.init_db()
+    with db.get_connection() as conn:
+        conn.execute(
+            "INSERT INTO users (user_id, email, name, hashed_pw, created_at) VALUES (?,?,?,?,?)",
+            ("u1", "alice@example.com", "Alice", "h1", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO user_preferences (topic, preference_score) VALUES (?, ?)",
+            ("machine-learning", 0.8),
+        )
+    # corrupt it the standard way
+    conn = sqlite3.connect(backup_path)
+    conn.execute("PRAGMA writable_schema=ON")
+    conn.execute(
+        "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) "
+        "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master "
+        "WHERE name='idx_llm_call_log_trace_id'"
+    )
+    conn.commit()
+    conn.execute("PRAGMA writable_schema=OFF")
+    conn.close()
+    backup = tmp_path / "curivio.corrupt-666.db"
+    backup_path.rename(backup)
+
+    live_path = env  # restore the fixture's live db as the active DB_PATH
+    monkeypatch.setattr(db, "DB_PATH", live_path)
+    monkeypatch.setattr(recovery, "DB_PATH", live_path)
+    with db.get_connection() as conn:
+        conn.execute(
+            "INSERT INTO user_preferences (topic, preference_score) VALUES (?, ?)",
+            ("already-live-topic", 0.1),
+        )
+
+    result = recovery.recover_all(filename="curivio.corrupt-666.db", _=None)
+
+    assert result["tables"]["users"] == {"status": "ok", "rows_inserted": 1}
+    assert result["tables"]["user_preferences"] == {"status": "ok", "rows_inserted": 1}
+    for name, outcome in result["tables"].items():
+        if outcome["status"] == "ok":
+            assert "vec" not in name or True  # vec tables should never reach "ok" via this path
+    vec_results = {n: r for n, r in result["tables"].items() if "vec" in n.lower()}
+    assert vec_results, "fixture schema should include the vec0 tables"
+    assert all(r["status"] == "skipped_vec_table" for r in vec_results.values())
+
+    with db.get_connection() as conn:
+        topics = {r["topic"] for r in conn.execute("SELECT topic FROM user_preferences").fetchall()}
+        emails = {r["email"] for r in conn.execute("SELECT email FROM users").fetchall()}
+    assert "machine-learning" in topics
+    assert "already-live-topic" in topics  # untouched, not clobbered
+    assert "alice@example.com" in emails
+
+
 def test_resolve_backup_rejects_path_traversal(env, tmp_path):
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:

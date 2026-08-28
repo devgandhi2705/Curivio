@@ -140,6 +140,91 @@ def inspect_backup(filename: str, _: None = Depends(_require_secret)):
         repaired.unlink(missing_ok=True)
 
 
+def _surrogate_pk_column(conn: sqlite3.Connection, table: str) -> str | None:
+    """The column name if `table` has a single-column INTEGER PRIMARY KEY
+    (SQLite's rowid alias, almost always paired with AUTOINCREMENT) — else
+    None. That id is meaningless outside its own database: two independently
+    created dbs both auto-assign 1 to their first row, so copying it verbatim
+    makes an unrelated live row with id=1 falsely "collide" with a backup row
+    that isn't actually a duplicate, silently dropping real data. Real keys
+    (users.user_id TEXT, etc.) aren't touched — only a single-column INTEGER
+    PK is ever a bare auto-assigned surrogate in this schema."""
+    pk_cols = [
+        (r[1], r[2]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall() if r[5] > 0
+    ]
+    if len(pk_cols) == 1 and pk_cols[0][1].upper() == "INTEGER":
+        return pk_cols[0][0]
+    return None
+
+
+def _vec_table_prefixes(conn: sqlite3.Connection) -> list[str]:
+    """Base names of any sqlite-vec virtual tables (vec0) — their shadow
+    tables share internal binary state that a naive per-table copy would
+    leave inconsistent. Embeddings are derived data (regenerable by
+    reprocessing documents), so recover-all skips anything under these
+    names rather than risk corrupting the live vector index."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE sql LIKE '%USING vec0%'"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+@router.post("/recover-all")
+def recover_all(filename: str, _: None = Depends(_require_secret)):
+    """Repair a copy and merge every real table's rows into the live db —
+    chats, projects, feeds, bookmarks, everything, not just accounts. Uses
+    INSERT OR IGNORE per table (never overwrites an existing live row) via
+    ATTACH DATABASE, so SQLite does the row copying natively instead of a
+    Python round-trip per row. Foreign keys are off for the duration since
+    table order isn't dependency-sorted; restored afterward. sqlite-vec
+    tables are skipped — see _vec_table_prefixes."""
+    src = _resolve_backup(filename)
+    repaired, integrity_ok = _repair_copy(src)
+    results: dict[str, dict] = {}
+    try:
+        with get_connection() as live:
+            vec_prefixes = _vec_table_prefixes(live)
+            live.execute("PRAGMA foreign_keys=OFF")
+            live.execute("ATTACH DATABASE ? AS backup", (str(repaired),))
+            try:
+                tables = [
+                    r[0] for r in live.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                    ).fetchall()
+                ]
+                for table in tables:
+                    if any(table.startswith(p) for p in vec_prefixes):
+                        results[table] = {"status": "skipped_vec_table"}
+                        continue
+                    try:
+                        backup_cols = [
+                            r[1] for r in live.execute(f"PRAGMA backup.table_info({table})").fetchall()
+                        ]
+                        if not backup_cols:
+                            results[table] = {"status": "not_in_backup"}
+                            continue
+                        live_cols = [r[1] for r in live.execute(f"PRAGMA table_info({table})").fetchall()]
+                        common = [c for c in live_cols if c in backup_cols]
+                        surrogate = _surrogate_pk_column(live, table)
+                        if surrogate in common:
+                            common.remove(surrogate)  # let SQLite assign a fresh id
+                        col_list = ", ".join(f'"{c}"' for c in common)
+                        cur = live.execute(
+                            f'INSERT OR IGNORE INTO main."{table}" ({col_list}) '
+                            f'SELECT {col_list} FROM backup."{table}"'
+                        )
+                        results[table] = {"status": "ok", "rows_inserted": cur.rowcount}
+                    except sqlite3.DatabaseError as exc:
+                        results[table] = {"status": "error", "detail": str(exc)}
+            finally:
+                live.commit()  # DETACH requires no open transaction on the attached db
+                live.execute("DETACH DATABASE backup")
+                live.execute("PRAGMA foreign_keys=ON")
+        return {"filename": filename, "integrity_ok": integrity_ok, "tables": results}
+    finally:
+        repaired.unlink(missing_ok=True)
+
+
 @router.post("/recover-users")
 def recover_users(filename: str, _: None = Depends(_require_secret)):
     """Repair a copy and merge missing accounts into the live db. Uses
