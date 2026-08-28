@@ -48,8 +48,9 @@ def test_repair_copy_recovers_a_manufactured_corruption(env, tmp_path):
     backup = tmp_path / "curivio.corrupt-111.db"
     _make_corrupt_backup(backup, [("u1", "alice@example.com", "Alice", "h1", "2026-01-01")])
 
-    repaired = recovery._repair_copy(backup)
+    repaired, integrity_ok = recovery._repair_copy(backup)
     try:
+        assert integrity_ok is True
         conn = sqlite3.connect(repaired)
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert conn.execute("SELECT email FROM users").fetchall() == [("alice@example.com",)]
@@ -95,12 +96,47 @@ def test_inspect_reports_counts_without_mutating_live_db(env, tmp_path):
     result = recovery.inspect_backup(filename="curivio.corrupt-333.db", _=None)
     assert result == {
         "filename": "curivio.corrupt-333.db",
+        "integrity_ok": True,
+        "users_readable": True,
         "users_in_backup": 1,
         "already_in_live_db": 0,
         "recoverable_new_accounts": 1,
     }
     with db.get_connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+
+
+def test_integrity_ok_interprets_the_integrity_check_result_correctly():
+    """Production's biggest backup had real btree damage on top of the
+    catalog duplicate: PRAGMA integrity_check returned specific tree/page
+    errors as ROW DATA (not an exception). _repair_copy must surface that as
+    integrity_ok=False rather than raising, so callers can still attempt a
+    direct users read instead of giving up on the whole file."""
+    assert recovery._integrity_ok([("ok",)]) is True
+    assert recovery._integrity_ok([
+        ("Tree 7414 page 7414: btreeInitPage() returns error code 11",),
+        ("Tree 1 page 629 cell 8: Rowid 337 out of order",),
+    ]) is False
+    assert recovery._integrity_ok([]) is False
+
+
+def test_recover_users_reports_a_clear_error_when_users_itself_is_unreadable(env, tmp_path, monkeypatch):
+    """The genuine 'nothing recoverable here' case: even the direct users
+    read fails. recover_users must surface this as a 422 with a clear
+    message rather than crash or silently report zero rows."""
+    backup = tmp_path / "curivio.corrupt-555.db"
+    _make_corrupt_backup(backup, [("u1", "alice@example.com", "Alice", "h1", "2026-01-01")])
+
+    def broken_read_users(path):
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(recovery, "_read_users", broken_read_users)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        recovery.recover_users(filename="curivio.corrupt-555.db", _=None)
+    assert exc.value.status_code == 422
+    assert "unreadable" in exc.value.detail
 
 
 def test_resolve_backup_rejects_path_traversal(env, tmp_path):

@@ -53,10 +53,16 @@ def list_backups(_: None = Depends(_require_secret)):
     ]
 
 
-def _repair_copy(src: Path) -> Path:
+def _repair_copy(src: Path) -> tuple[Path, bool]:
     """Copy src, delete duplicate sqlite_master catalog rows on the copy, and
-    return the repaired copy's path. Raises if integrity_check doesn't pass.
-    Never touches src itself."""
+    return (repaired copy's path, integrity_ok). Never touches src itself.
+
+    Some backups have deeper damage than the one known corruption shape (a
+    few had raw btree page errors on top of it — likely from write attempts
+    that landed after the catalog duplicate but before the app crashed).
+    integrity_ok reflects that, but callers should still attempt to read
+    `users` directly: it's a tiny table created early, almost always on
+    completely different pages than whatever else is damaged."""
     fd, tmp_name = tempfile.mkstemp(suffix=".db")
     import os
     os.close(fd)
@@ -87,26 +93,45 @@ def _repair_copy(src: Path) -> Path:
     check_conn = sqlite3.connect(tmp)
     result = check_conn.execute("PRAGMA integrity_check").fetchall()
     check_conn.close()
-    if result != [("ok",)]:
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=f"repair failed integrity_check: {result}")
-    return tmp
+    return tmp, _integrity_ok(result)
+
+
+def _integrity_ok(integrity_check_rows: list[tuple]) -> bool:
+    return integrity_check_rows == [("ok",)]
+
+
+def _read_users(path: Path) -> list[tuple]:
+    """Best-effort: pull whatever users rows are readable off a repaired
+    copy, even if integrity_check flagged unrelated damage elsewhere in the
+    file. Raises sqlite3.DatabaseError if the users table itself is what's
+    actually broken — that's the real "nothing recoverable here" case."""
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(
+            "SELECT user_id, email, name, hashed_pw, created_at FROM users"
+        ).fetchall()
+    finally:
+        conn.close()
 
 
 @router.post("/inspect")
 def inspect_backup(filename: str, _: None = Depends(_require_secret)):
     """Dry run: repair a copy, report what's recoverable, touch nothing live."""
     src = _resolve_backup(filename)
-    repaired = _repair_copy(src)
+    repaired, integrity_ok = _repair_copy(src)
     try:
-        conn = sqlite3.connect(repaired)
-        backup_users = conn.execute("SELECT email FROM users").fetchall()
-        conn.close()
+        try:
+            backup_users = _read_users(repaired)
+        except sqlite3.DatabaseError as exc:
+            return {"filename": filename, "integrity_ok": integrity_ok,
+                    "users_readable": False, "error": str(exc)}
         with get_connection() as live:
             live_emails = {r["email"] for r in live.execute("SELECT email FROM users").fetchall()}
-        backup_emails = {r[0] for r in backup_users}
+        backup_emails = {row[1] for row in backup_users}
         return {
             "filename": filename,
+            "integrity_ok": integrity_ok,
+            "users_readable": True,
             "users_in_backup": len(backup_emails),
             "already_in_live_db": len(backup_emails & live_emails),
             "recoverable_new_accounts": len(backup_emails - live_emails),
@@ -122,13 +147,15 @@ def recover_users(filename: str, _: None = Depends(_require_secret)):
     email) — never overwrites an existing row, so newer live accounts created
     since the backup are untouched."""
     src = _resolve_backup(filename)
-    repaired = _repair_copy(src)
+    repaired, integrity_ok = _repair_copy(src)
     try:
-        conn = sqlite3.connect(repaired)
-        rows = conn.execute(
-            "SELECT user_id, email, name, hashed_pw, created_at FROM users"
-        ).fetchall()
-        conn.close()
+        try:
+            rows = _read_users(repaired)
+        except sqlite3.DatabaseError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"users table unreadable in this backup even after repair: {exc}",
+            )
 
         inserted = 0
         with get_connection() as live:
@@ -139,6 +166,7 @@ def recover_users(filename: str, _: None = Depends(_require_secret)):
                     row,
                 )
                 inserted += cur.rowcount
-        return {"filename": filename, "rows_in_backup": len(rows), "rows_inserted": inserted}
+        return {"filename": filename, "integrity_ok": integrity_ok,
+                "rows_in_backup": len(rows), "rows_inserted": inserted}
     finally:
         repaired.unlink(missing_ok=True)
