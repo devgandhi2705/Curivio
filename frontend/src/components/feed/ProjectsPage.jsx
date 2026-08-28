@@ -228,7 +228,7 @@ function FeedSubsection({
 export default function ProjectsPage({
   onOpenInChat, onOpenChat,
   targetProjectId, targetInsightId, targetArticleKey, onClearQueueTarget,
-  onboardingStep, onOnboardingEnter, onOnboardingGoToStep, onOnboardingBack, onOnboardingDone,
+  isFeedView, onboardingStep, onOnboardingEnter, onOnboardingGoToStep, onOnboardingBack, onOnboardingDone,
   userId, userName,
   onSidebarClose,
   onBeforeModal,
@@ -387,10 +387,6 @@ export default function ProjectsPage({
             const map = await listAllProgressions(ids)
             if (!cancelled) setProgressions(map)
           } catch (_) {}
-        } else if (!onboardingStep && !hasCompletedOnboarding(userId)) {
-          // navigate() isn't idempotent like setState — StrictMode's dev-only
-          // double-invoke would otherwise push a duplicate history entry.
-          onOnboardingEnter()
         }
       })
       .catch(e => { if (!cancelled) setListError(e.message) })
@@ -398,6 +394,16 @@ export default function ProjectsPage({
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Onboarding is mandatory until completed: whenever the Feed tab settles on
+  // bare /feed with zero projects, funnel straight into it — covers the
+  // first-ever visit, backing out of step 1, and leaving to Chat/Dashboard
+  // and clicking back to Feed (ProjectsPage never unmounts, so a one-time
+  // mount check alone would miss those later returns).
+  useEffect(() => {
+    if (!isFeedView || loadingList || onboardingStep || projects.length > 0) return
+    if (!hasCompletedOnboarding(userId)) onOnboardingEnter()
+  }, [isFeedView, loadingList, onboardingStep, projects.length, userId, onOnboardingEnter])
 
   // Bounce a stale/direct onboarding link once we know the user already has
   // projects (e.g. onboarding was completed elsewhere and this tab is old).

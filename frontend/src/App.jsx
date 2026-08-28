@@ -1270,9 +1270,11 @@ export default function AppLayout() {
 
   // Onboarding step — derived from the URL, same as targetProjectId below.
   const onboardingStep = parseOnboardingStep(pathname)
-  // Pushed (not replaced) so plain /feed stays in history — Back from the
-  // first onboarding step must land there, not skip past it.
-  const onOnboardingEnter    = useCallback(() => navigate(onboardingStepPath('project')), [navigate])
+  // Replace, not push — this is an automatic redirect (onboarding is
+  // mandatory while incomplete), not a user-chosen step. Fires every time
+  // the user lands on bare /feed while onboarding is still incomplete, so
+  // it can be called repeatedly (see ProjectsPage's re-entry effect).
+  const onOnboardingEnter    = useCallback(() => navigate(onboardingStepPath('project'), { replace: true }), [navigate])
   const onOnboardingGoToStep = useCallback((step) => navigate(onboardingStepPath(step)), [navigate])
   const onOnboardingBack     = useCallback(() => navigate(-1), [navigate])
   const onOnboardingDone     = useCallback((projectId) => {
@@ -1640,6 +1642,7 @@ export default function AppLayout() {
               targetInsightId={targetInsightId}
               targetArticleKey={targetArticleKey}
               onClearQueueTarget={handleClearQueueTarget}
+              isFeedView={view === 'feed'}
               onboardingStep={onboardingStep}
               onOnboardingEnter={onOnboardingEnter}
               onOnboardingGoToStep={onOnboardingGoToStep}

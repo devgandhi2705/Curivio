@@ -124,7 +124,10 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
   const [description,   setDescription]   = useState(draft?.description ?? "")
 
   // Step 1 — suggested + custom keywords
-  const [suggested,     setSuggested]     = useState([])
+  const [suggested,     setSuggested]     = useState(draft?.suggested ?? [])
+  // title+description pair the current `suggested` list was generated for —
+  // lets the fetch effect skip regenerating when neither has changed.
+  const [suggestedFor,  setSuggestedFor]  = useState(draft?.suggestedFor ?? null)
   const [customKeywords, setCustomKeywords] = useState(draft?.customKeywords ?? [])
   const [selected,      setSelected]      = useState(new Set(draft?.selected ?? []))
   const [kwInput,       setKwInput]       = useState("")
@@ -142,8 +145,8 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
   // Persist the draft as the user types, so a hard refresh mid-onboarding
   // doesn't lose it. Cleared on successful launch (see handleLaunch).
   useEffect(() => {
-    saveDraft(userId, { title, description, customKeywords, selected: [...selected], difficulty, articleCount, name, color })
-  }, [userId, title, description, customKeywords, selected, difficulty, articleCount, name, color])
+    saveDraft(userId, { title, description, suggested, suggestedFor, customKeywords, selected: [...selected], difficulty, articleCount, name, color })
+  }, [userId, title, description, suggested, suggestedFor, customKeywords, selected, difficulty, articleCount, name, color])
 
   // Landed directly on a later step (stale link) with nothing filled in —
   // bounce to the start instead of showing an empty Topics/Launch step.
@@ -152,16 +155,22 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Fetch suggested keywords once, on entering the Topics step
+  // Fetch suggested keywords on entering the Topics step — but only when
+  // title/description actually changed since the last generation, so
+  // revisiting this step unchanged (e.g. via Back) doesn't re-hit the LLM.
   useEffect(() => {
-    if (step !== 1 || suggested.length > 0 || suggestLoading || suggestError) return
+    if (step !== 1 || suggestLoading) return
+    const forKey = `${title.trim()} ${description.trim()}`
+    if (suggestedFor === forKey) return
     let cancelled = false
     setSuggestLoading(true)
+    setSuggestError(null)
     suggestKeywords(title.trim(), description.trim(), "intermediate")
       .then(result => {
         if (cancelled) return
         const kws = result?.keywords || []
         setSuggested(kws)
+        setSuggestedFor(forKey)
         // A restored draft already carries the user's chosen selection —
         // only default to "select everything" on a fresh onboarding start.
         if (!draft) setSelected(new Set(kws))
