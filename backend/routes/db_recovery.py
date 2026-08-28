@@ -169,6 +169,15 @@ def _vec_table_prefixes(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _ensure_recovery_log(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _recovery_log ("
+        "filename TEXT NOT NULL, table_name TEXT NOT NULL, "
+        "recovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+        "PRIMARY KEY (filename, table_name))"
+    )
+
+
 @router.post("/recover-all")
 def recover_all(filename: str, _: None = Depends(_require_secret)):
     """Repair a copy and merge every real table's rows into the live db —
@@ -177,12 +186,25 @@ def recover_all(filename: str, _: None = Depends(_require_secret)):
     ATTACH DATABASE, so SQLite does the row copying natively instead of a
     Python round-trip per row. Foreign keys are off for the duration since
     table order isn't dependency-sorted; restored afterward. sqlite-vec
-    tables are skipped — see _vec_table_prefixes."""
+    tables are skipped — see _vec_table_prefixes.
+
+    Idempotent per (filename, table) via _recovery_log: INSERT OR IGNORE
+    only actually dedupes tables that have their own unique constraint
+    (email, topic, ...) — plain history tables like chat_messages have none,
+    so a second run on the same file would blindly re-insert every row a
+    second time. _recovery_log makes a repeat call on an already-recovered
+    file a no-op instead."""
     src = _resolve_backup(filename)
     repaired, integrity_ok = _repair_copy(src)
     results: dict[str, dict] = {}
     try:
         with get_connection() as live:
+            _ensure_recovery_log(live)
+            already_done = {
+                r[0] for r in live.execute(
+                    "SELECT table_name FROM _recovery_log WHERE filename = ?", (filename,)
+                ).fetchall()
+            }
             vec_prefixes = _vec_table_prefixes(live)
             live.execute("PRAGMA foreign_keys=OFF")
             live.execute("ATTACH DATABASE ? AS backup", (str(repaired),))
@@ -196,12 +218,21 @@ def recover_all(filename: str, _: None = Depends(_require_secret)):
                     if any(table.startswith(p) for p in vec_prefixes):
                         results[table] = {"status": "skipped_vec_table"}
                         continue
+                    if table == "_recovery_log":
+                        continue
+                    if table in already_done:
+                        results[table] = {"status": "already_recovered_from_this_file"}
+                        continue
                     try:
                         backup_cols = [
                             r[1] for r in live.execute(f"PRAGMA backup.table_info({table})").fetchall()
                         ]
                         if not backup_cols:
                             results[table] = {"status": "not_in_backup"}
+                            live.execute(
+                                "INSERT INTO _recovery_log (filename, table_name) VALUES (?, ?)",
+                                (filename, table),
+                            )
                             continue
                         live_cols = [r[1] for r in live.execute(f"PRAGMA table_info({table})").fetchall()]
                         common = [c for c in live_cols if c in backup_cols]
@@ -214,6 +245,10 @@ def recover_all(filename: str, _: None = Depends(_require_secret)):
                             f'SELECT {col_list} FROM backup."{table}"'
                         )
                         results[table] = {"status": "ok", "rows_inserted": cur.rowcount}
+                        live.execute(
+                            "INSERT INTO _recovery_log (filename, table_name) VALUES (?, ?)",
+                            (filename, table),
+                        )
                     except sqlite3.DatabaseError as exc:
                         results[table] = {"status": "error", "detail": str(exc)}
             finally:
@@ -221,6 +256,61 @@ def recover_all(filename: str, _: None = Depends(_require_secret)):
                 live.execute("DETACH DATABASE backup")
                 live.execute("PRAGMA foreign_keys=ON")
         return {"filename": filename, "integrity_ok": integrity_ok, "tables": results}
+    finally:
+        repaired.unlink(missing_ok=True)
+
+
+@router.post("/dedupe-recent")
+def dedupe_recent(filename: str, _: None = Depends(_require_secret)):
+    """One-time fix for calling recover_all twice on the same file before
+    _recovery_log existed: tables with no natural unique constraint (plain
+    history tables — chat_messages, api_usage_log, ...) got every row
+    inserted a second time. For each table this backup covers, the correct
+    live row count is exactly the backup's own row count (these tables were
+    fully empty before recovery started) — deletes the highest-rowid excess
+    down to that count, and backfills _recovery_log so recover_all won't
+    re-duplicate this file again."""
+    src = _resolve_backup(filename)
+    repaired, integrity_ok = _repair_copy(src)
+    results: dict[str, dict] = {}
+    try:
+        backup_conn = sqlite3.connect(repaired)
+        vec_prefixes = _vec_table_prefixes(backup_conn)
+        backup_tables = [
+            r[0] for r in backup_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        backup_counts = {}
+        for t in backup_tables:
+            if any(t.startswith(p) for p in vec_prefixes) or t == "_recovery_log":
+                continue
+            try:
+                backup_counts[t] = backup_conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+            except sqlite3.DatabaseError:
+                pass
+        backup_conn.close()
+
+        with get_connection() as live:
+            _ensure_recovery_log(live)
+            for table, backup_count in backup_counts.items():
+                try:
+                    live_count = live.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                except sqlite3.DatabaseError:
+                    continue
+                excess = live_count - backup_count
+                if excess > 0:
+                    live.execute(
+                        f'DELETE FROM "{table}" WHERE rowid IN '
+                        f'(SELECT rowid FROM "{table}" ORDER BY rowid DESC LIMIT ?)',
+                        (excess,),
+                    )
+                    results[table] = {"deleted": excess, "live_count_after": backup_count}
+                live.execute(
+                    "INSERT OR IGNORE INTO _recovery_log (filename, table_name) VALUES (?, ?)",
+                    (filename, table),
+                )
+        return {"filename": filename, "results": results}
     finally:
         repaired.unlink(missing_ok=True)
 

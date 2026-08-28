@@ -197,6 +197,19 @@ def test_recover_all_merges_multiple_tables_and_skips_vec_tables(env, tmp_path, 
     assert "already-live-topic" in topics  # untouched, not clobbered
     assert "alice@example.com" in emails
 
+    # Re-running on the SAME file must not duplicate rows in tables that
+    # have no natural unique constraint (chat_messages, api_usage_log, ...
+    # here represented by user_preferences having no dupe-proof beyond its
+    # own UNIQUE topic — the real regression was in tables without even that).
+    second = recovery.recover_all(filename="curivio.corrupt-666.db", _=None)
+    assert second["tables"]["users"] == {"status": "already_recovered_from_this_file"}
+    assert second["tables"]["user_preferences"] == {"status": "already_recovered_from_this_file"}
+    with db.get_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM user_preferences WHERE topic = 'machine-learning'"
+        ).fetchone()[0]
+    assert count == 1
+
 
 def test_resolve_backup_rejects_path_traversal(env, tmp_path):
     from fastapi import HTTPException
