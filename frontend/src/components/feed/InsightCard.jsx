@@ -593,16 +593,23 @@ export default function InsightCard({
   day         = null,
   articleKey  = null,
   readOnly    = false,
+  // Notes-only feed opens the note inline: the whole point of that view is
+  // reading notes, so making the user click the pencil on every card is noise.
+  defaultNoteOpen = false,
 }) {
 
   const type   = TYPE_CONFIG[card.content_type] || TYPE_CONFIG.news
 
   const hasChatActions = !readOnly && (onAskAbout || onExplainSimply || onToggleQueue)
+  // The note pencil lives in the bottom action bar, so the bar has to render
+  // whenever the card can hold a note — otherwise a card given only note
+  // handlers (NotesOnlyFeed) draws no bar and the note is unreachable.
+  const hasNoteActions = !readOnly && Boolean(onSaveNote || onDeleteNote || note)
   const shareResourceId = projectId && day != null
     ? `${projectId}/${day}${articleKey ? `/${articleKey}` : ''}`
     : null
 
-  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteOpen, setNoteOpen] = useState(defaultNoteOpen)
   const [noteDraft, setNoteDraft] = useState(note ?? "")
   const noteTimerRef = useRef(null)
 
@@ -725,7 +732,7 @@ export default function InsightCard({
       <SourceSection sourceLinks={card.source_links} cardTitle={card.title} />
 
       {/* Bottom action bar */}
-      {(hasChatActions || (!readOnly && (onMarkRead || onMarkUnread))) && (
+      {(hasChatActions || hasNoteActions || (!readOnly && (onMarkRead || onMarkUnread))) && (
         <div className="border-t border-slate-800/50 px-2.5 md:px-4 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
           <div className="flex items-center gap-1 md:gap-1.5 flex-wrap">

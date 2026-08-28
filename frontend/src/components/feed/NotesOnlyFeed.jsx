@@ -103,6 +103,7 @@ export default function NotesOnlyFeed() {
                 key={note.id}
                 card={card}
                 note={note.content}
+                defaultNoteOpen
                 onSaveNote={(content) => handleSaveNote(note, content)}
                 onDeleteNote={() => handleDeleteNote(note)}
                 projectId={note.project_id}
