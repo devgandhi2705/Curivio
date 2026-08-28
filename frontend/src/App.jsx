@@ -18,6 +18,29 @@ import { getToken } from './api/auth.js'
 import { checkIsAdmin } from './api/admin.js'
 import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 
+// ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
+// Shared between the AppLayout badge and DataLossSection's mark-as-seen, so
+// both read/write the exact same key and comparison logic.
+function dataLossSeenKey(userId) { return `dataloss_seen_${userId}` }
+
+function readDataLossSeen(userId) {
+  try { return JSON.parse(localStorage.getItem(dataLossSeenKey(userId)) || '{}') }
+  catch { return {} }
+}
+
+function markDataLossSeen(userId, requests) {
+  const seen = readDataLossSeen(userId)
+  requests.forEach(r => { seen[r.request_id] = r.status })
+  try { localStorage.setItem(dataLossSeenKey(userId), JSON.stringify(seen)) } catch { /* storage unavailable */ }
+}
+
+// A resolved/rejected request the user hasn't seen at that status yet. "open"
+// requests never alert — that status is exactly what submitting one shows.
+function hasUnseenDataLossUpdate(userId, requests) {
+  const seen = readDataLossSeen(userId)
+  return requests.some(r => r.status !== "open" && seen[r.request_id] !== r.status)
+}
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
 function ClockIcon({ className }) {
@@ -157,17 +180,23 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
 // record instead of a support message. The backend keeps one open request per
 // user, so re-submitting shows the existing one rather than queueing duplicates.
 function DataLossSection({ inputCls, btnPrimary }) {
+  const { user } = useAuth()
   const [description, setDescription] = useState("")
   const [requests, setRequests] = useState([])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState("")
   const [err, setErr] = useState("")
 
+  // Loading this section IS "viewing" the status, so mark every request's
+  // current status as seen here — this is what clears the Settings badge.
   useEffect(() => {
     myDataLossRequests()
-      .then(d => setRequests(d.requests))
+      .then(d => {
+        setRequests(d.requests)
+        if (user?.user_id) markDataLossSeen(user.user_id, d.requests)
+      })
       .catch(() => setRequests([]))
-  }, [])
+  }, [user?.user_id])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -180,6 +209,7 @@ function DataLossSection({ inputCls, btnPrimary }) {
       setDescription("")
       const d = await myDataLossRequests()
       setRequests(d.requests)
+      if (user?.user_id) markDataLossSeen(user.user_id, d.requests)
     } catch (e2) {
       setErr(e2.message)
     } finally {
@@ -245,6 +275,17 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
 
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
+
+  // Points at "Report Missing Data" from the main menu, same signal as the
+  // gear-icon badge — this is what tells the user WHERE to click once they've
+  // already opened Settings.
+  const [dataLossAlert, setDataLossAlert] = useState(false)
+  useEffect(() => {
+    if (!user?.user_id) return
+    myDataLossRequests()
+      .then(d => setDataLossAlert(hasUnseenDataLossUpdate(user.user_id, d.requests)))
+      .catch(() => {})
+  }, [user?.user_id])
 
   const feedVersion = user?.feed_version || "legacy"
   const [savingFeed, setSavingFeed]     = useState(false)
@@ -469,8 +510,9 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Support</p>
             <button onClick={() => setSection("dataloss")}
-              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors">
+              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors flex items-center gap-1.5">
               Report Missing Data…
+              {dataLossAlert && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
             </button>
           </div>
 
@@ -808,7 +850,7 @@ function NavItem({ item, collapsed, onClick, badge }) {
 function Sidebar({
   view, onSearchOpen,
   queue, onQueueItemClick,
-  showSettings, onSettingsToggle, settingsRef, user,
+  showSettings, onSettingsToggle, settingsRef, user, dataLossAlert,
   collapsed, setCollapsed, open, setOpen,
   isAdmin,
 }) {
@@ -1048,8 +1090,16 @@ function Sidebar({
                 collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 w-full px-3 py-2' : 'w-full px-3 py-2',
               ].join(' ')}
             >
-              <div className="w-[22px] h-[22px] rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-                {(user?.name || user?.email || "?")[0].toUpperCase()}
+              <div className="relative w-[22px] h-[22px] flex-shrink-0">
+                <div className="w-full h-full rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold">
+                  {(user?.name || user?.email || "?")[0].toUpperCase()}
+                </div>
+                {dataLossAlert && (
+                  <span
+                    title="Update on your data-loss report"
+                    className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-slate-950"
+                  />
+                )}
               </div>
               <span className={`flex-1 text-left truncate ${collapsed ? 'md:hidden' : ''}`}>
                 {user?.name || 'Settings'}
@@ -1239,6 +1289,20 @@ export default function AppLayout() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const settingsRef = useRef(null)
+  // Whether the user has a data-loss report that was resolved/rejected since
+  // they last looked at it — the only way to see that today is diving back
+  // into Settings > Report Missing Data, so this drives a badge dot on the
+  // Settings button instead. "Seen" is tracked in localStorage per-status
+  // (see dataLossSeenKey below) and updated by DataLossSection when it's
+  // actually viewed; re-fetched here whenever Settings closes so a status
+  // change picked up while the panel was open clears the dot immediately.
+  const [dataLossAlert, setDataLossAlert] = useState(false)
+  useEffect(() => {
+    if (!user || showSettings) return
+    myDataLossRequests()
+      .then(d => setDataLossAlert(hasUnseenDataLossUpdate(user.user_id, d.requests)))
+      .catch(() => {})
+  }, [user, showSettings])
   const [showOverflow, setShowOverflow] = useState(false)
   const overflowRef = useRef(null)
   const [showDesktopOverflow, setShowDesktopOverflow] = useState(false)
@@ -1411,6 +1475,7 @@ export default function AppLayout() {
         onSettingsToggle={() => setShowSettings(s => !s)}
         settingsRef={settingsRef}
         user={user}
+        dataLossAlert={dataLossAlert}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
         open={sidebarOpen}
