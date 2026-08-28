@@ -4,7 +4,6 @@ import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHist
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import { useContextMenu } from "../../contexts/ContextMenu.jsx"
-import { createShareLink } from "../../api/share.js"
 import ChatMessage from "./ChatMessage.jsx"
 import ChatInput from "./ChatInput.jsx"
 import { SessionListContent } from "./SessionList.jsx"
@@ -526,18 +525,6 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         },
       },
       { label: 'New chat', onClick: handleNewChat },
-      { label: 'Files', onClick: () => setFilesPanelOpen(true) },
-      {
-        label: 'Copy share link',
-        onClick: async () => {
-          try {
-            const { share_url } = await createShareLink('chat', sessionId)
-            await navigator.clipboard.writeText(share_url)
-          } catch {
-            // silently ignore — no toast system in this app
-          }
-        },
-      },
       { label: 'Delete chat', variant: 'danger', onClick: () => handleDeleteSession(sessionId) },
     ])
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -580,9 +567,25 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         />
       )}
 
-      {/* Files panel toggle + share current thread — desktop only; mobile users get
-          "Files" / "Copy share link" in the overflow menu */}
+      {/* Files panel toggle + share current thread — desktop controls */}
       {messages.length > 0 && (
+        <>
+        <div className="md:hidden flex items-center gap-1.5 fixed top-3.5 right-14 z-50">
+          <button
+            onClick={() => setFilesPanelOpen(true)}
+            title="Files"
+            aria-label="Files"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-blue-300 bg-slate-950 hover:bg-blue-500/10 transition-all"
+          >
+            <FilesIcon />
+          </button>
+          <ShareButton
+            type="chat"
+            resourceId={sessionId}
+            shareTitle="Check out this conversation on Curivio"
+            buttonClassName="w-8 h-8 justify-center p-0 !bg-slate-950 hover:!bg-blue-500/10 border-transparent"
+          />
+        </div>
         <div className="hidden md:flex items-center gap-1.5 fixed top-3.5 right-3.5 z-50">
           <button
             onClick={() => setFilesPanelOpen(true)}
@@ -594,6 +597,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
           </button>
           <ShareButton type="chat" resourceId={sessionId} shareTitle="Check out this conversation on Curivio" />
         </div>
+        </>
       )}
 
       {filesPanelOpen && (

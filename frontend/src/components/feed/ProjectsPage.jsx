@@ -284,7 +284,7 @@ export default function ProjectsPage({
   const [personaSaved,         setPersonaSaved]         = useState(false)
 
   // Export callbacks exposed by DailyPackageView for the current selection
-  const [exportCallbacks, setExportCallbacks] = useState({ pdf: null, md: null })
+  const [exportCallbacks, setExportCallbacks] = useState({ pdf: null, md: null, share: null })
 
   // ── Sort projects by most-recently-visited ────────────────────────────────────
   const sortedProjects = visitedOrder.length === 0 ? projects : [...projects].sort((a, b) => {
@@ -349,10 +349,9 @@ export default function ProjectsPage({
     const activeProject = projects.find(p => p.project_id === activeId) ?? null
     if (!activeProject) { clearViewActions('feed'); return }
     setViewActions('feed', [
-      {
-        label: 'Rename project',
-        onClick: () => { setRenameProjectDraft(activeProject.name || ''); setShowRenameProject(true) },
-      },
+      ...(exportCallbacks.share ? [
+        { label: 'Share page', share: exportCallbacks.share },
+      ] : []),
       { label: 'Edit project', onClick: () => setShowEdit(true) },
       ...(exportCallbacks.pdf ? [
         { label: 'Export as PDF',      onClick: exportCallbacks.pdf, export: true },
@@ -668,8 +667,8 @@ export default function ProjectsPage({
     setShowRenameProject(false)
   }, [activeId])
 
-  const handleExportReady = useCallback((pdfFn, mdFn) => {
-    setExportCallbacks({ pdf: pdfFn, md: mdFn })
+  const handleExportReady = useCallback((pdfFn, mdFn, share) => {
+    setExportCallbacks({ pdf: pdfFn, md: mdFn, share })
   }, [])
 
   // ── Read tracking ──────────────────────────────────────────────────────────

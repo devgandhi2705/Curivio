@@ -334,7 +334,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
     howRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const ctaLabel  = "Signup"
+  const ctaLabel  = isAuthenticated ? "Open app" : "Signup"
   const ctaAction = isAuthenticated ? onEnterApp : onShowAuth
 
   return (
@@ -375,38 +375,38 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </nav>
 
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
-      <section className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-12 pb-10 md:pt-20 md:pb-16">
-        <div className="grid md:grid-cols-2 gap-10 md:gap-16 items-center">
+      <section className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-8 md:pt-20 md:pb-16">
+        <div className="grid md:grid-cols-2 gap-8 md:gap-16 items-center">
 
           {/* Left: copy */}
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 mb-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 mb-4 sm:mb-6">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-[12px] font-medium text-blue-400">Daily learning for curious minds</span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl md:text-[54px] font-bold text-slate-100 leading-[1.1] tracking-tight mb-5">
+            <h1 className="text-3xl sm:text-5xl md:text-[54px] font-bold text-slate-100 leading-[1.1] tracking-tight mb-4 sm:mb-5">
               Stay curious,{" "}
               <span className="bg-gradient-to-r from-blue-400 via-indigo-400 to-violet-400 bg-clip-text text-transparent">
                 every day.
               </span>
             </h1>
 
-            <p className="text-[15px] sm:text-base text-slate-400 leading-relaxed mb-8 max-w-md">
+            <p className="text-sm sm:text-base text-slate-400 leading-relaxed mb-6 sm:mb-8 max-w-md">
               Curivio builds your understanding of topics you care about through short daily reading sessions — powered by live web knowledge, personalized to how you learn.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={ctaAction}
-                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 hover:shadow-blue-600/35"
+                className="flex items-center justify-center gap-2 px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl text-[13px] sm:text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition-colors shadow-lg shadow-blue-600/25 hover:shadow-blue-600/35"
               >
                 {ctaLabel}
                 <ChevronRight className="w-4 h-4" />
               </button>
               <button
                 onClick={scrollToHow}
-                className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium text-slate-300 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600/60 transition-colors"
+                className="flex items-center justify-center gap-2 px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl text-[13px] sm:text-sm font-medium text-slate-300 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600/60 transition-colors"
               >
                 See how it works
               </button>
@@ -426,7 +426,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </section>
 
       {/* ── Social proof strip ──────────────────────────────────────────────── */}
-      <div className="border-y border-slate-800/60 bg-slate-900/20 py-4">
+      <div className="border-y border-slate-800/60 bg-slate-900/20 py-3 sm:py-4">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="flex flex-wrap justify-center gap-x-8 gap-y-2">
             {[
@@ -447,12 +447,12 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </div>
 
       {/* ── How It Works ─────────────────────────────────────────────────────── */}
-      <section ref={howRef} id="how-it-works" className="relative py-16 md:py-24">
+      <section ref={howRef} id="how-it-works" className="relative py-12 md:py-24">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
 
-          <div className="text-center mb-12">
+          <div className="text-center mb-8 md:mb-12">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-blue-400 mb-3">How Curivio works</p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-slate-100 mb-4">Four things that make it different</h2>
+            <h2 className="text-xl sm:text-3xl font-bold text-slate-100 mb-4">Four things that make it different</h2>
             <p className="text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
               Not a course. Not a generic chatbot. A personal learning system that evolves with your curiosity and compounds your knowledge over time.
             </p>

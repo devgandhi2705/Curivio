@@ -102,7 +102,7 @@ function ShareLinkIcon({ size = 16 }) {
   )
 }
 
-export default function ShareButton({ type, resourceId, shareTitle = "", shareText = "", className = "", buttonClassName = "" }) {
+export default function ShareButton({ type, resourceId, shareTitle = "", shareText = "", className = "", buttonClassName = "", label = "", menuItem = false }) {
   const [isOpen, setIsOpen]     = useState(false)
   const [shareUrl, setShareUrl] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -212,13 +212,13 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
   }
 
   return (
-    <div ref={wrapperRef} className={`relative inline-block ${className}`}>
-      <button onClick={handleTriggerClick} className={`${ACTION_BTN_CLASS} ${buttonClassName}`}>
-        {isLoading ? (
-          <span className="share-spinner" />
-        ) : (
-          <ShareLinkIcon />
-        )}
+    <div ref={wrapperRef} className={`relative ${menuItem ? "block w-full" : "inline-block"} ${className}`}>
+      <button
+        onClick={handleTriggerClick}
+        className={`${menuItem ? "w-full text-left px-3.5 py-2 text-[13px] transition-colors text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]" : ACTION_BTN_CLASS} ${buttonClassName}`}
+      >
+        {!menuItem && (isLoading ? <span className="share-spinner" /> : <ShareLinkIcon />)}
+        {label && <span>{label}</span>}
       </button>
 
       {error && (
@@ -228,6 +228,7 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
       {isOpen && createPortal(
         <div
           ref={popoverRef}
+          data-share-popover
           style={{ position: "fixed", top: popoverStyle.top, left: popoverStyle.left, opacity: popoverStyle.opacity }}
           className="z-50 w-64 rounded-xl bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden transition-opacity duration-100"
         >

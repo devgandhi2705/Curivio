@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate, useLocation, Navigate, NavLink } from 'react-router-dom'
 import ChatWorkspace from './components/chat/ChatWorkspace.jsx'
 import ProjectsPage from './components/feed/ProjectsPage.jsx'
+import ShareButton from './components/ShareButton.jsx'
 import BookmarksPage from './components/bookmarks/BookmarksPage.jsx'
 import DashboardPage from './components/dashboard/DashboardPage.jsx'
 import AdminPage from './components/admin/AdminPage.jsx'
@@ -273,6 +274,7 @@ function DataLossSection({ inputCls, btnPrimary }) {
 
 function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }) {
   const { user, logout, updateProfile, updateFeedVersion, changePassword, deleteAccount, verifyPassword } = useAuth()
+  const navigate = useNavigate()
 
   const [section, setSection]           = useState("main")
   const [profileName, setProfileName]   = useState(user?.name || "")
@@ -419,6 +421,8 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
     setDeleting(true); setDelErr("")
     try {
       await deleteAccount(deleteConfirm)
+      // Same reasoning as Sign Out: land on the landing page, not a login form.
+      window.location.replace('/')
     } catch (err) {
       setDelErr(err.message)
       setDeleting(false)
@@ -482,7 +486,15 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
                 </svg>
               </button>
             ))}
-            <button onClick={logout}
+            <button onClick={() => navigate('/about')}
+              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors mt-0.5">
+              About Curivio
+            </button>
+            {/* Sign out lands on the landing page, not the login form. A full
+                reload (rather than navigate) is deliberate: clearing the session
+                in place would let AuthGuard bounce to /login?next=… first, and it
+                also tears down any in-flight feed/chat streams. */}
+            <button onClick={async () => { await logout(); window.location.replace('/') }}
               className="w-full text-left px-2 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 rounded-lg transition-colors mt-0.5">
               Sign Out
             </button>
@@ -1386,7 +1398,8 @@ export default function AppLayout() {
   useEffect(() => {
     if (!showOverflow) return
     function onDown(e) {
-      if (overflowRef.current && !overflowRef.current.contains(e.target)) setShowOverflow(false)
+      if (overflowRef.current?.contains(e.target) || e.target.closest?.('[data-share-popover]')) return
+      setShowOverflow(false)
     }
     document.addEventListener("mousedown", onDown)
     return () => document.removeEventListener("mousedown", onDown)
@@ -1397,7 +1410,8 @@ export default function AppLayout() {
   useEffect(() => {
     if (!showDesktopOverflow) return
     function onDown(e) {
-      if (desktopOverflowRef.current && !desktopOverflowRef.current.contains(e.target)) setShowDesktopOverflow(false)
+      if (desktopOverflowRef.current?.contains(e.target) || e.target.closest?.('[data-share-popover]')) return
+      setShowDesktopOverflow(false)
     }
     document.addEventListener("mousedown", onDown)
     return () => document.removeEventListener("mousedown", onDown)
@@ -1527,9 +1541,9 @@ export default function AppLayout() {
             aria-label="More options"
             className={[
               'w-8 h-8 flex items-center justify-center rounded-lg',
-              'bg-slate-950/70 backdrop-blur-sm transition-colors',
+              'bg-slate-950 transition-colors',
               showOverflow
-                ? 'text-slate-200 bg-slate-800/80'
+                ? 'text-slate-200'
                 : 'text-slate-500 hover:text-slate-200',
             ].join(' ')}
           >
@@ -1540,33 +1554,42 @@ export default function AppLayout() {
           {showOverflow && (
             <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
               {(actionsByView[view] ?? []).map((action, i) => (
-                <button
-                  key={i}
-                  onClick={() => { action.onClick(); setShowOverflow(false) }}
-                  className={[
-                    'w-full text-left px-3.5 py-2 text-[13px] transition-colors',
-                    action.variant === 'danger'
-                      ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
-                      : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
-                  ].join(' ')}
-                >
-                  {action.label}
-                </button>
+                action.share ? (
+                  <ShareButton
+                    key={i}
+                    {...action.share}
+                    label={action.label}
+                    menuItem
+                  />
+                ) : (
+                  <button
+                    key={i}
+                    onClick={() => { action.onClick(); setShowOverflow(false) }}
+                    className={[
+                      'w-full text-left px-3.5 py-2 text-[13px] transition-colors',
+                      action.variant === 'danger'
+                        ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                        : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
+                    ].join(' ')}
+                  >
+                    {action.label}
+                  </button>
+                )
               ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Desktop ⋮ overflow menu — feed export actions only, hidden on mobile */}
-      {view === 'feed' && (actionsByView['feed'] ?? []).filter(a => a.export).length > 0 && (
+      {/* Desktop ⋮ overflow menu — hidden on mobile */}
+      {view === 'feed' && (actionsByView['feed'] ?? []).length > 0 && (
         <div
           ref={desktopOverflowRef}
           className="hidden md:block fixed top-3.5 right-3.5 z-50"
         >
           <button
             onClick={() => setShowDesktopOverflow(s => !s)}
-            aria-label="Export options"
+            aria-label="More options"
             className={[
               'w-8 h-8 flex items-center justify-center rounded-lg',
               'bg-slate-950/70 backdrop-blur-sm transition-colors',
@@ -1581,14 +1604,28 @@ export default function AppLayout() {
           </button>
           {showDesktopOverflow && (
             <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
-              {(actionsByView['feed'] ?? []).filter(a => a.export).map((action, i) => (
-                <button
-                  key={i}
-                  onClick={() => { action.onClick(); setShowDesktopOverflow(false) }}
-                  className="w-full text-left px-3.5 py-2 text-[13px] text-slate-300 hover:text-slate-100 hover:bg-white/[0.05] transition-colors"
-                >
-                  {action.label}
-                </button>
+              {(actionsByView['feed'] ?? []).map((action, i) => (
+                action.share ? (
+                  <ShareButton
+                    key={i}
+                    {...action.share}
+                    label={action.label}
+                    menuItem
+                  />
+                ) : (
+                  <button
+                    key={i}
+                    onClick={() => { action.onClick(); setShowDesktopOverflow(false) }}
+                    className={[
+                      'w-full text-left px-3.5 py-2 text-[13px] transition-colors',
+                      action.variant === 'danger'
+                        ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                        : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
+                    ].join(' ')}
+                  >
+                    {action.label}
+                  </button>
+                )
               ))}
             </div>
           )}
@@ -1685,7 +1722,11 @@ export default function AppLayout() {
         />
       )}
 
-      <UnpackListener />
+      {/* Unpack (select text → Explain/Translate/Read Aloud) is reading-surface
+          only: feed and chat. Not dashboard/bookmarks/read-later/admin, not the
+          landing page, and not onboarding — where a stray selection popover
+          would sit on top of the modal. */}
+      {(view === 'feed' || view === 'chat') && !onboardingStep && <UnpackListener />}
     </div>
   )
 }

@@ -27,7 +27,6 @@ import { exportAsPdf, downloadMarkdown } from "../../utils/exportPackage.js"
 import { getQueue, addToQueue, removeFromQueue, isInQueue } from "../../api/queue.js"
 import { getJourneyPreview } from "../../api/projects.js"
 import { savePackage, deletePackage } from "../../lib/offlineStorage.js"
-import ShareButton from "../ShareButton.jsx"
 
 function formatDate(ts) {
   if (!ts) return ""
@@ -199,13 +198,6 @@ function PackageHeader({ pkg, dayLabel, projectId }) {
         <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight break-words">
           {pkg.package_headline}
         </h2>
-        {projectId && (
-          <ShareButton
-            type="feed"
-            resourceId={`${projectId}/${pkg.id}`}
-            shareTitle={pkg.package_headline || "Daily package"}
-          />
-        )}
       </div>
 
       {/* Learning thread — left-accent style */}
@@ -743,7 +735,12 @@ export default function DailyPackageView({
       }
       onExportReady(
         () => exportAsPdf(selected, opts),
-        () => downloadMarkdown(selected, opts)
+        () => downloadMarkdown(selected, opts),
+        {
+          type: "feed",
+          resourceId: `${pid}/${selected.id}`,
+          shareTitle: selected.package_headline || "Daily package",
+        }
       )
     }
     setup()

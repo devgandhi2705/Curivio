@@ -7,6 +7,9 @@ import SharePage from '../pages/SharePage.jsx'
 
 const router = createBrowserRouter([
   { path: '/', element: <LandingRoute /> },
+  // Landing page that never redirects — the only way a signed-in user can read it,
+  // reachable from Settings → "About Curivio".
+  { path: '/about', element: <LandingRoute redirectAuthed={false} /> },
   { path: '/login', element: <LoginRoute /> },
   { path: '/share/:token', element: <SharePage /> },
   {
