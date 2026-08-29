@@ -7,6 +7,7 @@ import {
 import CollectionPickerModal from './CollectionPickerModal.jsx'
 import { useSidebarSubsection } from '../../contexts/SidebarSubsection.jsx'
 import { useContextMenu } from '../../contexts/ContextMenu.jsx'
+import MarkdownText from '../shared/MarkdownText.jsx'
 
 // ── Color palette ──────────────────────────────────────────────────────────────
 
@@ -46,24 +47,28 @@ const COLOR_BG = {
   cyan:    'bg-cyan-500/10',
 }
 
-// ── Content type labels ────────────────────────────────────────────────────────
+// ** Content type presentation **
 
-const TYPE_LABEL = {
-  feed_article:    { label: 'Article',       color: 'text-blue-400   bg-blue-500/10   border-blue-500/20'   },
-  curiosity:       { label: 'Curiosity',     color: 'text-amber-400  bg-amber-500/10  border-amber-500/20'  },
-  deep_research:   { label: 'Research',      color: 'text-violet-400 bg-violet-500/10 border-violet-500/20' },
-  chat_insight:    { label: 'Chat Insight',  color: 'text-cyan-400   bg-cyan-500/10   border-cyan-500/20'   },
-  resource_link:   { label: 'Resource',      color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
-  external:        { label: 'External',      color: 'text-slate-400  bg-slate-500/10  border-slate-500/20'  },
+// One row per content_type: badge styling, the accent stripe down the card's
+// left edge, and what that type's AI-notes block is actually called (a feed
+// card's note is "why it matters", a research report's is its takeaways).
+// Unknown types fall back to `external`.
+
+const TYPE_META = {
+  feed_article:  { label: 'Article',      color: 'text-blue-400    bg-blue-500/10    border-blue-500/20',    accent: 'bg-blue-500/60',    noteLabel: 'Why it matters' },
+  curiosity:     { label: 'Curiosity',    color: 'text-amber-400   bg-amber-500/10   border-amber-500/20',   accent: 'bg-amber-500/60',   noteLabel: 'Why it matters' },
+  deep_research: { label: 'Research',     color: 'text-violet-400  bg-violet-500/10  border-violet-500/20',  accent: 'bg-violet-500/60',  noteLabel: 'Key takeaways'  },
+  chat_insight:  { label: 'Chat insight', color: 'text-cyan-400    bg-cyan-500/10    border-cyan-500/20',    accent: 'bg-cyan-500/60',    noteLabel: 'Takeaway'       },
+  resource_link: { label: 'Resource',     color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', accent: 'bg-emerald-500/60', noteLabel: 'Note'           },
+  external:      { label: 'External',     color: 'text-slate-400   bg-slate-500/10   border-slate-500/20',   accent: 'bg-slate-600',      noteLabel: 'Note'           },
 }
 
-function typeBadge(ct) {
-  const t = TYPE_LABEL[ct] ?? { label: ct, color: 'text-slate-400 bg-slate-800 border-slate-700' }
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${t.color}`}>
-      {t.label}
-    </span>
-  )
+function typeMeta(ct) {
+  return TYPE_META[ct] ?? { ...TYPE_META.external, label: ct || 'Saved' }
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
 }
 
 function formatDate(iso) {
@@ -73,11 +78,92 @@ function formatDate(iso) {
   } catch { return '' }
 }
 
+// ** Backlinks **
+
+// Every bookmark keeps a route back to where it came from: the chat session it
+// was saved out of, the feed article it belongs to, the external page, or any
+// combination of the three. Feed bookmarks saved before retrieval_metadata
+// carried insight_id/article_key still resolve - they land on the project feed.
+
+function ChatIcon() {
+  return (
+    <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12Z" />
+    </svg>
+  )
+}
+
+function FeedIcon() {
+  return (
+    <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M2.5 4h11M2.5 8h7.5M2.5 12h5" />
+    </svg>
+  )
+}
+
+function ExternalIcon() {
+  return (
+    <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M6.5 9.5l4-4M9.5 5.5h3v3M10 10.5v3.5H2V6h3.5" />
+    </svg>
+  )
+}
+
+function originLinks(bm, onOpenChat, onOpenFeed) {
+  const meta  = bm.retrieval_metadata || {}
+  const links = []
+  if (bm.conversation_reference && onOpenChat) {
+    links.push({
+      key:   'chat',
+      label: 'Open chat',
+      tone:  'text-violet-500 hover:text-violet-300',
+      icon:  <ChatIcon />,
+      onClick: () => onOpenChat(bm.conversation_reference),
+    })
+  }
+  if (bm.project_id && onOpenFeed) {
+    links.push({
+      key:   'feed',
+      label: meta.article_key ? 'Open in feed' : 'Open project',
+      tone:  'text-blue-500 hover:text-blue-300',
+      icon:  <FeedIcon />,
+      onClick: () => onOpenFeed({
+        projectId:  bm.project_id,
+        insightId:  meta.insight_id  ?? null,
+        articleKey: meta.article_key ?? null,
+      }),
+    })
+  }
+  if (bm.source_url) {
+    links.push({
+      key:   'url',
+      label: hostOf(bm.source_url) || 'Source',
+      tone:  'text-slate-500 hover:text-blue-400',
+      icon:  <ExternalIcon />,
+      href:  bm.source_url,
+    })
+  }
+  return links
+}
+
+function BacklinkChip({ link }) {
+  const cls = `text-[10px] transition-colors flex items-center gap-1 ${link.tone}`
+  return link.href
+    ? <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls}>{link.icon}{link.label}</a>
+    : <button onClick={link.onClick} className={cls}>{link.icon}{link.label}</button>
+}
+
 // ── Bookmark card ─────────────────────────────────────────────────────────────
 
-function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
-  const [deleting, setDeleting] = useState(false)
+function BookmarkCard({ bookmark, onDelete, onOpenChat, onOpenFeed }) {
+  const [deleting,      setDeleting]      = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [showSnapshot,  setShowSnapshot]  = useState(false)
+
+  const type    = typeMeta(bookmark.content_type)
+  const links   = originLinks(bookmark, onOpenChat, onOpenFeed)
+  const primary = links[0] ?? null
+  const origin  = bookmark.project_name || hostOf(bookmark.source_url)
 
   async function handleConfirmDelete() {
     setConfirmDelete(false)
@@ -86,14 +172,19 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
   }
 
   return (
-    <div className="group relative flex flex-col gap-2 p-4 bg-slate-900/60 border border-slate-800 rounded-xl hover:border-slate-700 transition-all">
+    <div className="group relative flex flex-col gap-2 p-4 pl-5 bg-slate-900/60 border border-slate-800 rounded-xl hover:border-slate-700 transition-all">
+      {/* Type accent - the one glance-level cue for what kind of thing this is */}
+      <div className={`absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full ${type.accent}`} />
+
       {/* Top row */}
       <div className="flex items-start gap-2 justify-between">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {typeBadge(bookmark.content_type)}
-          {bookmark.project_name && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-500 bg-slate-800/60">
-              {bookmark.project_name}
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${type.color}`}>
+            {type.label}
+          </span>
+          {origin && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] border border-slate-700 text-slate-500 bg-slate-800/60 truncate max-w-[150px]">
+              {origin}
             </span>
           )}
         </div>
@@ -116,25 +207,52 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
         />
       )}
 
-      {/* Title */}
+      {/* Title - opens whatever the card's first backlink points at */}
       <h3 className="text-sm font-semibold text-slate-100 leading-snug">
-        {bookmark.source_url ? (
-          <a href={bookmark.source_url} target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 transition-colors">
-            {bookmark.title}
-          </a>
+        {primary ? (
+          primary.href ? (
+            <a href={primary.href} target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 transition-colors">
+              {bookmark.title}
+            </a>
+          ) : (
+            <button onClick={primary.onClick} className="text-left hover:text-blue-300 transition-colors">
+              {bookmark.title}
+            </button>
+          )
         ) : bookmark.title}
       </h3>
 
       {/* Summary */}
       {bookmark.summary && (
-        <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">{bookmark.summary}</p>
+        <p className="text-xs text-slate-400 leading-relaxed line-clamp-3">{bookmark.summary}</p>
       )}
 
-      {/* AI notes */}
+      {/* AI notes - labelled by type */}
       {bookmark.ai_generated_notes && (
         <div className="flex gap-2 mt-1">
           <div className="flex-shrink-0 w-0.5 rounded-full bg-violet-500/40 self-stretch" />
-          <p className="text-[11px] text-slate-500 leading-relaxed italic">{bookmark.ai_generated_notes}</p>
+          <div className="min-w-0">
+            <p className="text-[9px] uppercase tracking-widest text-slate-600 mb-0.5">{type.noteLabel}</p>
+            <p className="text-[11px] text-slate-500 leading-relaxed">{bookmark.ai_generated_notes}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Saved excerpt - chat and research bookmarks have no page to open, so the
+          snapshot taken at save time IS the content. Collapsed by default. */}
+      {bookmark.content_snapshot && (
+        <div>
+          <button
+            onClick={() => setShowSnapshot(v => !v)}
+            className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {showSnapshot ? 'Hide saved excerpt' : 'Show saved excerpt'}
+          </button>
+          {showSnapshot && (
+            <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+              <MarkdownText text={bookmark.content_snapshot} variant="thinking" />
+            </div>
+          )}
         </div>
       )}
 
@@ -160,35 +278,16 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat }) {
         </div>
       )}
 
-      {/* Footer */}
-      <div className="flex items-center justify-between pt-1 mt-auto">
-        <span className="text-[10px] text-slate-600">{formatDate(bookmark.saved_at)}</span>
-        <div className="flex items-center gap-2">
-          {bookmark.source_type === 'chat' && bookmark.conversation_reference && (
-            <button
-              onClick={() => onOpenChat?.(bookmark.conversation_reference)}
-              className="text-[10px] text-violet-500 hover:text-violet-300 transition-colors flex items-center gap-0.5"
-            >
-              <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12Z" />
-              </svg>
-              View Chat
-            </button>
-          )}
-          {bookmark.source_url && (
-            <a
-              href={bookmark.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] text-slate-600 hover:text-blue-400 transition-colors flex items-center gap-0.5"
-            >
-              <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <path d="M6.5 9.5l4-4M9.5 5.5h3v3M10 10.5v3.5H2V6h3.5" />
-              </svg>
-              Open
-            </a>
-          )}
-        </div>
+      {/* Footer - saved date + every route back to the source */}
+      <div className="flex items-end justify-between gap-2 pt-1 mt-auto">
+        <span className="text-[10px] text-slate-600 flex-shrink-0">{formatDate(bookmark.saved_at)}</span>
+        {links.length > 0 ? (
+          <div className="flex items-center gap-2.5 flex-wrap justify-end">
+            {links.map(l => <BacklinkChip key={l.key} link={l} />)}
+          </div>
+        ) : (
+          <span className="text-[10px] text-slate-700 italic">No source link saved</span>
+        )}
       </div>
     </div>
   )
@@ -206,7 +305,7 @@ function DotsIcon() {
   )
 }
 
-function CollectionItem({ col, isActive, onClick, onRename, onEdit, onDelete }) {
+function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 
@@ -223,6 +322,8 @@ function CollectionItem({ col, isActive, onClick, onRename, onEdit, onDelete }) 
     <div
       onClick={() => onClick(col.collection_id)}
       className={`group relative flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
+        menuOpen ? 'z-50' : ''
+      } ${
         isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
       }`}
     >
@@ -249,12 +350,6 @@ function CollectionItem({ col, isActive, onClick, onRename, onEdit, onDelete }) 
         </button>
         {menuOpen && (
           <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
-            <button
-              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename?.(col) }}
-              className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
-            >
-              Rename
-            </button>
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit?.(col) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
@@ -391,39 +486,6 @@ function EditCollectionModal({ col, onClose, onSave }) {
   )
 }
 
-// ── Rename modal ──────────────────────────────────────────────────────────────
-
-function RenameModal({ heading, initialValue, onConfirm, onClose }) {
-  const [value, setValue] = useState(initialValue)
-  const inputRef = useRef(null)
-  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onConfirm(value.trim()) }
-    if (e.key === 'Escape') onClose()
-    e.stopPropagation()
-  }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
-        <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          maxLength={120}
-          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
-        />
-        <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
-          <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Delete confirmation modal ─────────────────────────────────────────────────
 
 function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
@@ -453,7 +515,7 @@ function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
 
 // ── Collections subsection — rendered inside App sidebar's Zone 3 ─────────────
 
-function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew, onRename, onEdit, onDelete }) {
+function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNew, onEdit, onDelete }) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-1 mb-2 flex-shrink-0">
@@ -482,7 +544,6 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
               col={col}
               isActive={activeId === col.collection_id}
               onClick={onSelect}
-              onRename={onRename}
               onEdit={onEdit}
               onDelete={onDelete}
             />
@@ -495,7 +556,7 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModal }) {
+export default function BookmarksPage({ onOpenChat, onOpenFeed, onSidebarClose, onBeforeModal }) {
   const [collections,    setCollections]    = useState([])
   const [bookmarks,      setBookmarks]      = useState([])
   const [activeId,       setActiveId]       = useState(null)
@@ -506,8 +567,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
   const [showNewCol,        setShowNewCol]        = useState(false)
   const [editingCol,        setEditingCol]        = useState(null)
   const [pendingDeleteCol,  setPendingDeleteCol]  = useState(null)
-  const [showRenameCol,     setShowRenameCol]     = useState(false)
-  const [renameColDraft,    setRenameColDraft]    = useState('')
 
   const { register, unregister } = useSidebarSubsection()
   const { setViewActions, clearViewActions } = useContextMenu()
@@ -519,7 +578,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
     subsectionHandlers.current = {
       onSelect: (id) => { setActiveId(id); onSidebarClose?.() },
       onNew:    () => run(() => setShowNewCol(true)),
-      onRename: (col) => run(() => { setActiveId(col.collection_id); setRenameColDraft(col.name || ''); setShowRenameCol(true) }),
       onEdit:   (col) => run(() => setEditingCol(col)),
       onDelete: (col) => run(() => setPendingDeleteCol(col)),
     }
@@ -539,7 +597,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
           colLoading={colLoading}
           onSelect={(id) => subsectionHandlers.current.onSelect(id)}
           onNew={() => subsectionHandlers.current.onNew()}
-          onRename={(c) => subsectionHandlers.current.onRename(c)}
           onEdit={(c) => subsectionHandlers.current.onEdit(c)}
           onDelete={(c) => subsectionHandlers.current.onDelete(c)}
         />
@@ -557,10 +614,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
   useEffect(() => {
     if (!activeCol) { clearViewActions('bookmarks'); return }
     setViewActions('bookmarks', [
-      {
-        label: 'Rename collection',
-        onClick: () => { setRenameColDraft(activeCol.name || ''); setShowRenameCol(true) },
-      },
       { label: 'Edit collection', onClick: () => setEditingCol(activeCol) },
       { label: 'Delete collection', variant: 'danger', onClick: () => setPendingDeleteCol(activeCol) },
     ])
@@ -627,15 +680,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
     setEditingCol(null)
   }
 
-  async function handleRenameCollection(newName) {
-    if (!activeCol || !newName.trim()) return
-    try {
-      const updated = await updateCollection(activeCol.collection_id, { ...activeCol, name: newName.trim() })
-      setCollections(prev => prev.map(c => c.collection_id === activeCol.collection_id ? { ...c, ...updated } : c))
-    } catch {}
-    setShowRenameCol(false)
-  }
-
   return (
     <div className="pt-14 pb-6 px-4 sm:px-8 md:pt-6">
 
@@ -666,7 +710,7 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {bookmarks.map(bm => (
-            <BookmarkCard key={bm.bookmark_id} bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} />
+            <BookmarkCard key={bm.bookmark_id} bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} onOpenFeed={onOpenFeed} />
           ))}
         </div>
       )}
@@ -683,15 +727,6 @@ export default function BookmarksPage({ onOpenChat, onSidebarClose, onBeforeModa
           col={editingCol}
           onClose={() => setEditingCol(null)}
           onSave={(fields) => handleEditCollection(editingCol, fields)}
-        />
-      )}
-
-      {showRenameCol && (
-        <RenameModal
-          heading="Rename collection"
-          initialValue={renameColDraft}
-          onConfirm={handleRenameCollection}
-          onClose={() => setShowRenameCol(false)}
         />
       )}
 

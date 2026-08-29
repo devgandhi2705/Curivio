@@ -676,6 +676,7 @@ export default function InsightCard({
                 related_topics:     card.related_topics || [],
                 source_type:        'feed',
                 tags:                [card.category, card.content_type].filter(Boolean),
+                retrieval_metadata:  { insight_id: day ?? null, article_key: articleKey || '' },
               }}
             />
           )}

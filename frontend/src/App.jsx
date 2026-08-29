@@ -11,6 +11,7 @@ import { useAuth } from './contexts/AuthContext.jsx'
 import { useSidebarSubsection } from './contexts/SidebarSubsection.jsx'
 import { useContextMenu } from './contexts/ContextMenu.jsx'
 import { getQueue, removeFromQueue, clearQueue, setQueueUser } from './api/queue.js'
+import { getArticleChatLinks, articleKeyFromTitle } from './api/feed.js'
 import { useNetworkStatus } from './hooks/useNetworkStatus.js'
 import UnpackListener from './components/unpack/UnpackListener.jsx'
 import SyncStatus from './components/SyncStatus.jsx'
@@ -1434,7 +1435,21 @@ export default function AppLayout() {
     navigate(`/chat/${encodeURIComponent(sessionId)}`, { state: { sessionTitle: title } })
   }, [navigate])
 
-  const handleOpenInChat = useCallback((card, action, projectMeta = {}) => {
+  const handleOpenInChat = useCallback(async (card, action, projectMeta = {}) => {
+    // Explain Simply is a one-shot per article: the answer doesn't change on a
+    // second click, so send the user back to the session that already holds it
+    // and let them keep asking there. Ask About stays repeatable — a second,
+    // different question about the same card is a legitimately new session.
+    if (action === "explain_simply" && projectMeta.project_id) {
+      const prior = (await getArticleChatLinks(
+        projectMeta.project_id, articleKeyFromTitle(card.title || "")
+      )).find(l => l.interaction_type === "explain_simply")
+      if (prior) {
+        handleOpenChat(prior.session_id, prior.session_title)
+        return
+      }
+    }
+
     const ctx = {
       action,
       auto_trigger:     action === "explain_simply",
@@ -1455,7 +1470,7 @@ export default function AppLayout() {
     }
     setFeedContext(ctx)
     navigate('/chat')
-  }, [navigate])
+  }, [navigate, handleOpenChat])
 
   const handleOpenQueueItem = useCallback((item) => {
     const pid  = item.projectId  || null
@@ -1700,7 +1715,7 @@ export default function AppLayout() {
           {view === 'admin' && <AdminPage />}
 
           {view === 'bookmarks' && (
-            <BookmarksPage onOpenChat={handleOpenChat} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />
+            <BookmarksPage onOpenChat={handleOpenChat} onOpenFeed={handleOpenQueueItem} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />
           )}
 
           {view === 'readlater' && (
