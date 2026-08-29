@@ -396,7 +396,7 @@ CREATE TABLE IF NOT EXISTS feed_chat_links (
     article_key      TEXT    NOT NULL,
     article_title    TEXT    NOT NULL DEFAULT '',
     interaction_type TEXT    NOT NULL DEFAULT 'ask_about'
-                             CHECK(interaction_type IN ('ask_about', 'continue_research', 'deep_research')),
+                             CHECK(interaction_type IN ('ask_about', 'explain_simply', 'continue_research', 'deep_research')),
     created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """

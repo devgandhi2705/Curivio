@@ -118,15 +118,29 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       .catch(() => {})
   }, [])
 
-  // When a feed context arrives, store it and (for explain_simply) schedule auto-send.
+  // When a feed context arrives, start a FRESH session, store the context and
+  // (for explain_simply) schedule auto-send.
+  //
+  // The fresh session is the point: this component is mounted for the lifetime
+  // of the app (App.jsx hides it with CSS rather than unmounting), so sessionId
+  // used to survive every navigation. A second Ask About / Explain Simply then
+  // landed in the session the first one created, and the whole prior
+  // conversation was replayed as history into a prompt that already carries the
+  // full card — bloat that pushed the card's own context out of focus.
   useEffect(() => {
     if (!feedContext) return
+    setSessionId(generateSessionId())
+    setMessages([])
+    setError(null)
+    setChatMode("normal")
     setActiveFeedCtx(feedContext)
     feedLinkCreated.current = false
     onClearFeedContext?.()
     if (feedContext.action === "explain_simply") {
       setConversationMode("layman")
       setAutoSendPending(true)
+    } else {
+      setConversationMode(null)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedContext])

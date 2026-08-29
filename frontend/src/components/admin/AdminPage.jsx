@@ -163,6 +163,7 @@ function exportMeta(row) {
   const meta = [
     ["Timestamp", row.created_at],
     ["Action", row.call_type || "—"],
+    ["Feed action", FEED_ACTION_LABELS[row.agent_name] || "—"],
     ["Model", formatModel(row)],
     ["Latency", row.latency_ms != null ? `${row.latency_ms}ms` : "—"],
     ["Tokens", row.total_tokens != null ? String(row.total_tokens) : "—"],
@@ -288,6 +289,7 @@ const CSV_COLUMNS = [
   ["parent_run_id",   r => r.parent_run_id],
   ["created_at",      r => r.created_at],
   ["call_type",       r => r.call_type],
+  ["agent_name",      r => r.agent_name],
   ["provider",        r => r.provider],
   ["model_requested", r => r.model_requested],
   ["model_used",      r => r.model_used],
@@ -583,6 +585,7 @@ function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSel
             <div className="flex items-center gap-2 mb-1">
               <StatusBadge success={row.success} />
               <span className="text-sm font-semibold text-slate-100 truncate">{row.call_type || "—"}</span>
+              <FeedActionBadge agentName={row.agent_name} />
             </div>
             <p className="text-[11px] text-slate-500 font-mono tabular-nums">{formatTimestamp(row.created_at)}</p>
           </div>
@@ -1421,6 +1424,25 @@ function WebSearchBadge() {
   )
 }
 
+// Which Feed card action opened the chat session this row belongs to, read
+// from llm_call_log.agent_name (chat_service tags every turn of a feed-linked
+// session). Renders nothing for ordinary chat and for non-chat surfaces, whose
+// agent_name is either NULL or a feed_v2 pipeline agent name.
+const FEED_ACTION_LABELS = {
+  feed_ask_about:      "Ask About",
+  feed_explain_simply: "Explain Simply",
+}
+
+function FeedActionBadge({ agentName }) {
+  const label = FEED_ACTION_LABELS[agentName]
+  if (!label) return null
+  return (
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 border border-amber-500/25 text-amber-300 whitespace-nowrap">
+      {label}
+    </span>
+  )
+}
+
 // A group's own rows (group.rows) are flat siblings sharing one trace_id —
 // there is no deeper hierarchy inside a group. The parent_run_id-based
 // "Batch" concept (SiblingRow/DetailPanel) is a different, narrower thing —
@@ -1532,8 +1554,11 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
                 {/* A nested row's own action is its call_type — repeating the
                     parent group's ActionTypeBadge on every child would just
                     restate the header. */}
-                <span className="text-[11px] text-slate-300 truncate">
-                  {row.call_type || <span className="text-slate-600 italic">none</span>}
+                <span className="flex items-center gap-1.5 min-w-0 text-[11px] text-slate-300">
+                  <span className="truncate">
+                    {row.call_type || <span className="text-slate-600 italic">none</span>}
+                  </span>
+                  <FeedActionBadge agentName={row.agent_name} />
                 </span>
                 <span className="text-[11px] text-slate-500 truncate">{formatModel(row)}</span>
                 <span className="text-[11px] text-slate-500 font-mono tabular-nums text-right">{fmtMs(row.latency_ms)}</span>
@@ -1591,6 +1616,7 @@ function SingletonRow({ group, onRowClick, search }) {
               value was already one click away in DetailPanel regardless —
               this is a scan-speed restoration, not new information. */}
           <span className="text-[10px] text-slate-500 truncate max-w-[90px]">{row.call_type}</span>
+          <FeedActionBadge agentName={row.agent_name} />
         </span>
         {/* Phase J — Task 2: was call_type + formatModel crammed into one flex
             cell (the exact problem this task fixes). Detail here is purely

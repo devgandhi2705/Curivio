@@ -3,7 +3,8 @@ Package export to Markdown — pure templating, zero LLM calls.
 
 Public API
 ----------
-insight_to_markdown(project_id, insight_id) -> str
+insight_to_markdown(project_id, insight_id)              -> str
+card_to_markdown(project_id, insight_id, article_key)    -> str
 """
 
 from __future__ import annotations
@@ -97,6 +98,54 @@ def _card_to_md(card: dict) -> list[str]:
         lines.append("")
 
     return lines
+
+
+def card_to_markdown(project_id: str, insight_id: int, article_key: str) -> str:
+    """
+    One card of a day package, addressed by article_key, with the day's headline
+    kept as framing. "" when the package or the card can't be resolved.
+
+    Same renderer as insight_to_markdown (_card_to_md) -- this is the single-card
+    scope of it, for callers that need the card the user actually acted on rather
+    than the whole day.
+    """
+    if not article_key:
+        return ""
+
+    from ..utils.db import get_connection
+    from .feed_read_service import article_key_from_title
+
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT pi.insight_json, pi.day_number, pi.generated_at, lp.name AS project_name
+               FROM   project_insights pi
+               LEFT JOIN learning_projects lp ON lp.project_id = pi.project_id
+               WHERE  pi.id = ? AND pi.project_id = ?""",
+            (insight_id, project_id),
+        ).fetchone()
+
+    if not row:
+        return ""
+
+    pkg = json.loads(row["insight_json"]) if isinstance(row["insight_json"], str) else {}
+    all_cards = list(pkg.get("insights") or []) + list(pkg.get("curiosity_insights") or [])
+    card = next(
+        (c for c in all_cards if article_key_from_title(c.get("title") or "") == article_key),
+        None,
+    )
+    if card is None:
+        return ""
+
+    meta_parts = [f"Day {row['day_number']}", _fmt_date(row["generated_at"] or "")]
+    if row["project_name"]:
+        meta_parts.append(row["project_name"])
+
+    headline = pkg.get("package_headline") or f"Day {row['day_number']}"
+    lines: list[str] = [f"# {headline}", ""]
+    lines += [f"**{'  ·  '.join(p for p in meta_parts if p)}**", ""]
+    lines += _card_to_md(card)
+
+    return "\n".join(lines)
 
 
 def insight_to_markdown(project_id: str, insight_id: int) -> str:

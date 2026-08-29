@@ -71,6 +71,7 @@ STATUSES = ("success", "failed")
 _ROW_COLUMNS = """
     l.id, l.run_id, l.parent_run_id, l.timestamp_start, l.timestamp_end,
     l.latency_ms, l.provider, l.model_requested, l.model_used, l.call_type,
+    l.agent_name,
     COALESCE(l.user_id, lp.user_id) AS user_id,
     (SELECT email FROM users u WHERE u.user_id = COALESCE(l.user_id, lp.user_id)) AS user_email,
     l.project_id, l.day_ref,

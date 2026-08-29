@@ -1156,7 +1156,7 @@ class FeedContext(BaseModel):
     Carries the pre-curated content from the insight card so the chat
     service can skip redundant retrieval and answer from known context.
     """
-    action:           str             # "ask_about" | "continue_research"
+    action:           str             # "ask_about" | "explain_simply" | "continue_research"
     insight_title:    str
     insight_summary:  str             = ""
     why_it_matters:   str             = ""

@@ -128,6 +128,54 @@ class TestGetAnchorForSession:
         assert "Day 2: Entanglement" in anchor
         assert "Day 1: Superposition" not in anchor
 
+    def test_anchor_is_scoped_to_the_clicked_card_not_the_whole_day(self, mem_db):
+        # The anchor used to render the ENTIRE day package on every turn, with
+        # no marker of which card the conversation started from. It now renders
+        # only the card the feed_chat_links row's article_key points at.
+        _make_project(mem_db)
+        pkg = {
+            "package_headline": "Day 1: Two Cards",
+            "insights": [
+                {"title": "Superposition", "summary": "A qubit can be 0 and 1 at once."},
+                {"title": "Decoherence",   "summary": "Qubits lose state to their environment."},
+            ],
+            "curiosity_insights": [],
+            "action_item": "Read the Feynman lectures on QM.",
+        }
+        cur = mem_db.execute(
+            "INSERT INTO project_insights (project_id, day_number, insight_json, status) "
+            "VALUES ('proj-1', 1, ?, 'done')",
+            (json.dumps(pkg),),
+        )
+        mem_db.commit()
+        mem_db.execute(
+            "INSERT INTO feed_chat_links (session_id, project_id, insight_id, article_key) "
+            "VALUES ('sess-scoped', 'proj-1', ?, 'superposition')",
+            (cur.lastrowid,),
+        )
+        mem_db.commit()
+
+        anchor = anchor_svc.get_anchor_for_session("sess-scoped")
+
+        assert "A qubit can be 0 and 1 at once." in anchor
+        assert "Decoherence" not in anchor
+        assert "Qubits lose state to their environment." not in anchor
+        # Day framing survives; the day's action item does not (it belongs to
+        # the package, not to this card).
+        assert "Day 1: Two Cards" in anchor
+        assert "Read the Feynman lectures on QM." not in anchor
+
+    def test_unmatched_article_key_falls_back_to_the_full_day(self, mem_db):
+        # Renamed title / legacy row: the whole day is still better than nothing.
+        _make_project(mem_db)
+        insight_id = _make_insight(mem_db)
+        _link(mem_db, "sess-nomatch", "proj-1", insight_id)  # article_key 'k1'
+
+        anchor = anchor_svc.get_anchor_for_session("sess-nomatch")
+
+        assert "A qubit can be 0 and 1 at once." in anchor
+        assert "Read the Feynman lectures on QM." in anchor
+
     def test_session_with_no_feed_link_returns_empty(self, mem_db):
         assert anchor_svc.get_anchor_for_session("unlinked-session") == ""
 

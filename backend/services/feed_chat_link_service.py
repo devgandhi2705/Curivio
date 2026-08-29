@@ -17,7 +17,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-_INTERACTION_TYPES = {"ask_about", "continue_research"}
+# Must stay in sync with feed_chat_links.interaction_type's CHECK constraint
+# (schema.py MIGRATE_FEED_CHAT_LINKS_EXPLAIN_SIMPLY). "explain_simply" was
+# missing here long after the migration added it, so every Explain Simply
+# link was silently coerced to "ask_about" and mislabeled in the UI.
+_INTERACTION_TYPES = {"ask_about", "explain_simply", "continue_research", "deep_research"}
 
 
 def _now() -> str:

@@ -218,7 +218,14 @@ def build_system_prompt(context: dict, mode: str = "normal") -> str:
         No JSON schema. No research dumps. Adaptive free-form prose — the
         default for an ordinary chat turn, whichever tool answered it.
     """
-    if context.get("feed_linked"):
+    # layman escapes the structured path even when Feed-linked: the layman
+    # directive, the mechanism-preservation prefix and _RESPONSE_PRINCIPLES_LAYMAN
+    # live only in _build_natural_prompt, so an Explain Simply turn opened from a
+    # Feed card used to get the full analytical prompt + mandatory JSON schema and
+    # none of the simplification instructions -- while build_feed_context_note()
+    # told the model to "use the Explain Simply structure from your system prompt",
+    # a section that was never in it.
+    if context.get("feed_linked") and mode != "layman":
         return _build_structured_prompt(context)
     else:
         return _build_natural_prompt(context, mode)

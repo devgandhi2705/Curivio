@@ -167,6 +167,25 @@ def chat_stream(
         elif topic_hint is None:
             topic_hint = _detect_topic_hint(message)
 
+        # Admin-log tag (llm_call_log.agent_name): which Feed action opened this
+        # session, so Ask About / Explain Simply rows are distinguishable from
+        # ordinary chat in the admin log instead of all reading "chat_turn".
+        # feed_context carries it on turn 1 — the feed_chat_links row isn't
+        # written until that turn's response completes (ChatWorkspace's onDone);
+        # the link row carries it on every turn after. None for plain chat, which
+        # is what agent_name already is for those rows today.
+        feed_agent_name = None
+        if feed_context:
+            feed_agent_name = f"feed_{feed_context.get('action') or 'ask_about'}"
+        else:
+            try:
+                from .feed_chat_link_service import get_link_for_session
+                _link_row = get_link_for_session(session_id)
+                if _link_row:
+                    feed_agent_name = f"feed_{_link_row.get('interaction_type') or 'ask_about'}"
+            except Exception:
+                logger.debug("[chat_service] feed action tag lookup failed (non-fatal)")
+
         # Layman mode: restore from session if request didn't override
         if chat_mode == "normal":
             try:
@@ -217,6 +236,8 @@ def chat_stream(
             }
             if user_id:
                 _router_metadata["user_id"] = user_id
+            if feed_agent_name:
+                _router_metadata["agent_name"] = feed_agent_name
             # Phase W (2026-08-25 follow-up): the same recent-turns window
             # chat_turn itself is about to answer with (build_messages()
             # applies the identical MAX_HISTORY_TURNS slice) — real,
@@ -606,6 +627,8 @@ def chat_stream(
         }
         if user_id:
             _call_metadata["user_id"] = user_id
+        if feed_agent_name:
+            _call_metadata["agent_name"] = feed_agent_name
         # Phase M — read by chat_tools.web_search via _tool_meta(config).
         # Only set when the router actually produced a decision; absent means
         # "unknown", which web_search_reasoning_service maps to today's 3+3.
