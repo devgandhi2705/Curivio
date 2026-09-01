@@ -13,6 +13,7 @@ actual tables as they change.
 """
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -164,7 +165,7 @@ def test_scheduler_refuses_to_snapshot_over_an_empty_rebuild(live):
 
 
 def test_prune_keeps_the_newest(live, monkeypatch):
-    monkeypatch.setattr(backup, "MAX_SNAPSHOTS", 3)
+    monkeypatch.setattr(backup, "LOCAL_MAX_SNAPSHOTS", 3)
     with db.get_connection() as conn:
         _seed(conn, "u1", "a@example.com")
     names = []
@@ -365,3 +366,180 @@ def test_restore_of_a_quarantined_corrupt_file(live, tmp_path):
     with db.get_connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 3
+
+
+# ── remote mirror ────────────────────────────────────────────────────────────
+# backup_remote_service pushes snapshots off-volume (see its own module
+# docstring for why). These tests fake it out with a plain in-memory dict —
+# matching this file's existing "monkeypatch a module attribute" convention
+# rather than unittest.mock — so they exercise backup_service's own logic
+# (what it does with success/failure/absence) without real network calls.
+
+class _FakeRemote:
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+        self.uploaded: list[str] = []
+
+    def upload_snapshot(self, path):
+        self.files[path.name] = path.read_bytes()
+        self.uploaded.append(path.name)
+
+    def list_remote(self):
+        return [{"filename": n, "size_bytes": len(b)} for n, b in self.files.items()]
+
+    def download_to(self, filename, dest_dir):
+        if filename not in self.files:
+            raise FileNotFoundError(filename)
+        dest = dest_dir / filename
+        dest.write_bytes(self.files[filename])
+        return dest
+
+    def prune_remote(self, keep):
+        names = sorted(self.files)
+        removed = names[:-keep] if len(names) > keep else []
+        for n in removed:
+            del self.files[n]
+        return removed
+
+
+@pytest.fixture
+def fake_remote(monkeypatch):
+    fake = _FakeRemote()
+    monkeypatch.setattr(backup.backup_remote_service, "upload_snapshot", fake.upload_snapshot)
+    monkeypatch.setattr(backup.backup_remote_service, "list_remote", fake.list_remote)
+    monkeypatch.setattr(backup.backup_remote_service, "download_to", fake.download_to)
+    monkeypatch.setattr(backup.backup_remote_service, "prune_remote", fake.prune_remote)
+    return fake
+
+
+def test_snapshot_still_ok_when_remote_is_not_configured(live, monkeypatch):
+    """No HF_TOKEN in this environment (the common case: local dev, or a
+    deploy that hasn't set it up yet) must not stop the local snapshot from
+    succeeding — it just can't also go off-volume."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    result = backup.create_snapshot("t", force=True)
+    assert result["ok"] is True
+    assert result["remote_ok"] is False
+    assert "HF_TOKEN" in result["remote_error"]
+
+
+def test_snapshot_pushes_to_remote_and_prunes_it(live, fake_remote, monkeypatch):
+    monkeypatch.setattr(backup, "REMOTE_MAX_SNAPSHOTS", 1)
+    first = backup.create_snapshot("t", force=True)
+    assert first["remote_ok"] is True
+    assert first["filename"] in fake_remote.files
+
+    second = backup.create_snapshot("t", force=True)
+    assert second["remote_ok"] is True
+    # remote retention is independent of local: only the newest is kept remotely
+    assert list(fake_remote.files) == [second["filename"]]
+
+
+def test_snapshot_remote_failure_does_not_fail_the_local_snapshot(live, fake_remote, monkeypatch):
+    def _boom(path):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(backup.backup_remote_service, "upload_snapshot", _boom)
+
+    result = backup.create_snapshot("t", force=True)
+    assert result["ok"] is True
+    assert (backup.BACKUP_DIR / result["filename"]).exists()
+    assert result["remote_ok"] is False
+    assert "network down" in result["remote_error"]
+
+
+def test_push_remote_false_skips_remote_entirely(live, fake_remote):
+    result = backup.create_snapshot("t", force=True, push_remote=False)
+    assert result["ok"] is True
+    assert "remote_ok" not in result
+    assert fake_remote.uploaded == []
+
+
+def test_push_remote_snapshot_can_be_called_directly(live, fake_remote):
+    """main.py's boot path calls this on its own, in a background thread, so
+    the boot-time local snapshot isn't held up by network I/O."""
+    result = backup.create_snapshot("t", force=True, push_remote=False)
+    dest = backup.BACKUP_DIR / result["filename"]
+    outcome = backup.push_remote_snapshot(dest)
+    assert outcome == {"remote_ok": True}
+    assert dest.name in fake_remote.files
+
+
+def test_list_snapshots_includes_remote_only_entries(live, fake_remote):
+    fake_remote.files["curivio-20260101-000000-remoteonly.db"] = b"x"
+    kinds = {r["filename"]: r["kind"] for r in backup.list_snapshots()}
+    assert kinds["curivio-20260101-000000-remoteonly.db"] == "remote"
+
+
+def test_list_snapshots_prefers_local_when_a_file_exists_in_both(live, fake_remote):
+    result = backup.create_snapshot("t", force=True)
+    filename = result["filename"]
+    assert filename in fake_remote.files          # pushed by create_snapshot
+    rows = [r for r in backup.list_snapshots() if r["filename"] == filename]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "snapshot"           # not duplicated as "remote"
+
+
+def test_list_snapshots_survives_a_remote_listing_failure(live, monkeypatch):
+    def _boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(backup.backup_remote_service, "list_remote", _boom)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    backup.create_snapshot("t", force=True)
+    # local listing still works even though the remote call blew up
+    assert any(r["kind"] == "snapshot" for r in backup.list_snapshots())
+
+
+def test_resolve_source_does_not_require_local_existence_for_a_snapshot_name(live):
+    """A snapshot name may exist only remotely (local retention dropped it, or
+    local disk was wiped) — resolve_source is a fast path-safety check, not
+    the thing that decides whether the file is actually reachable."""
+    path = backup.resolve_source("curivio-20260101-000000-remoteonly.db")
+    assert path.parent == backup.BACKUP_DIR
+    assert not path.exists()
+
+
+def test_resolve_source_still_requires_local_existence_for_a_quarantined_name(live, tmp_path):
+    with pytest.raises(ValueError):
+        backup.resolve_source("curivio.corrupt-12345.db")
+
+
+def test_restore_falls_back_to_remote_when_not_local(live, fake_remote):
+    """The actual disaster-recovery scenario: local BACKUP_DIR is empty (fresh
+    volume) but the file still exists in the remote mirror."""
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    assert filename in fake_remote.files
+    for f in backup.BACKUP_DIR.glob(f"{backup._PREFIX}*"):
+        f.unlink()                                  # simulate local-only loss
+
+    result = backup.restore(filename)
+    assert result["rows_restored"] > 0
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+
+
+def test_users_in_snapshot_falls_back_to_remote_when_not_local(live, fake_remote):
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    for f in backup.BACKUP_DIR.glob(f"{backup._PREFIX}*"):
+        f.unlink()
+
+    users = backup.users_in_snapshot(filename)
+    assert [u["email"] for u in users] == ["a@example.com"]
+
+
+def test_restore_of_a_filename_that_exists_nowhere_raises_value_error(live, fake_remote):
+    with pytest.raises(ValueError):
+        backup.restore("curivio-20260101-000000-doesnotexist.db")
+
+
+def test_remote_download_temp_files_are_cleaned_up(live, fake_remote):
+    """_prepare_source's remote branch downloads into a temp dir — confirm it
+    doesn't leak that directory once the caller is done with it."""
+    filename = _snapshot_then_wipe(lambda c: _seed(c, "u1", "a@example.com"))
+    for f in backup.BACKUP_DIR.glob(f"{backup._PREFIX}*"):
+        f.unlink()
+    import tempfile
+    before = set(Path(tempfile.gettempdir()).iterdir())
+    backup.restore(filename)
+    after = set(Path(tempfile.gettempdir()).iterdir())
+    assert after - before == set(), f"leaked temp entries: {after - before}"

@@ -124,6 +124,7 @@ async def lifespan(_app: FastAPI):
     _secret_names = (
         "GEMINI_API_KEYS", "GEMINI_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY",
         "DEEPL_TRANSLATE_API_KEY", "DEEPGRAM_TTS_API_KEY", "GEMINI_WRITER_API_KEY",
+        "HF_TOKEN",
     )
     logger.info(
         "[startup] secret presence (name->trimmed len): %s",
@@ -161,10 +162,23 @@ async def lifespan(_app: FastAPI):
     # ships a migration that mangles or drops data, this is the copy taken while
     # the DB was still on the old schema — the only moment that copy can exist.
     # Never fatal: a failed snapshot must not stop the app from booting.
-    from .services.backup_service import create_snapshot, start_scheduler
+    #
+    # push_remote=False: the local snapshot must complete before init_db() runs
+    # (that's the entire guarantee this gives), so it stays synchronous. The
+    # off-volume push is a separate network call with its own retries — pushed
+    # in a background thread below so a slow/unreachable HF Hub can't add to
+    # boot latency or HF Spaces' health-check window.
+    from .services.backup_service import BACKUP_DIR, create_snapshot, push_remote_snapshot, start_scheduler
     try:
-        _snap = create_snapshot("premigration")
+        _snap = create_snapshot("premigration", push_remote=False)
         logger.info("[backup] pre-migration snapshot: %s", _snap)
+        if _snap.get("ok"):
+            import threading as _threading
+            _dest = BACKUP_DIR / _snap["filename"]
+            _threading.Thread(
+                target=push_remote_snapshot, args=(_dest,),
+                daemon=True, name="backup-remote-push",
+            ).start()
     except Exception:
         logger.error("[backup] pre-migration snapshot crashed (non-fatal)", exc_info=True)
 

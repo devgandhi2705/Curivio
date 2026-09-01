@@ -391,6 +391,10 @@ The app will be available at `http://localhost:5173`.
 | `BREVO_FROM` | | — | Sender address for auth emails |
 | `CORS_ORIGINS` | | `http://localhost:5173` | Comma-separated allowed frontend origins |
 | `DB_PATH` | | `data/curivio.db` | SQLite file path (set to `/data/curivio.db` on HF Spaces) |
+| `HF_TOKEN` | | — | Write-scoped Hugging Face access token, so automatic DB backups can be pushed off-volume to a private HF Hub dataset repo (see [Key Systems In Depth](#key-systems-in-depth)) |
+| `BACKUP_HF_REPO_ID` | | — | Target private dataset repo for off-volume backups, e.g. `your-username/curivio-backups` (auto-created on first push) |
+| `BACKUP_LOCAL_MAX_SNAPSHOTS` | | `2` | Local snapshots kept in `BACKUP_DIR` — a fast restore path, not the safety net |
+| `BACKUP_REMOTE_MAX_SNAPSHOTS` | | `20` | Snapshots kept in the off-volume mirror — the real retention window |
 | `FEED_CACHE_TTL_HOURS` | | `24` | Feed cache lifetime in hours |
 | `SCHEDULER_JOB_HOUR` | | `8` | UTC hour for scheduled daily package generation |
 | `INSIGHT_GEN_RATE` | | `5/minute` | Rate limit for insight package generation |
@@ -753,9 +757,13 @@ BREVO_API_KEY
 BREVO_FROM
 DB_PATH=/data/curivio.db
 CORS_ORIGINS=https://your-space.hf.space
+HF_TOKEN
+BACKUP_HF_REPO_ID=your-username/curivio-backups
 ```
 
 Set `DB_PATH=/data/curivio.db` so the database is stored on the persistent `/data` volume. Without this, the database is recreated on every container restart.
+
+`HF_TOKEN` + `BACKUP_HF_REPO_ID` are optional but strongly recommended: without them, automatic snapshots still work but stay on the same `/data` volume as the live database, so a full loss of that volume takes every backup out with it. `HF_TOKEN` needs write access; `BACKUP_HF_REPO_ID` is created automatically as a private dataset repo on first push.
 
 ### Production environment checklist
 
@@ -765,4 +773,5 @@ Set `DB_PATH=/data/curivio.db` so the database is stored on the persistent `/dat
 - [ ] `BREVO_API_KEY` + `BREVO_FROM` set (required for user signup + password reset)
 - [ ] `CORS_ORIGINS` set to your production domain only
 - [ ] `DB_PATH` points to a persistent volume
+- [ ] `HF_TOKEN` + `BACKUP_HF_REPO_ID` set (off-volume backups — see above)
 - [ ] `.env` is never committed to the repository

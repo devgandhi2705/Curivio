@@ -70,7 +70,8 @@ class DataLossResolution(BaseModel):
 def list_backups():
     """Snapshots plus any quarantined corrupt files, newest first."""
     return {"backups": backup_service.list_snapshots(),
-            "retention": {"max_snapshots": backup_service.MAX_SNAPSHOTS,
+            "retention": {"local_max_snapshots": backup_service.LOCAL_MAX_SNAPSHOTS,
+                          "remote_max_snapshots": backup_service.REMOTE_MAX_SNAPSHOTS,
                           "interval_seconds": backup_service.INTERVAL_SECONDS}}
 
 

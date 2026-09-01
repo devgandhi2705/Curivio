@@ -35,8 +35,14 @@ function formatWhen(mtimeSeconds) {
 
 // ── snapshot list ────────────────────────────────────────────────────────────
 
+const KIND_BADGE = {
+  quarantined: { label: "quarantined", cls: "bg-amber-500/15 text-amber-400" },
+  remote:      { label: "remote", cls: "bg-sky-500/15 text-sky-400" },
+  snapshot:    { label: "snapshot", cls: "bg-slate-700/40 text-slate-400" },
+}
+
 function SnapshotRow({ backup, selected, onSelect }) {
-  const isQuarantined = backup.kind === "quarantined"
+  const badge = KIND_BADGE[backup.kind] ?? KIND_BADGE.snapshot
   return (
     <button
       onClick={() => onSelect(backup.filename)}
@@ -51,14 +57,13 @@ function SnapshotRow({ backup, selected, onSelect }) {
         <span className="text-[10px] text-slate-500 flex-shrink-0">{formatBytes(backup.size_bytes)}</span>
       </div>
       <div className="flex items-center gap-1.5 mt-1">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide ${
-          isQuarantined
-            ? "bg-amber-500/15 text-amber-400"
-            : "bg-slate-700/40 text-slate-400"
-        }`}>
-          {isQuarantined ? "quarantined" : "snapshot"}
+        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide ${badge.cls}`}>
+          {badge.label}
         </span>
         <span className="text-[10px] text-slate-600 truncate">{backup.filename}</span>
+        {backup.kind === "remote" && (
+          <span className="text-[10px] text-slate-600 flex-shrink-0">— restoring downloads this first</span>
+        )}
       </div>
     </button>
   )
@@ -258,7 +263,10 @@ export default function BackupsPanel() {
     setBusy("snapshot"); setNote(null)
     try {
       const r = await createBackup()
-      setNote(`Snapshot taken: ${r.filename} (${formatBytes(r.size_bytes)}).`)
+      const remoteNote = r.remote_ok === false
+        ? ` Off-volume copy failed: ${r.remote_error}`
+        : r.remote_ok === true ? " Also pushed off-volume." : ""
+      setNote(`Snapshot taken: ${r.filename} (${formatBytes(r.size_bytes)}).${remoteNote}`)
       load()
     } catch (e) {
       setNote(`Snapshot failed: ${e.message}`)
@@ -333,7 +341,8 @@ export default function BackupsPanel() {
       {retention && (
         <p className="text-[11px] text-slate-600">
           Automatic snapshot every {Math.round(retention.interval_seconds / 3600)}h and on every
-          deploy before migrations run. Keeping the {retention.max_snapshots} most recent.
+          deploy before migrations run. Keeping the {retention.local_max_snapshots} most recent
+          locally, {retention.remote_max_snapshots} off-volume.
           Restores only ever add rows back — they never overwrite or delete existing data.
         </p>
       )}

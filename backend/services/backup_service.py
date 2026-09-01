@@ -24,6 +24,13 @@ Schema drift across phases is handled by intersecting columns per table at
 restore time (see _merge_table), so an old snapshot restores cleanly into a
 newer schema: columns added since the snapshot take their DEFAULT, columns
 dropped since are ignored. No per-version migration code to maintain.
+
+Local snapshots alone don't survive losing the /data volume itself (storage
+issue, quota, Space rebuild) — they're on the same volume as the live db.
+Every successful snapshot is also pushed to a private HF Hub dataset repo via
+backup_remote_service (see its module docstring), which is where real
+retention lives; local BACKUP_DIR keeps only a couple of recent copies for a
+fast restore path when the volume is healthy.
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import backup_remote_service
 from ..utils.db import DB_PATH, get_connection
 
 logger = logging.getLogger(__name__)
@@ -44,10 +52,11 @@ BACKUP_DIR = DB_PATH.parent / "backups"
 _PREFIX = f"{DB_PATH.stem}-"
 _SUFFIX = DB_PATH.suffix or ".db"
 
-# Keep roughly a fortnight of 6-hourly snapshots. Bounded by count, not age:
-# a Space that sleeps for a month should still wake up holding its last
-# snapshots rather than having aged them all out while nothing was running.
-MAX_SNAPSHOTS = int(os.getenv("BACKUP_MAX_SNAPSHOTS", "20"))
+# Local retention is small on purpose — it's a fast path, not the safety net.
+# The real retention window lives in the remote mirror (backup_remote_service),
+# which isn't constrained by the Space's own disk budget the way /data is.
+LOCAL_MAX_SNAPSHOTS = int(os.getenv("BACKUP_LOCAL_MAX_SNAPSHOTS", "2"))
+REMOTE_MAX_SNAPSHOTS = int(os.getenv("BACKUP_REMOTE_MAX_SNAPSHOTS", "20"))
 INTERVAL_SECONDS = int(os.getenv("BACKUP_INTERVAL_SECONDS", str(6 * 3600)))
 
 
@@ -69,7 +78,7 @@ def _looks_like_a_wipe() -> str | None:
     The failure mode this guards against is specific and has already happened
     once: db.py's corruption self-heal quarantines the DB and rebuilds it EMPTY,
     the app keeps serving, and nobody notices for hours. Left unguarded, the
-    interval scheduler would happily take MAX_SNAPSHOTS worth of snapshots of
+    interval scheduler would happily take LOCAL_MAX_SNAPSHOTS worth of snapshots of
     that empty DB and evict every real one — turning a recoverable incident into
     permanent loss. Comparing account counts against the newest existing
     snapshot catches it precisely; comparing file sizes would not, since SQLite
@@ -97,10 +106,30 @@ def _snapshot_name(label: str) -> str:
     return f"{_PREFIX}{stamp}-{safe}{_SUFFIX}"
 
 
-def create_snapshot(label: str = "auto", force: bool = False) -> dict:
+def push_remote_snapshot(dest: Path) -> dict:
+    """Upload one local snapshot to the remote mirror and prune old remote
+    copies. Never raises: both create_snapshot (synchronously) and main.py's
+    boot path (in a background thread, so a slow/failed push can't add to
+    startup latency) need this to fail loudly in the logs but never break
+    their caller."""
+    try:
+        backup_remote_service.upload_snapshot(dest)
+        backup_remote_service.prune_remote(REMOTE_MAX_SNAPSHOTS)
+        return {"remote_ok": True}
+    except Exception as exc:
+        logger.error("[backup] remote push failed for %s: %s", dest.name, exc, exc_info=True)
+        return {"remote_ok": False, "remote_error": str(exc)}
+
+
+def create_snapshot(label: str = "auto", force: bool = False, push_remote: bool = True) -> dict:
     """Take one consistent snapshot of the live DB. Returns a status dict
     rather than raising: this runs from a background thread and from startup,
-    where a failed backup must never take the app down with it."""
+    where a failed backup must never take the app down with it.
+
+    push_remote=False skips the remote mirror entirely — used only by the
+    boot-time premigration snapshot, which pushes remotely itself afterward
+    in a background thread (see main.py) so a network hiccup can't delay the
+    migrations that must run right after this returns."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     if not DB_PATH.exists():
@@ -137,16 +166,19 @@ def create_snapshot(label: str = "auto", force: bool = False) -> dict:
     pruned = _prune()
     logger.info("[backup] snapshot %s (%d bytes), pruned %d old", dest.name,
                 dest.stat().st_size, len(pruned))
-    return {"ok": True, "filename": dest.name, "size_bytes": dest.stat().st_size,
-            "pruned": pruned}
+    result = {"ok": True, "filename": dest.name, "size_bytes": dest.stat().st_size,
+              "pruned": pruned}
+    if push_remote:
+        result.update(push_remote_snapshot(dest))
+    return result
 
 
 def _prune() -> list[str]:
-    """Drop the oldest snapshots beyond MAX_SNAPSHOTS. Sorted by filename, which
-    is chronological by construction (UTC timestamp is the first field)."""
+    """Drop the oldest snapshots beyond LOCAL_MAX_SNAPSHOTS. Sorted by filename,
+    which is chronological by construction (UTC timestamp is the first field)."""
     files = sorted(BACKUP_DIR.glob(f"{_PREFIX}*{_SUFFIX}"))
     removed = []
-    for old in files[:-MAX_SNAPSHOTS] if len(files) > MAX_SNAPSHOTS else []:
+    for old in files[:-LOCAL_MAX_SNAPSHOTS] if len(files) > LOCAL_MAX_SNAPSHOTS else []:
         try:
             old.unlink()
             removed.append(old.name)
@@ -155,20 +187,40 @@ def _prune() -> list[str]:
     return removed
 
 
+def _mtime_from_snapshot_name(filename: str) -> float:
+    """The UTC timestamp _snapshot_name() embeds, as a Unix epoch float — used
+    for remote entries, which have no local filesystem mtime to read."""
+    stamp = filename[len(_PREFIX):len(_PREFIX) + 15]  # YYYYMMDD-HHMMSS
+    return datetime.strptime(stamp, "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc).timestamp()
+
+
 def list_snapshots() -> list[dict]:
-    """Snapshots newest-first, plus any quarantined curivio.corrupt-* files —
-    both are valid restore sources, and after a corruption event the quarantined
-    file is the ONLY thing holding the rows written since the last snapshot."""
+    """Snapshots newest-first: local snapshots, quarantined curivio.corrupt-*
+    files, and remote-only entries (pushed to the mirror but no longer — or
+    not yet — present locally, e.g. after local retention dropped them, or a
+    full local volume loss). A filename present both locally and remotely is
+    listed once, as local — it's directly usable with no download."""
     out = []
+    local_names = set()
     if BACKUP_DIR.exists():
         for f in BACKUP_DIR.glob(f"{_PREFIX}*{_SUFFIX}"):
             st = f.stat()
+            local_names.add(f.name)
             out.append({"filename": f.name, "kind": "snapshot",
                         "size_bytes": st.st_size, "mtime": st.st_mtime})
     for f in DB_PATH.parent.glob(f"{DB_PATH.stem}.corrupt-*{_SUFFIX}"):
         st = f.stat()
         out.append({"filename": f.name, "kind": "quarantined",
                     "size_bytes": st.st_size, "mtime": st.st_mtime})
+    try:
+        for r in backup_remote_service.list_remote():
+            if r["filename"] in local_names:
+                continue
+            out.append({"filename": r["filename"], "kind": "remote",
+                        "size_bytes": r["size_bytes"],
+                        "mtime": _mtime_from_snapshot_name(r["filename"])})
+    except Exception:
+        logger.warning("[backup] could not list remote snapshots", exc_info=True)
     return sorted(out, key=lambda r: r["mtime"], reverse=True)
 
 
@@ -176,18 +228,29 @@ def resolve_source(filename: str) -> Path:
     """Map a caller-supplied filename to a real restore source, or raise
     ValueError. Rejects anything that isn't a plain basename matching one of the
     two naming schemes we write ourselves, so this can never be turned into an
-    arbitrary-file read off the container."""
+    arbitrary-file read off the container.
+
+    A snapshot-scheme name is NOT required to exist locally — it may only live
+    in the remote mirror (local retention is small, or local was wiped). This
+    is a fast, local-only path-safety check; _prepare_source is what actually
+    fetches the file, from wherever it lives. A quarantined-file name has no
+    remote counterpart (see backup_remote_service — quarantine artifacts are
+    never pushed), so it must exist locally or there's nothing to recover."""
     if "/" in filename or "\\" in filename or filename in ("", ".", ".."):
         raise ValueError("not a recognized backup filename")
     if filename.startswith(_PREFIX):
         path = BACKUP_DIR / filename
         root = BACKUP_DIR
+        require_local = False
     elif filename.startswith(f"{DB_PATH.stem}.corrupt-"):
         path = DB_PATH.parent / filename
         root = DB_PATH.parent
+        require_local = True
     else:
         raise ValueError("not a recognized backup filename")
-    if not path.exists() or path.resolve().parent != root.resolve():
+    if path.resolve().parent != root.resolve():
+        raise ValueError("backup file not found")
+    if require_local and not path.exists():
         raise ValueError("backup file not found")
     return path
 
@@ -401,16 +464,42 @@ def repair_copy(src: Path) -> tuple[Path, bool]:
     return tmp, integrity_ok(result)
 
 
+def _cleanup_temp(temp: Path) -> None:
+    """Remove whatever _prepare_source handed back as its temp path — a bare
+    file for a repaired quarantine copy, or a directory for a remote
+    download (see _prepare_source's remote branch)."""
+    if temp.is_dir():
+        import shutil
+        shutil.rmtree(temp, ignore_errors=True)
+    else:
+        temp.unlink(missing_ok=True)
+
+
 def _prepare_source(src: Path) -> tuple[Path, bool, Path | None]:
-    """Return (attachable path, integrity_ok, temp path to clean up or None).
+    """Return (attachable path, integrity_ok, temp path/dir to clean up via
+    _cleanup_temp, or None).
 
     A snapshot we wrote ourselves is already consistent — attach it directly
-    rather than burning a full file copy on every restore. A quarantined file is
-    corrupt by construction and must be repaired onto a temp copy first.
+    rather than burning a full file copy on every restore. A quarantined file
+    is corrupt by construction and must be repaired onto a temp copy first.
+    A snapshot name resolve_source found but that isn't present locally (local
+    retention dropped it, or the volume was wiped) is fetched from the remote
+    mirror into a temp dir first — this is the one place in this module that
+    does network I/O; every other reader of a resolved source stays local.
     """
     if src.name.startswith(f"{DB_PATH.stem}.corrupt-"):
         repaired, ok = repair_copy(src)
         return repaired, ok, repaired
+    if not src.exists():
+        import tempfile
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f"{DB_PATH.stem}-remote-"))
+        try:
+            downloaded = backup_remote_service.download_to(src.name, tmp_dir)
+        except FileNotFoundError:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise ValueError("backup file not found") from None
+        return downloaded, True, tmp_dir
     return src, True, None
 
 
@@ -435,7 +524,7 @@ def users_in_snapshot(filename: str) -> list[dict]:
         return []
     finally:
         if temp is not None:
-            temp.unlink(missing_ok=True)
+            _cleanup_temp(temp)
 
 
 # ── restore ──────────────────────────────────────────────────────────────────
@@ -633,7 +722,7 @@ def restore(filename: str, user_id: str | None = None, dry_run: bool = False) ->
                 live.execute("PRAGMA foreign_keys=ON")
     finally:
         if temp is not None:
-            temp.unlink(missing_ok=True)
+            _cleanup_temp(temp)
 
     return {
         "filename": filename,
@@ -674,5 +763,5 @@ def start_scheduler() -> None:
                 logger.error("[backup] scheduled snapshot crashed", exc_info=True)
 
     threading.Thread(target=_loop, daemon=True, name="backup-scheduler").start()
-    logger.info("[backup] scheduler started — every %ds, keeping %d snapshots in %s",
-                INTERVAL_SECONDS, MAX_SNAPSHOTS, BACKUP_DIR)
+    logger.info("[backup] scheduler started — every %ds, keeping %d local / %d remote snapshots in %s",
+                INTERVAL_SECONDS, LOCAL_MAX_SNAPSHOTS, REMOTE_MAX_SNAPSHOTS, BACKUP_DIR)

@@ -11,6 +11,17 @@ table data is untouched — deleting the extra catalog row on a COPY of the
 backup (never the original) makes it a fully valid, fully readable database
 again. See tests/test_db_recovery.py for the repair technique verified
 against a manufactured version of the exact production corruption.
+
+The remote-list/remote-restore endpoints below cover a DIFFERENT disaster: not
+a corruption event (which leaves a local quarantined file behind), but a full
+loss of the /data volume itself — nothing local survives, including the users
+table, so there's neither a quarantined file to repair NOR an admin account to
+log into routes/backups.py with. This secret-header gate is the only door left
+in that scenario, so it needs to reach backup_service's off-volume mirror too.
+Reuses backup_service.restore() unchanged: a merge-only restore against a
+freshly-initialized empty schema already IS a full restore, no new semantics
+needed — resolve_source/_prepare_source already fall back to the remote mirror
+transparently for any snapshot-scheme filename that isn't present locally.
 """
 import hmac
 import sqlite3
@@ -18,6 +29,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from ..services import backup_remote_service, backup_service
 from ..services.auth_service import SECRET_KEY
 from ..services.backup_service import (
     integrity_ok as _integrity_ok,
@@ -273,3 +285,23 @@ def recover_users(filename: str, _: None = Depends(_require_secret)):
                 "rows_in_backup": len(rows), "rows_inserted": inserted}
     finally:
         repaired.unlink(missing_ok=True)
+
+
+# ── remote mirror (full /data loss — see module docstring) ───────────────────
+
+@router.get("/remote-list")
+def list_remote_backups(_: None = Depends(_require_secret)):
+    try:
+        return backup_remote_service.list_remote()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/remote-restore")
+def remote_restore(filename: str, dry_run: bool = False, _: None = Depends(_require_secret)):
+    try:
+        return backup_service.restore(filename, dry_run=dry_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))

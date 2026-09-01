@@ -9,6 +9,7 @@ import pytest
 
 import backend.utils.db as db
 import backend.routes.db_recovery as recovery
+import backend.services.backup_service as bs
 
 
 def _make_corrupt_backup(path, users):
@@ -216,6 +217,96 @@ def test_resolve_backup_rejects_path_traversal(env, tmp_path):
     with pytest.raises(HTTPException) as exc:
         recovery._resolve_backup("../../etc/passwd")
     assert exc.value.status_code == 400
+
+
+# ── remote mirror ────────────────────────────────────────────────────────────
+# The scenario these exist for: /data was wiped entirely, not just corrupted
+# in place. There's no local quarantined file for the rest of this router to
+# repair, and no admin account left to log into routes/backups.py with — the
+# secret-header gate on this router is the only door still open, so it has to
+# be able to reach backup_service's remote mirror too.
+
+def test_remote_list_returns_remote_service_listing(monkeypatch):
+    monkeypatch.setattr(
+        recovery.backup_remote_service, "list_remote",
+        lambda: [{"filename": "curivio-20260101-000000-t.db", "size_bytes": 5}],
+    )
+    assert recovery.list_remote_backups(_=None) == [
+        {"filename": "curivio-20260101-000000-t.db", "size_bytes": 5}
+    ]
+
+
+def test_remote_list_returns_503_when_not_configured(monkeypatch):
+    def _boom():
+        raise RuntimeError("HF_TOKEN environment variable is not set")
+    monkeypatch.setattr(recovery.backup_remote_service, "list_remote", _boom)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        recovery.list_remote_backups(_=None)
+    assert exc.value.status_code == 503
+
+
+def test_remote_restore_passes_filename_and_dry_run_through(monkeypatch):
+    captured = {}
+
+    def fake_restore(filename, user_id=None, dry_run=False):
+        captured["args"] = (filename, user_id, dry_run)
+        return {"filename": filename, "rows_restored": 3}
+
+    monkeypatch.setattr(recovery.backup_service, "restore", fake_restore)
+    result = recovery.remote_restore(filename="curivio-20260101-000000-t.db", dry_run=True, _=None)
+    assert captured["args"] == ("curivio-20260101-000000-t.db", None, True)
+    assert result["rows_restored"] == 3
+
+
+def test_remote_restore_surfaces_an_unrecognised_filename_as_400(monkeypatch):
+    def fake_restore(filename, user_id=None, dry_run=False):
+        raise ValueError("backup file not found")
+
+    monkeypatch.setattr(recovery.backup_service, "restore", fake_restore)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        recovery.remote_restore(filename="nope.db", dry_run=False, _=None)
+    assert exc.value.status_code == 400
+
+
+def test_remote_restore_recovers_a_fully_wiped_db_with_no_admin_account(env, tmp_path, monkeypatch):
+    """/data wiped clean, init_db() just built a fresh EMPTY schema (no admin
+    account to log into routes/backups.py with), and the only surviving copy
+    of anything is in the remote mirror. This is the door that's still open."""
+    live_path = env
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0  # "no admin account"
+
+    remote_file = tmp_path / "curivio-20260101-000000-remote.db"
+    src_conn = sqlite3.connect(live_path)
+    dst_conn = sqlite3.connect(remote_file)
+    src_conn.backup(dst_conn)
+    dst_conn.execute(
+        "INSERT INTO users (user_id, email, name, hashed_pw) VALUES (?, ?, ?, ?)",
+        ("admin-1", "admin@example.com", "Admin", "hash"),
+    )
+    dst_conn.commit()
+    dst_conn.close()
+    src_conn.close()
+
+    def fake_download_to(filename, dest_dir):
+        if filename != remote_file.name:
+            raise FileNotFoundError(filename)
+        dest = dest_dir / filename
+        dest.write_bytes(remote_file.read_bytes())
+        return dest
+
+    monkeypatch.setattr(bs, "DB_PATH", live_path)
+    monkeypatch.setattr(bs, "BACKUP_DIR", tmp_path / "backups-empty")
+    monkeypatch.setattr(bs, "_PREFIX", "curivio-")
+    monkeypatch.setattr(bs.backup_remote_service, "download_to", fake_download_to)
+
+    result = recovery.remote_restore(filename=remote_file.name, dry_run=False, _=None)
+
+    assert result["rows_restored"] > 0
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT email FROM users").fetchone()[0] == "admin@example.com"
 
 
 if __name__ == "__main__":

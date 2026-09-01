@@ -81,7 +81,23 @@ def test_list_backups_reports_retention_policy(client, as_admin):
     assert resp.status_code == 200
     body = resp.json()
     assert "backups" in body
-    assert body["retention"]["max_snapshots"] > 0
+    assert body["retention"]["local_max_snapshots"] > 0
+    assert body["retention"]["remote_max_snapshots"] > 0
+
+
+def test_create_backup_passes_through_remote_status(client, as_admin):
+    """The remote push's outcome (backup_service.push_remote_snapshot's
+    remote_ok/remote_error) must reach the admin panel untouched — it's what
+    lets the UI tell "snapshot taken" apart from "snapshot taken but the
+    off-volume copy failed"."""
+    with patch("backend.services.backup_service.create_snapshot") as snap:
+        snap.return_value = {"ok": True, "filename": "x", "size_bytes": 1, "pruned": [],
+                             "remote_ok": False, "remote_error": "HF_TOKEN environment variable is not set"}
+        resp = client.post("/admin/backups/create")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["remote_ok"] is False
+    assert "HF_TOKEN" in body["remote_error"]
 
 
 def test_restore_rejects_an_unrecognised_filename(client, as_admin):
