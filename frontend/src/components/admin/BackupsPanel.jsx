@@ -33,12 +33,20 @@ function formatWhen(mtimeSeconds) {
   })
 }
 
+function formatInterval(seconds) {
+  const hours = seconds / 3600
+  if (hours % 24 === 0) {
+    const days = hours / 24
+    return `${days} day${days === 1 ? "" : "s"}`
+  }
+  return `${Math.round(hours)}h`
+}
+
 // ── snapshot list ────────────────────────────────────────────────────────────
 
 const KIND_BADGE = {
-  quarantined: { label: "quarantined", cls: "bg-amber-500/15 text-amber-400" },
-  remote:      { label: "remote", cls: "bg-sky-500/15 text-sky-400" },
-  snapshot:    { label: "snapshot", cls: "bg-slate-700/40 text-slate-400" },
+  remote:   { label: "remote", cls: "bg-sky-500/15 text-sky-400" },
+  snapshot: { label: "snapshot", cls: "bg-slate-700/40 text-slate-400" },
 }
 
 function SnapshotRow({ backup, selected, onSelect }) {
@@ -106,22 +114,37 @@ function PreviewTable({ result }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(([name, r]) => (
-              <tr key={name} className="border-b border-slate-900">
-                <td className="py-1.5 pr-3 text-slate-300 font-mono text-[11px]">{name}</td>
-                <td className="py-1.5 pr-3 text-right text-slate-200 tabular-nums">
-                  {(result.dry_run ? r.in_snapshot : r.rows_inserted)?.toLocaleString() ?? "—"}
-                </td>
-                {result.dry_run && (
-                  <td className="py-1.5 text-right text-slate-500 tabular-nums">
-                    {r.in_live_db?.toLocaleString() ?? "—"}
-                    {r.already_restored && (
-                      <span className="ml-1.5 text-[9px] text-emerald-500">restored</span>
-                    )}
+            {rows.map(([name, r]) => {
+              // The signal that matters for "restore or not": does the snapshot
+              // actually differ from what's live right now? Equal counts mean
+              // this table contributes nothing new either way.
+              const differs = result.dry_run
+                && r.in_snapshot !== undefined && r.in_live_db !== undefined
+                && r.in_snapshot !== r.in_live_db
+              return (
+                <tr key={name} className={`border-b border-slate-900 ${
+                  differs ? "bg-amber-500/[0.06]" : ""
+                }`}>
+                  <td className={`py-1.5 pr-3 font-mono text-[11px] ${
+                    differs ? "text-amber-300" : "text-slate-300"
+                  }`}>
+                    {name}
+                    {differs && <span className="ml-1.5 text-amber-500">●</span>}
                   </td>
-                )}
-              </tr>
-            ))}
+                  <td className="py-1.5 pr-3 text-right text-slate-200 tabular-nums">
+                    {(result.dry_run ? r.in_snapshot : r.rows_inserted)?.toLocaleString() ?? "—"}
+                  </td>
+                  {result.dry_run && (
+                    <td className="py-1.5 text-right text-slate-500 tabular-nums">
+                      {r.in_live_db?.toLocaleString() ?? "—"}
+                      {r.already_restored && (
+                        <span className="ml-1.5 text-[9px] text-emerald-500">restored</span>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -340,9 +363,10 @@ export default function BackupsPanel() {
 
       {retention && (
         <p className="text-[11px] text-slate-600">
-          Automatic snapshot every {Math.round(retention.interval_seconds / 3600)}h and on every
-          deploy before migrations run. Keeping the {retention.local_max_snapshots} most recent
-          locally, {retention.remote_max_snapshots} off-volume.
+          Automatic snapshot every {formatInterval(retention.interval_seconds)} and on every deploy
+          before migrations run (skipped if one was already taken recently, e.g. right after a
+          restart). Keeping the {retention.local_max_snapshots} most recent locally,{" "}
+          {retention.remote_max_snapshots} off-volume.
           Restores only ever add rows back — they never overwrite or delete existing data.
         </p>
       )}

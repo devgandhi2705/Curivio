@@ -57,7 +57,20 @@ _SUFFIX = DB_PATH.suffix or ".db"
 # which isn't constrained by the Space's own disk budget the way /data is.
 LOCAL_MAX_SNAPSHOTS = int(os.getenv("BACKUP_LOCAL_MAX_SNAPSHOTS", "2"))
 REMOTE_MAX_SNAPSHOTS = int(os.getenv("BACKUP_REMOTE_MAX_SNAPSHOTS", "20"))
-INTERVAL_SECONDS = int(os.getenv("BACKUP_INTERVAL_SECONDS", str(6 * 3600)))
+INTERVAL_SECONDS = int(os.getenv("BACKUP_INTERVAL_SECONDS", str(2 * 24 * 3600)))
+
+# Floor under the boot-time premigration snapshot (and the scheduler, though
+# that one is already time-driven and rarely bumps into this). A Space that
+# restarts often — HF Spaces free-tier sleep/wake, or a burst of redeploys —
+# would otherwise take a near-duplicate snapshot on every single boot: each
+# one a real local write and a real remote push for zero new data.
+MIN_GAP_SECONDS = int(os.getenv("BACKUP_MIN_GAP_SECONDS", str(3600)))
+
+# Unlike snapshots, quarantined files (db.py's corruption self-heal artifact)
+# were never bounded at all — left alone they accumulate on the same tight
+# local disk budget forever. One is enough: it's a stopgap for an immediate
+# recovery, not the durable backup (that's the remote mirror now).
+QUARANTINE_MAX_FILES = int(os.getenv("BACKUP_QUARANTINE_MAX_FILES", "1"))
 
 
 def _user_count(path: Path) -> int | None:
@@ -95,6 +108,18 @@ def _looks_like_a_wipe() -> str | None:
     if live_users == 0 and prev_users > 0:
         return (f"live db has 0 accounts but the last snapshot has {prev_users} — "
                 f"this looks like a corruption rebuild, refusing to snapshot over it")
+    return None
+
+
+def _too_soon_since_last_snapshot() -> str | None:
+    """Reason to skip an automatic snapshot, or None if enough time has
+    passed since the newest existing one. See MIN_GAP_SECONDS."""
+    snaps = sorted(BACKUP_DIR.glob(f"{_PREFIX}*{_SUFFIX}")) if BACKUP_DIR.exists() else []
+    if not snaps:
+        return None
+    age = time.time() - snaps[-1].stat().st_mtime
+    if age < MIN_GAP_SECONDS:
+        return f"a snapshot was taken {int(age)}s ago, under the {MIN_GAP_SECONDS}s minimum gap"
     return None
 
 
@@ -140,6 +165,10 @@ def create_snapshot(label: str = "auto", force: bool = False, push_remote: bool 
         if refusal:
             logger.error("[backup] refusing automatic snapshot: %s", refusal)
             return {"ok": False, "reason": refusal}
+        too_soon = _too_soon_since_last_snapshot()
+        if too_soon:
+            logger.info("[backup] skipping automatic snapshot: %s", too_soon)
+            return {"ok": False, "reason": too_soon}
 
     dest = BACKUP_DIR / _snapshot_name(label)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -164,6 +193,7 @@ def create_snapshot(label: str = "auto", force: bool = False, push_remote: bool 
         return {"ok": False, "reason": str(exc)}
 
     pruned = _prune()
+    _prune_quarantined()
     logger.info("[backup] snapshot %s (%d bytes), pruned %d old", dest.name,
                 dest.stat().st_size, len(pruned))
     result = {"ok": True, "filename": dest.name, "size_bytes": dest.stat().st_size,
@@ -187,6 +217,23 @@ def _prune() -> list[str]:
     return removed
 
 
+def _prune_quarantined() -> list[str]:
+    """Drop quarantined files beyond QUARANTINE_MAX_FILES. Sorted by filename,
+    which sorts chronologically here too (the epoch suffix db.py writes is a
+    fixed-width-enough decimal timestamp). Called alongside _prune() so this
+    doesn't need its own schedule — a corruption event is rare enough that
+    piggybacking on the regular snapshot cadence cleans it up promptly."""
+    files = sorted(DB_PATH.parent.glob(f"{DB_PATH.stem}.corrupt-*{_SUFFIX}"))
+    removed = []
+    for old in files[:-QUARANTINE_MAX_FILES] if len(files) > QUARANTINE_MAX_FILES else []:
+        try:
+            old.unlink()
+            removed.append(old.name)
+        except OSError:
+            logger.warning("[backup] could not prune quarantined %s", old, exc_info=True)
+    return removed
+
+
 def _mtime_from_snapshot_name(filename: str) -> float:
     """The UTC timestamp _snapshot_name() embeds, as a Unix epoch float — used
     for remote entries, which have no local filesystem mtime to read."""
@@ -195,11 +242,16 @@ def _mtime_from_snapshot_name(filename: str) -> float:
 
 
 def list_snapshots() -> list[dict]:
-    """Snapshots newest-first: local snapshots, quarantined curivio.corrupt-*
-    files, and remote-only entries (pushed to the mirror but no longer — or
-    not yet — present locally, e.g. after local retention dropped them, or a
-    full local volume loss). A filename present both locally and remotely is
-    listed once, as local — it's directly usable with no download."""
+    """Snapshots newest-first: local snapshots, and remote-only entries
+    (pushed to the mirror but no longer — or not yet — present locally, e.g.
+    after local retention dropped them, or a full local volume loss). A
+    filename present both locally and remotely is listed once, as local —
+    it's directly usable with no download.
+
+    Quarantined curivio.corrupt-* files are deliberately NOT listed here —
+    they're a rare emergency-recovery artifact, not routine admin-panel
+    inventory (see routes/db_recovery.py for that path). They're still fully
+    restorable via resolve_source/restore for anyone who has the filename."""
     out = []
     local_names = set()
     if BACKUP_DIR.exists():
@@ -208,10 +260,6 @@ def list_snapshots() -> list[dict]:
             local_names.add(f.name)
             out.append({"filename": f.name, "kind": "snapshot",
                         "size_bytes": st.st_size, "mtime": st.st_mtime})
-    for f in DB_PATH.parent.glob(f"{DB_PATH.stem}.corrupt-*{_SUFFIX}"):
-        st = f.stat()
-        out.append({"filename": f.name, "kind": "quarantined",
-                    "size_bytes": st.st_size, "mtime": st.st_mtime})
     try:
         for r in backup_remote_service.list_remote():
             if r["filename"] in local_names:

@@ -395,6 +395,9 @@ The app will be available at `http://localhost:5173`.
 | `BACKUP_HF_REPO_ID` | | — | Target private dataset repo for off-volume backups, e.g. `your-username/curivio-backups` (auto-created on first push) |
 | `BACKUP_LOCAL_MAX_SNAPSHOTS` | | `2` | Local snapshots kept in `BACKUP_DIR` — a fast restore path, not the safety net |
 | `BACKUP_REMOTE_MAX_SNAPSHOTS` | | `20` | Snapshots kept in the off-volume mirror — the real retention window |
+| `BACKUP_INTERVAL_SECONDS` | | `172800` (2 days) | How often the automatic snapshot loop runs |
+| `BACKUP_MIN_GAP_SECONDS` | | `3600` | Minimum time since the last snapshot before another automatic one is taken — skips redundant snapshots on a Space that restarts often |
+| `BACKUP_QUARANTINE_MAX_FILES` | | `1` | Quarantined `curivio.corrupt-*` files (db.py's corruption self-heal) kept before pruning the oldest |
 | `FEED_CACHE_TTL_HOURS` | | `24` | Feed cache lifetime in hours |
 | `SCHEDULER_JOB_HOUR` | | `8` | UTC hour for scheduled daily package generation |
 | `INSIGHT_GEN_RATE` | | `5/minute` | Rate limit for insight package generation |

@@ -164,6 +164,43 @@ def test_scheduler_refuses_to_snapshot_over_an_empty_rebuild(live):
     assert backup.create_snapshot("manual", force=True)["ok"] is True
 
 
+def test_automatic_snapshot_skipped_when_one_was_just_taken(live, monkeypatch):
+    """A Space that restarts often (sleep/wake, or a burst of redeploys) must
+    not take a near-duplicate premigration snapshot on every single boot —
+    each one is a real local write and a real remote push for zero new data."""
+    monkeypatch.setattr(backup, "MIN_GAP_SECONDS", 3600)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    first = backup.create_snapshot("premigration", force=True)
+    assert first["ok"] is True
+
+    second = backup.create_snapshot("premigration", force=False)
+    assert second["ok"] is False
+    assert "gap" in second["reason"]
+
+
+def test_force_bypasses_the_minimum_gap(live, monkeypatch):
+    """Admin's explicit 'take snapshot now' and the pre-restore snapshot both
+    pass force=True — they must never be silently skipped."""
+    monkeypatch.setattr(backup, "MIN_GAP_SECONDS", 3600)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    first = backup.create_snapshot("t", force=True)
+    second = backup.create_snapshot("manual", force=True)
+    assert first["ok"] is True
+    assert second["ok"] is True
+
+
+def test_automatic_snapshot_allowed_once_the_gap_has_passed(live, monkeypatch):
+    monkeypatch.setattr(backup, "MIN_GAP_SECONDS", 0)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    first = backup.create_snapshot("premigration", force=True)
+    second = backup.create_snapshot("auto", force=False)
+    assert first["ok"] is True
+    assert second["ok"] is True
+
+
 def test_prune_keeps_the_newest(live, monkeypatch):
     monkeypatch.setattr(backup, "LOCAL_MAX_SNAPSHOTS", 3)
     with db.get_connection() as conn:
@@ -174,6 +211,36 @@ def test_prune_keeps_the_newest(live, monkeypatch):
         names.append(backup.create_snapshot("t", force=True)["filename"])
     remaining = sorted(p.name for p in backup.BACKUP_DIR.glob("curivio-*.db"))
     assert remaining == sorted(names[-3:])
+
+
+def _make_fake_quarantine_file(live, epoch: int) -> Path:
+    path = live.parent / f"{live.stem}.corrupt-{epoch}.db"
+    sqlite3.connect(path).close()      # just needs to exist and be a real sqlite file
+    return path
+
+
+def test_quarantined_files_are_pruned_to_the_newest(live, monkeypatch):
+    """Quarantined files sit on the same tight local disk budget as everything
+    else and, unlike snapshots, were never bounded at all — left alone they
+    accumulate forever. Now capped like everything else in BACKUP_DIR."""
+    monkeypatch.setattr(backup, "QUARANTINE_MAX_FILES", 1)
+    older = _make_fake_quarantine_file(live, 1000)
+    newer = _make_fake_quarantine_file(live, 2000)
+    with db.get_connection() as conn:
+        _seed(conn, "u1", "a@example.com")
+    backup.create_snapshot("t", force=True)
+
+    assert not older.exists()
+    assert newer.exists()
+
+
+def test_list_snapshots_no_longer_shows_quarantined_files(live):
+    """Quarantined files are still fully restorable via resolve_source/restore
+    (and via routes/db_recovery.py's own separate emergency listing) — they
+    just don't clutter the routine admin panel's snapshot list any more."""
+    _make_fake_quarantine_file(live, 12345)
+    kinds = {r["kind"] for r in backup.list_snapshots()}
+    assert "quarantined" not in kinds
 
 
 def test_resolve_source_rejects_path_traversal(live):
