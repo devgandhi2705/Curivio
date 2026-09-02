@@ -1260,6 +1260,38 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
   )
 }
 
+// Shown instead of AdminPage when a non-admin lands on an /admin URL — pasted
+// link, bookmark from another account, back button after signing out. Purely an
+// explanation: the backend already refuses every /admin/* request from a
+// non-admin, and without this the admin shell rendered around a bare
+// "Couldn't load calls: Not Found", which reads like a broken page rather than
+// a closed door. Says nothing a signed-in user couldn't already learn by
+// calling the API themselves.
+function AdminAccessNotice({ checking, email, onGoToFeed }) {
+  return (
+    <div className="max-w-md mx-auto text-center py-24">
+      {checking ? (
+        <p className="text-sm text-slate-500">Checking access…</p>
+      ) : (
+        <>
+          <ShieldIcon className="w-8 h-8 mx-auto text-slate-700" />
+          <h1 className="text-xl font-bold text-slate-100 mt-4">Admin only</h1>
+          <p className="text-sm text-slate-500 mt-2">
+            This area is restricted to administrator accounts
+            {email ? <> — you are signed in as <span className="text-slate-400">{email}</span></> : null}.
+          </p>
+          <button
+            onClick={onGoToFeed}
+            className="mt-6 px-3 py-1.5 rounded-lg text-[13px] font-medium bg-slate-800/60 border border-slate-700/50 text-slate-300 hover:text-slate-100 hover:border-slate-600 transition-colors"
+          >
+            Back to Feed
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── App root ──────────────────────────────────────────────────────────────────
 
 export default function AppLayout() {
@@ -1311,9 +1343,13 @@ export default function AppLayout() {
   const [feedContext, setFeedContext] = useState(null)
   const [showSearch,  setShowSearch]  = useState(false)
   const [queue,        setQueue]      = useState(() => getQueue())
-  // Nav-visibility only — real enforcement is the backend's get_current_admin_user().
-  // Probes a real admin endpoint rather than shipping ADMIN_EMAILS in the client bundle.
-  const [isAdmin, setIsAdmin] = useState(false)
+  // Real enforcement is the backend's get_current_admin_user() — every /admin/*
+  // route 404s for anyone else. This probes a real admin endpoint (rather than
+  // shipping ADMIN_EMAILS in the client bundle) to decide what the UI shows:
+  // null while the probe is in flight, then true/false. The three states matter —
+  // treating "not yet known" as "not an admin" flashes the denial screen at a
+  // real admin on every load.
+  const [isAdmin, setIsAdmin] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
   const settingsRef = useRef(null)
   // Whether the user has a data-loss report that was resolved/rejected since
@@ -1357,6 +1393,9 @@ export default function AppLayout() {
   useEffect(() => {
     if (!user) { setIsAdmin(false); return }
     let cancelled = false
+    // Back to "unknown" first: switching accounts must re-probe, never carry
+    // the previous account's answer into the new session.
+    setIsAdmin(null)
     checkIsAdmin().then(v => { if (!cancelled) setIsAdmin(v) })
     return () => { cancelled = true }
   }, [user?.user_id])
@@ -1712,7 +1751,12 @@ export default function AppLayout() {
             <DashboardPage onGoToFeed={() => navigate('/feed')} userName={user?.name} />
           )}
 
-          {view === 'admin' && <AdminPage />}
+          {view === 'admin' && (
+            isAdmin
+              ? <AdminPage />
+              : <AdminAccessNotice checking={isAdmin === null} email={user?.email}
+                  onGoToFeed={() => navigate('/feed')} />
+          )}
 
           {view === 'bookmarks' && (
             <BookmarksPage onOpenChat={handleOpenChat} onOpenFeed={handleOpenQueueItem} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />
