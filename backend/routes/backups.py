@@ -28,7 +28,9 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from .. import config as cfg
 from ..rate_limiter import limiter
@@ -90,6 +92,24 @@ def users_in_backup(filename: str):
         return {"users": backup_service.users_in_snapshot(filename)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@admin_router.get("/backups/download")
+def download_backup(filename: str):
+    """Hand back the snapshot file itself, so an admin can keep a copy off the
+    box (or open it in a SQLite browser) without shelling into the container.
+    A snapshot that only exists in the remote mirror is fetched first, then the
+    temp copy is removed once the response has finished sending."""
+    try:
+        path, cleanup = backup_service.prepare_download(filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/octet-stream",
+        background=BackgroundTask(cleanup),
+    )
 
 
 @admin_router.post("/backups/preview")

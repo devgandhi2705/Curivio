@@ -44,7 +44,8 @@ def as_user():
 
 # ── gates ────────────────────────────────────────────────────────────────────
 
-ADMIN_GETS = ["/admin/backups", "/admin/data-loss-requests"]
+ADMIN_GETS = ["/admin/backups", "/admin/backups/download?filename=curivio-1.db",
+              "/admin/data-loss-requests"]
 ADMIN_POSTS = ["/admin/backups/create", "/admin/backups/preview", "/admin/backups/restore"]
 
 
@@ -147,6 +148,37 @@ def test_per_user_restore_passes_the_user_through(client, as_admin):
         client.post("/admin/backups/restore",
                     json={"filename": "curivio-1.db", "user_id": "u1"})
     restore.assert_called_once_with("curivio-1.db", "u1", dry_run=False)
+
+
+def test_download_rejects_an_unrecognised_filename(client, as_admin):
+    """Same path-traversal guard as restore — a download is an arbitrary-file
+    read off the container if resolve_source is ever bypassed."""
+    resp = client.get("/admin/backups/download", params={"filename": "../../etc/passwd"})
+    assert resp.status_code == 400
+
+
+def test_download_returns_the_file_as_an_attachment(client, as_admin, tmp_path):
+    src = tmp_path / "curivio-20260101-000000-manual.db"
+    src.write_bytes(b"sqlite-bytes")
+    with patch("backend.services.backup_service.prepare_download") as prep:
+        prep.return_value = (src, lambda: None)
+        resp = client.get("/admin/backups/download", params={"filename": src.name})
+    assert resp.status_code == 200
+    assert resp.content == b"sqlite-bytes"
+    assert src.name in resp.headers["content-disposition"]
+
+
+def test_download_cleans_up_a_temp_copy_afterwards(client, as_admin, tmp_path):
+    """A remote-only snapshot is fetched into a temp dir to be served. If the
+    cleanup callable is dropped, every download of one leaks a whole DB copy
+    onto the volume the backups exist to protect."""
+    src = tmp_path / "curivio-20260101-000000-manual.db"
+    src.write_bytes(b"x")
+    cleaned = []
+    with patch("backend.services.backup_service.prepare_download") as prep:
+        prep.return_value = (src, lambda: cleaned.append(True))
+        client.get("/admin/backups/download", params={"filename": src.name})
+    assert cleaned == [True]
 
 
 def test_resolve_rejects_an_unknown_status(client, as_admin):

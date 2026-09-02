@@ -40,6 +40,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -549,6 +550,17 @@ def _prepare_source(src: Path) -> tuple[Path, bool, Path | None]:
             raise ValueError("backup file not found") from None
         return downloaded, True, tmp_dir
     return src, True, None
+
+
+def prepare_download(filename: str) -> tuple[Path, Callable[[], None]]:
+    """A readable local path for `filename`, plus the cleanup to run once it has
+    been served. A remote-only snapshot is fetched into a temp dir first, which
+    is why the cleanup is returned rather than done here — the file has to
+    outlive this call. Raises ValueError for anything resolve_source rejects."""
+    attachable, _ok, temp = _prepare_source(resolve_source(filename))
+    if temp is None:
+        return attachable, lambda: None
+    return attachable, lambda: _cleanup_temp(temp)
 
 
 def users_in_snapshot(filename: str) -> list[dict]:

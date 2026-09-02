@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   listBackups, createBackup, usersInBackup, previewRestore, runRestore,
-  listDataLossRequests, resolveDataLossRequest,
+  fetchBackupFile, listDataLossRequests, resolveDataLossRequest,
 } from "../../api/backups.js"
 
 const CARD = "bg-slate-900/40 border border-slate-800/60 rounded-2xl"
@@ -42,6 +42,28 @@ function formatInterval(seconds) {
   return `${Math.round(hours)}h`
 }
 
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Revoked on the next tick — revoking synchronously can cancel the download
+  // before the browser has read the blob.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M8 1.5a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 0 1 1.06-1.06l2.22 2.22V2.25A.75.75 0 0 1 8 1.5Z" />
+      <path d="M2.75 10a.75.75 0 0 1 .75.75v1.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-1.5a.75.75 0 0 1 .75-.75Z" />
+    </svg>
+  )
+}
+
 // ── snapshot list ────────────────────────────────────────────────────────────
 
 const KIND_BADGE = {
@@ -49,31 +71,48 @@ const KIND_BADGE = {
   snapshot: { label: "snapshot", cls: "bg-slate-700/40 text-slate-400" },
 }
 
-function SnapshotRow({ backup, selected, onSelect }) {
+function SnapshotRow({ backup, selected, onSelect, onDownload, downloading }) {
   const badge = KIND_BADGE[backup.kind] ?? KIND_BADGE.snapshot
   return (
-    <button
-      onClick={() => onSelect(backup.filename)}
-      className={`w-full text-left px-3 py-2.5 rounded-xl border transition-colors ${
+    <div
+      className={`flex items-stretch rounded-xl border transition-colors ${
         selected
           ? "bg-blue-600/10 border-blue-600/40"
           : "bg-slate-900/40 border-slate-800/60 hover:border-slate-700"
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] text-slate-200 truncate">{formatWhen(backup.mtime)}</span>
-        <span className="text-[10px] text-slate-500 flex-shrink-0">{formatBytes(backup.size_bytes)}</span>
-      </div>
-      <div className="flex items-center gap-1.5 mt-1">
-        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide ${badge.cls}`}>
-          {badge.label}
-        </span>
-        <span className="text-[10px] text-slate-600 truncate">{backup.filename}</span>
-        {backup.kind === "remote" && (
-          <span className="text-[10px] text-slate-600 flex-shrink-0">— restoring downloads this first</span>
-        )}
-      </div>
-    </button>
+      <button
+        onClick={() => onSelect(backup.filename)}
+        className="flex-1 min-w-0 text-left px-3 py-2.5"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[12px] text-slate-200 truncate">{formatWhen(backup.mtime)}</span>
+          <span className="text-[10px] text-slate-500 flex-shrink-0">{formatBytes(backup.size_bytes)}</span>
+        </div>
+        <div className="flex items-center gap-1.5 mt-1">
+          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide ${badge.cls}`}>
+            {badge.label}
+          </span>
+          <span className="text-[10px] text-slate-600 truncate">{backup.filename}</span>
+          {backup.kind === "remote" && (
+            <span className="text-[10px] text-slate-600 flex-shrink-0">— restoring downloads this first</span>
+          )}
+        </div>
+      </button>
+      {/* Separate from the select button (not nested inside it — invalid HTML,
+          and a download shouldn't move the restore selection). */}
+      <button
+        onClick={() => onDownload(backup.filename)}
+        disabled={downloading}
+        title={`Download ${backup.filename}`}
+        aria-label={`Download ${backup.filename}`}
+        className="flex-shrink-0 px-2.5 flex items-center border-l border-slate-800/60 text-slate-500 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {downloading
+          ? <span className="text-[10px]">…</span>
+          : <DownloadIcon />}
+      </button>
+    </div>
   )
 }
 
@@ -256,6 +295,7 @@ export default function BackupsPanel() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(null)            // "snapshot" | "preview" | "restore"
   const [note, setNote] = useState(null)
+  const [downloading, setDownloading] = useState(null)   // filename being fetched
 
   const load = useCallback(() => {
     setLoading(true)
@@ -295,6 +335,19 @@ export default function BackupsPanel() {
       setNote(`Snapshot failed: ${e.message}`)
     } finally {
       setBusy(null)
+    }
+  }
+
+  // A remote-only snapshot is pulled from the mirror server-side first, so this
+  // can take a while — hence the per-row busy state rather than a bare click.
+  async function handleDownload(filename) {
+    setDownloading(filename); setNote(null)
+    try {
+      saveBlob(await fetchBackupFile(filename), filename)
+    } catch (e) {
+      setNote(`Download failed: ${e.message}`)
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -389,7 +442,8 @@ export default function BackupsPanel() {
           )}
           {backups.map(b => (
             <SnapshotRow key={b.filename} backup={b} selected={selected === b.filename}
-              onSelect={setSelected} />
+              onSelect={setSelected} onDownload={handleDownload}
+              downloading={downloading === b.filename} />
           ))}
         </div>
 

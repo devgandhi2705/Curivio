@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { Link, Navigate, useLocation } from "react-router-dom"
 import { listAdminProjects, listAdminCallsGrouped, getAdminSummary, getAdminOperationSummary, getAdminCallVolume, getAdminCallTree, exportAdminCallsGrouped } from "../../api/admin.js"
 import BackupsPanel from "./BackupsPanel.jsx"
 
@@ -1852,13 +1853,22 @@ function Pagination({ offset, limit, total, onPageChange }) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-function AdminTabs({ tab, onChange }) {
+// Each sub-tab is a real URL (/admin/calls, /admin/backups) so it can be
+// linked, bookmarked and reloaded — the whole section used to live at /admin
+// with the active tab held in component state, which meant a refresh always
+// dropped you back on LLM Calls. The router's catch-all already sends every
+// /admin/* path to AppLayout, so no route entry is needed; the pathname IS the
+// state. Anything else under /admin redirects to the default tab (below), so
+// exactly one of these is always active.
+const ADMIN_TABS = [["calls", "LLM Calls"], ["backups", "Backups"]]
+
+function AdminTabs({ tab }) {
   return (
     <div className="flex items-center gap-1 mb-5 border-b border-slate-800/60">
-      {[["calls", "LLM Calls"], ["backups", "Backups"]].map(([id, label]) => (
-        <button
+      {ADMIN_TABS.map(([id, label]) => (
+        <Link
           key={id}
-          onClick={() => onChange(id)}
+          to={`/admin/${id}`}
           className={`px-3 py-2 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
             tab === id
               ? "border-blue-500 text-slate-100"
@@ -1866,14 +1876,15 @@ function AdminTabs({ tab, onChange }) {
           }`}
         >
           {label}
-        </button>
+        </Link>
       ))}
     </div>
   )
 }
 
 export default function AdminPage() {
-  const [tab, setTab] = useState("calls")
+  const { pathname } = useLocation()
+  const tab = pathname.replace(/\/+$/, "").slice("/admin/".length)
   const [projects, setProjects] = useState([])
   const [projectsLoading, setProjectsLoading] = useState(true)
 
@@ -2068,10 +2079,17 @@ export default function AdminPage() {
     filters.search, includeTestData, offset, sortBy, sortOrder,
   ])
 
+  // Bare /admin, a trailing slash, or an unknown sub-path all land on the
+  // default tab, which keeps a tab highlighted for every URL under /admin.
+  // After all hooks, so the hook order never changes between renders.
+  if (!ADMIN_TABS.some(([id]) => id === tab)) {
+    return <Navigate to="/admin/calls" replace />
+  }
+
   if (tab === "backups") {
     return (
       <div>
-        <AdminTabs tab={tab} onChange={setTab} />
+        <AdminTabs tab={tab} />
         <BackupsPanel />
       </div>
     )
@@ -2079,7 +2097,7 @@ export default function AdminPage() {
 
   return (
     <div>
-      <AdminTabs tab={tab} onChange={setTab} />
+      <AdminTabs tab={tab} />
       <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Admin</h1>

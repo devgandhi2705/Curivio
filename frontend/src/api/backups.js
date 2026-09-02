@@ -35,6 +35,21 @@ export async function createBackup() {
   return apiFetch("/admin/backups/create", { method: "POST" })
 }
 
+// The file itself. Fetched rather than linked to with a plain <a href> because
+// /admin/* is gated by an Authorization header, which a browser navigation
+// cannot send. Returns the Blob; the caller decides how to save it.
+export async function fetchBackupFile(filename) {
+  const res = await fetch(
+    `${API_URL}/admin/backups/download?filename=${encodeURIComponent(filename)}`,
+    { headers: getAuthHeaders() },
+  )
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Download failed: ${res.status}`)
+  }
+  return res.blob()
+}
+
 export async function usersInBackup(filename) {
   return apiFetch(`/admin/backups/users?filename=${encodeURIComponent(filename)}`)
 }

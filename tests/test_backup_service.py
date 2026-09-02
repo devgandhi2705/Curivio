@@ -249,6 +249,22 @@ def test_resolve_source_rejects_path_traversal(live):
             backup.resolve_source(bad)
 
 
+def test_prepare_download_serves_a_local_snapshot_untouched(live):
+    """A snapshot already on disk is handed back as-is with a no-op cleanup —
+    downloading one must not copy the file or delete the original."""
+    filename = backup.create_snapshot("t", force=True)["filename"]
+    path, cleanup = backup.prepare_download(filename)
+    assert path == backup.BACKUP_DIR / filename
+    cleanup()
+    assert path.exists()
+
+
+def test_prepare_download_rejects_path_traversal(live):
+    for bad in ("../../etc/passwd", "/etc/passwd", "curivio.db", ""):
+        with pytest.raises(ValueError):
+            backup.prepare_download(bad)
+
+
 # ── restore ──────────────────────────────────────────────────────────────────
 
 def _snapshot_then_wipe(seed_fn):
