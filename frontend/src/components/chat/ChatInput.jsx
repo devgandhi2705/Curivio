@@ -364,7 +364,7 @@ export default function ChatInput({
                 <PlusIcon />
               </button>
               {menuOpen && (
-                <div className="absolute left-0 bottom-full mb-1.5 z-50 min-w-[170px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+                <div className="u-pop absolute left-0 bottom-full mb-1.5 z-50 min-w-[170px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
                   <ModeMenuItem
                     active={laymanActive}
                     onClick={() => { toggleLayman(); setMenuOpen(false) }}

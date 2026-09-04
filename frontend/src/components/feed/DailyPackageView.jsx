@@ -836,13 +836,13 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
         </div>
         {/* Spinning ring */}
         <svg className="absolute inset-0 w-16 h-16 -rotate-90 animate-[spin_2s_linear_infinite]" viewBox="0 0 64 64">
-          <circle cx="32" cy="32" r="28" fill="none" stroke="white" strokeOpacity="0.08" strokeWidth="3" />
+          <circle cx="32" cy="32" r="28" fill="none" style={{ stroke: "var(--u-track)" }} strokeOpacity="0.55" strokeWidth="3" />
           <circle cx="32" cy="32" r="28" fill="none" stroke="url(#gen-ring)" strokeWidth="3"
             strokeDasharray="60 116" strokeLinecap="round" />
           <defs>
             <linearGradient id="gen-ring" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#60a5fa" />
-              <stop offset="100%" stopColor="#a78bfa" />
+              <stop offset="0%" style={{ stopColor: "var(--u-accent)" }} />
+              <stop offset="100%" style={{ stopColor: "var(--u-secondary)" }} />
             </linearGradient>
           </defs>
         </svg>

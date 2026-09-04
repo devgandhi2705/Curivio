@@ -493,7 +493,7 @@ function HighlightMatches({ text, query }) {
   const parts = String(text).split(new RegExp(`(${escapedQuery})`, "gi"))
   return parts.map((part, index) =>
     part.toLowerCase() === normalizedQuery.toLowerCase()
-      ? <mark key={index} className="bg-amber-300/80 text-slate-950 rounded-[2px] px-0.5">{part}</mark>
+      ? <mark key={index} className="u-mark rounded-[2px] px-0.5">{part}</mark>
       : part
   )
 }
@@ -579,7 +579,7 @@ function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSel
       <div className="absolute inset-0" onClick={onClose} />
       <div
         onClick={e => e.stopPropagation()}
-        className="absolute inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-slate-700/60 shadow-2xl shadow-black/60 flex flex-col"
+        className="u-slide-r absolute inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-slate-700/60 shadow-2xl shadow-black/60 flex flex-col"
       >
         <div className="flex items-start justify-between px-5 py-4 border-b border-slate-800 flex-shrink-0">
           <div className="min-w-0">
@@ -845,11 +845,11 @@ function Sparkline({ byDay, granularity, loading }) {
       >
         {points.length > 1 ? (
           <>
-            <path d={areaPath} fill="rgba(59,130,246,0.12)" />
-            <path d={linePath} fill="none" stroke="#3b82f6" strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" />
+            <path d={areaPath} style={{ fill: "color-mix(in srgb, var(--u-accent) 14%, transparent)" }} />
+            <path d={linePath} fill="none" style={{ stroke: "var(--u-accent)" }} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" />
           </>
         ) : (
-          <circle cx={coords[0][0]} cy={coords[0][1]} r="2.5" fill="#3b82f6" />
+          <circle cx={coords[0][0]} cy={coords[0][1]} r="2.5" style={{ fill: "var(--u-accent)" }} />
         )}
 
         {hover && (
@@ -857,9 +857,9 @@ function Sparkline({ byDay, granularity, loading }) {
             <line
               x1={coords[hover.idx][0]} x2={coords[hover.idx][0]}
               y1={SPARK_PAD_TOP} y2={SPARK_H - SPARK_PAD_BOTTOM}
-              stroke="rgba(255,255,255,0.18)" strokeWidth="1"
+              style={{ stroke: "rgb(var(--u-white) / .22)" }} strokeWidth="1"
             />
-            <circle cx={coords[hover.idx][0]} cy={coords[hover.idx][1]} r="3" fill="#3b82f6" stroke="#0f1117" strokeWidth="1.5" />
+            <circle cx={coords[hover.idx][0]} cy={coords[hover.idx][1]} r="3" style={{ fill: "var(--u-accent)", stroke: "rgb(var(--u-slate-950))" }} strokeWidth="1.5" />
           </>
         )}
 
@@ -869,7 +869,7 @@ function Sparkline({ byDay, granularity, loading }) {
             x={coords[i][0]}
             y={SPARK_H - 6}
             textAnchor={i === 0 ? "start" : i === days.length - 1 ? "end" : "middle"}
-            fill="#475569"
+            style={{ fill: "var(--u-axis)" }}
             fontSize="9"
             fontFamily="var(--font-mono)"
           >
@@ -923,7 +923,7 @@ function Tile({ value, label, sublabel, accent = "text-slate-200", loading }) {
   return (
     <div className="px-3 sm:px-4 py-2.5 sm:py-3">
       <div
-        className={`text-[17px] font-bold leading-none tabular-nums font-mono transition-colors duration-500 ${accent} ${flashing ? "text-white" : ""}`}
+        className={`text-[17px] font-bold leading-none tabular-nums font-mono transition-colors duration-500 ${accent} ${flashing ? "text-slate-100" : ""}`}
       >
         {value}
       </div>

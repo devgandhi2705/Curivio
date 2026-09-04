@@ -324,7 +324,7 @@ function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
       className={`group relative flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
         menuOpen ? 'z-50' : ''
       } ${
-        isActive ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+        isActive ? 'bg-white/[0.07] text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
       }`}
     >
       <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${COLOR_DOT[col.color] ?? 'bg-blue-500'}`} />
@@ -349,7 +349,7 @@ function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
           <DotsIcon />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+          <div className="u-pop absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit?.(col) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"

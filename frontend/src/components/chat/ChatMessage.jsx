@@ -1065,8 +1065,8 @@ function ToolCallBlock({ block, streaming }) {
       </button>
       {open && hasSources && (
         <div
-          className="mt-2 ml-0 sm:ml-5 p-3 border border-slate-700/50 rounded-lg bg-slate-900/30 flex flex-col gap-1.5 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-700/80 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent"
-          style={{ maxHeight: "136px", scrollbarWidth: "thin", scrollbarColor: "rgba(51, 65, 85, 0.9) transparent" }}
+          className="mt-2 ml-0 sm:ml-5 p-3 border border-slate-700/50 rounded-lg bg-slate-900/30 flex flex-col gap-1.5 overflow-y-auto"
+          style={{ maxHeight: "136px" }}
         >
           {sources.map((src, i) => (
             <a

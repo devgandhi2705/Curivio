@@ -1,0 +1,10 @@
+# Hugging Face Spaces rejects binaries pushed through plain git — its
+# pre-receive hook wants them in LFS/Xet storage. This repo had no binaries at
+# all until the logo and hero image landed, hence no .gitattributes until now.
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.gif  filter=lfs diff=lfs merge=lfs -text
+*.ico  filter=lfs diff=lfs merge=lfs -text
+*.woff2 filter=lfs diff=lfs merge=lfs -text

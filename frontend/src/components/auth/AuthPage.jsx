@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
 import { forgotPassword, verifyResetCode, resetPassword, sendVerifyEmail } from "../../api/auth"
 import { forkSharedChat } from "../../api/share"
+import Plate from "../shared/Plate.jsx"
 
 function EyeIcon({ open }) {
   return open ? (
@@ -29,7 +30,7 @@ function PasswordInput({ value, onChange, placeholder, required, id }) {
         onChange={onChange}
         placeholder={placeholder}
         required={required}
-        className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-4 py-2.5 pr-10 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+        className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 pr-10 text-slate-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
       />
       <button
         type="button"
@@ -77,7 +78,7 @@ export default function AuthPage() {
 
   const { login, register, finalizeSignup, loading, error, clearError } = useAuth()
 
-  const inputCls = "w-full bg-[#0f1117] border border-white/10 rounded-lg px-4 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+  const inputCls = "w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2.5 text-slate-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
 
   function handleEmailChange(e) {
@@ -271,22 +272,34 @@ export default function AuthPage() {
   const displayError = localError || error
 
   return (
-    <div className="min-h-screen min-h-dvh bg-[#0f1117] flex items-center justify-center p-4 pt-safe">
-      <div className="w-full max-w-md">
+    <div className="u-auth relative min-h-screen min-h-dvh bg-slate-950 flex items-center justify-center p-4 pt-safe overflow-hidden">
+      {/* The landing page's wire plates, drifting at roughly half speed — this
+          screen is a pause, not a pitch, so the figure should register without
+          asking to be watched. Behind everything, never interactive. */}
+      <div className="u-auth-field" aria-hidden="true">
+        <Plate seed={7}  count={24} rings className="u-auth-plate u-auth-plate-a" />
+        <Plate seed={31} count={20}       className="u-auth-plate u-auth-plate-b" />
+        <Plate seed={58} count={18}       className="u-auth-plate u-auth-plate-c" />
+      </div>
+
+      <div className="relative z-10 w-full max-w-md">
         {/* Logo / brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-blue-600 mb-4">
-            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-white">Curivio</h1>
+          <img
+            src="/logo.webp"
+            alt="Curivio"
+            width="52"
+            height="52"
+            draggable="false"
+            className="u-logo w-13 h-13 mx-auto mb-4 rounded-[16px] select-none"
+            style={{ width: 52, height: 52 }}
+          />
+          <h1 className="text-2xl font-bold text-slate-100">Curivio</h1>
           <p className="text-gray-400 text-sm mt-1">Learn smarter, a few minutes every day.</p>
         </div>
 
         {/* Card */}
-        <div className="bg-[#1a1d27] border border-white/10 rounded-2xl px-5 py-6 sm:p-8">
+        <div className="bg-slate-900 border border-white/10 rounded-2xl px-5 py-6 sm:p-8">
 
           {/* ── Forgot password flow ── */}
           {mode === "forgot" ? (
@@ -303,7 +316,7 @@ export default function AuthPage() {
                     <path fillRule="evenodd" d="M14 8a.75.75 0 0 1-.75.75H4.56l3.22 3.22a.75.75 0 1 1-1.06 1.06l-4.5-4.5a.75.75 0 0 1 0-1.06l4.5-4.5a.75.75 0 0 1 1.06 1.06L4.56 7.25h8.69A.75.75 0 0 1 14 8Z" clipRule="evenodd"/>
                   </svg>
                 </button>
-                <h2 className="text-sm font-semibold text-white">Forgot Password</h2>
+                <h2 className="text-sm font-semibold text-slate-100">Forgot Password</h2>
               </div>
 
               {forgotMsg ? (
@@ -343,7 +356,7 @@ export default function AuthPage() {
               ) : (
                 <>
                   <p className="text-xs text-gray-400 leading-relaxed">
-                    Code sent to <span className="text-white font-medium">{forgotEmail}</span>
+                    Code sent to <span className="text-slate-100 font-medium">{forgotEmail}</span>
                   </p>
 
                   <div>
@@ -421,7 +434,7 @@ export default function AuthPage() {
           ) : (
             <>
               {/* ── Tab switcher ── */}
-              <div className="flex rounded-lg bg-[#0f1117] p-1 mb-6">
+              <div className="flex rounded-lg bg-slate-950 p-1 mb-6">
                 {["login", "signup"].map(m => (
                   <button
                     key={m}
@@ -451,11 +464,11 @@ export default function AuthPage() {
                         <path fillRule="evenodd" d="M14 8a.75.75 0 0 1-.75.75H4.56l3.22 3.22a.75.75 0 1 1-1.06 1.06l-4.5-4.5a.75.75 0 0 1 0-1.06l4.5-4.5a.75.75 0 0 1 1.06 1.06L4.56 7.25h8.69A.75.75 0 0 1 14 8Z" clipRule="evenodd"/>
                       </svg>
                     </button>
-                    <h2 className="text-sm font-semibold text-white">Verify your email</h2>
+                    <h2 className="text-sm font-semibold text-slate-100">Verify your email</h2>
                   </div>
 
                   <p className="text-xs text-gray-400 leading-relaxed">
-                    Code sent to <span className="text-white font-medium">{email.trim()}</span>
+                    Code sent to <span className="text-slate-100 font-medium">{email.trim()}</span>
                   </p>
 
                   <div>
@@ -521,7 +534,7 @@ export default function AuthPage() {
                       onBlur={handleEmailChange}
                       placeholder="you@example.com"
                       required
-                      className={`w-full bg-[#0f1117] border rounded-lg px-4 py-2.5 text-white placeholder-gray-600 focus:outline-none text-sm transition-colors ${
+                      className={`w-full bg-slate-950 border rounded-lg px-4 py-2.5 text-slate-100 placeholder-gray-600 focus:outline-none text-sm transition-colors ${
                         emailError
                           ? "border-red-500/60 focus:border-red-500"
                           : "border-white/10 focus:border-blue-500"

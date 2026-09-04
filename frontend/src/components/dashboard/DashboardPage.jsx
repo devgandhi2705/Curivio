@@ -138,22 +138,24 @@ function GoalRing({ current, target }) {
 
   return (
     <svg width={116} height={116} viewBox="0 0 116 116">
-      <circle cx={cx} cy={cy} r={R} fill="none" strokeWidth="9" stroke="#1e293b" />
+      <circle cx={cx} cy={cy} r={R} fill="none" strokeWidth="9" style={{ stroke: "var(--u-track)" }} />
       <circle
         cx={cx} cy={cy} r={R} fill="none" strokeWidth="9"
-        stroke={done ? "#10b981" : "#3b82f6"}
         strokeLinecap="round"
         strokeDasharray={circumference}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${cx} ${cy})`}
-        style={{ transition: "stroke-dashoffset 0.6s ease, stroke 0.3s" }}
+        style={{
+          stroke: done ? "var(--u-success)" : "var(--u-accent)",
+          transition: "stroke-dashoffset 0.6s ease, stroke 0.3s",
+        }}
       />
       <text x={cx} y={cy - 6} textAnchor="middle"
-        style={{ fontSize: 26, fontWeight: 700, fill: done ? "#10b981" : "#e2e8f0", fontFamily: "inherit" }}>
+        style={{ fontSize: 26, fontWeight: 700, fill: done ? "var(--u-success)" : "var(--dk-heading)", fontFamily: "inherit" }}>
         {current}
       </text>
       <text x={cx} y={cy + 14} textAnchor="middle"
-        style={{ fontSize: 11, fill: "#475569", fontFamily: "inherit" }}>
+        style={{ fontSize: 11, fill: "var(--u-axis)", fontFamily: "inherit" }}>
         of {target}
       </text>
     </svg>

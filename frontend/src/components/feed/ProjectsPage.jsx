@@ -354,8 +354,14 @@ export default function ProjectsPage({
       ] : []),
       { label: 'Edit project', onClick: () => setShowEdit(true) },
       ...(exportCallbacks.pdf ? [
-        { label: 'Export as PDF',      onClick: exportCallbacks.pdf, export: true },
-        { label: 'Export as Markdown', onClick: exportCallbacks.md,  export: true },
+        {
+          label: 'Export as',
+          export: true,
+          submenu: [
+            { label: 'Export as PDF',      onClick: exportCallbacks.pdf },
+            { label: 'Export as Markdown', onClick: exportCallbacks.md },
+          ],
+        },
       ] : []),
       { label: 'Delete project', variant: 'danger', onClick: () => setPendingDelete(activeProject) },
     ])

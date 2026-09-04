@@ -84,7 +84,7 @@ function SessionRow({ session, isActive, onSelect, onRename, onDelete, query }) 
           <DotsIcon />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+          <div className="u-pop absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
             <button
               onClick={() => { setMenuOpen(false); onRename?.(session) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"

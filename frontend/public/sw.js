@@ -1,7 +1,11 @@
 // Curivio service worker — app shell caching + offline data serving.
 
 const SHELL_CACHE_PREFIX = 'curivio-shell-'
-const SHELL_CACHE = 'curivio-shell-v2'
+// v3: the colour-grading rebuild. Static assets are cache-first below, so a
+// browser holding v2 would keep serving CSS compiled by the previous Tailwind
+// config — variables defined, nothing consuming them, theme switch inert.
+// Bumping the version makes `activate` drop the old cache.
+const SHELL_CACHE = 'curivio-shell-v3'
 
 const STATIC_ASSET_RE = /\.(?:js|css|woff2?|png|svg|ico)$/
 const PROJECT_DETAIL_RE = /^\/api\/projects\/([^/]+)$/

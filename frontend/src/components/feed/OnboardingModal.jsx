@@ -229,7 +229,7 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
     // Mobile: fullscreen. Desktop: centered dialog with backdrop.
     <div
       className="fixed inset-0 z-50 md:flex md:items-center md:justify-center md:px-4"
-      style={{ background: "rgba(2,6,23,0.92)", backdropFilter: "blur(10px)" }}
+      style={{ background: "var(--u-scrim)", backdropFilter: "blur(10px)" }}
     >
       <div className="
         w-full h-full flex flex-col

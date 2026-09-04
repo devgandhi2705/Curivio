@@ -2,6 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Hover / press feedback ───────────────────────────────────────────────
+   In `@layer base` on purpose: every one of these is meant to be a default a
+   component can override. Anything carrying its own `transition-*`,
+   `duration-*` or `active:scale-*` utility outranks the whole layer, so this
+   only fills in the elements that never got explicit motion. Scoped away from
+   the landing page, which runs its own motion engine. */
+@layer base {
+  body:not(:has(.lp)) :is(a, button, [role="button"], summary, label[for], input, select, textarea) {
+    transition:
+      color            160ms ease,
+      background-color 160ms ease,
+      border-color     160ms ease,
+      box-shadow       160ms ease,
+      opacity          160ms ease,
+      transform        170ms cubic-bezier(.2, .9, .3, 1);
+  }
+
+  /* 0.98 rather than the usual 0.95: much of this app's button surface is
+     full-width sidebar rows, where a 5% squeeze reads as a glitch and 2%
+     reads as pressure. */
+  body:not(:has(.lp)) button:not(:disabled):active,
+  body:not(:has(.lp)) [role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(.98);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body:not(:has(.lp)) button:not(:disabled):active { transform: none; }
+  }
+}
+
 @keyframes chat-cursor-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
@@ -84,20 +114,9 @@ body {
   --heading-lh:    1.28;
   --para-gap:      1.05em;
 
-  /* ── Dark mode surface palette (Linear/ChatGPT-inspired charcoal) ── */
-  --dk-bg-page:       #0f1117;    /* deep charcoal — not void black        */
-  --dk-bg-card:       #161b27;    /* card surface — clear step above page  */
-  --dk-bg-elevated:   #1d2438;    /* modals, active states, dropdowns      */
-  --dk-bg-hover:      #232b42;    /* interactive hover feedback            */
-  --dk-border:        rgba(255,255,255,0.07);  /* clean on dark surfaces   */
-  --dk-border-strong: rgba(255,255,255,0.11);  /* card edges               */
-
-  /* ── Dark mode text hierarchy (engineered for long sessions) ── */
-  --dk-heading:    #d8e2f0;    /* softer than pure white — no glare      */
-  --dk-body:       #a8b8cc;    /* comfortable warm-gray — low eye strain */
-  --dk-secondary:  #677d93;    /* labels and secondary info              */
-  --dk-muted:      #3d5066;    /* very muted, decorative only            */
-  --dk-accent:     #93c5fd;    /* blue-300                               */
+  /* The --dk-* surface and text tokens these rules consume are no longer
+     declared here: theme.css redefines the whole set per colour mode, so a
+     single declaration would pin them to one theme. */
 }
 
 body {
@@ -116,18 +135,20 @@ code, pre, kbd, samp {
 }
 
 /* ============================================================
-   SCROLLBAR — thin and subtle in both modes
+   SCROLLBAR — never visible, anywhere
+   Scrolling itself is untouched: wheel, trackpad, touch, keyboard and
+   programmatic scrolling all behave exactly as before. Only the indicator is
+   gone. Note this also removes the scrollbar as a *drag target* and as the
+   visual cue that a region scrolls at all, which is a real trade for long
+   documents — a deliberate call, not an oversight.
    ============================================================ */
 
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(100, 116, 139, 0.25) transparent;
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* legacy Edge/IE */
 }
 
-*::-webkit-scrollbar          { width: 4px; height: 4px; }
-*::-webkit-scrollbar-track    { background: transparent; }
-*::-webkit-scrollbar-thumb    { background-color: rgba(100,116,139,0.25); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background-color: rgba(100,116,139,0.4); }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 /* scrollbar-none utility for horizontal strips */
 .scrollbar-none {
@@ -136,132 +157,10 @@ code, pre, kbd, samp {
 }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 
-/* ============================================================
-   DARK MODE — CODE BLOCKS & MARKDOWN
-   ============================================================ */
-
-/* Inline code in dark mode */
-:not(.theme-light) .inline-code,
-:not(.theme-light) code:not(pre code) {
-  background-color: rgba(148,163,184,0.12);
-  color: #93c5fd;
-  border: 1px solid rgba(148,163,184,0.15);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 0.82em;
-}
-
-/* Code blocks in dark mode */
-:not(.theme-light) pre {
-  background-color: #0a0d14 !important;
-  border: 1px solid rgba(255,255,255,0.07) !important;
-  border-radius: 12px;
-}
-
-:not(.theme-light) pre code {
-  background: transparent !important;
-  color: #c9d8e8 !important;
-  font-size: 0.83em;
-  line-height: 1.65;
-}
-
-/* ============================================================
-   DARK MODE — SURFACE GRADING SYSTEM
-   Replaces Tailwind's near-black (#020617) with layered charcoal.
-   Target: Linear / Claude / ChatGPT dark aesthetics.
-   Surface scale: page → card → elevated → hover (visible steps)
-   ============================================================ */
-
-/* ── Page background — deep charcoal, not void black ─────── */
-:not(.theme-light) .bg-slate-950     { background-color: var(--dk-bg-page); }
-:not(.theme-light) .bg-slate-950\/95 { background-color: rgba(15,17,23,0.97); }
-
-/* ── Card surfaces — visible step above page ─────────────── */
-:not(.theme-light) .bg-slate-900     { background-color: var(--dk-bg-card); }
-:not(.theme-light) .bg-slate-900\/80 { background-color: rgba(22,27,39,0.85); }
-:not(.theme-light) .bg-slate-900\/60 { background-color: rgba(22,27,39,0.65); }
-:not(.theme-light) .bg-slate-900\/50 { background-color: rgba(22,27,39,0.55); }
-:not(.theme-light) .bg-slate-900\/40 { background-color: rgba(22,27,39,0.45); }
-:not(.theme-light) .bg-slate-900\/30 { background-color: rgba(22,27,39,0.35); }
-
-/* ── Elevated surfaces — modals, active states ───────────── */
-:not(.theme-light) .bg-slate-800     { background-color: var(--dk-bg-elevated); }
-:not(.theme-light) .bg-slate-800\/80 { background-color: rgba(29,36,56,0.85); }
-:not(.theme-light) .bg-slate-800\/70 { background-color: rgba(29,36,56,0.75); }
-:not(.theme-light) .bg-slate-800\/60 { background-color: rgba(29,36,56,0.65); }
-:not(.theme-light) .bg-slate-800\/50 { background-color: rgba(29,36,56,0.55); }
-:not(.theme-light) .bg-slate-800\/40 { background-color: rgba(29,36,56,0.45); }
-:not(.theme-light) .bg-slate-800\/30 { background-color: rgba(29,36,56,0.35); }
-:not(.theme-light) .bg-slate-800\/20 { background-color: rgba(29,36,56,0.25); }
-
-/* ── Hover states — clear interactive feedback ───────────── */
-:not(.theme-light) .bg-slate-700     { background-color: var(--dk-bg-hover); }
-:not(.theme-light) .bg-slate-700\/60 { background-color: rgba(35,43,66,0.65); }
-:not(.theme-light) .bg-slate-700\/50 { background-color: rgba(35,43,66,0.55); }
-:not(.theme-light) .bg-slate-700\/40 { background-color: rgba(35,43,66,0.45); }
-
-/* ── Hover bg interactions ───────────────────────────────── */
-:not(.theme-light) .hover\:bg-slate-900:hover     { background-color: var(--dk-bg-card); }
-:not(.theme-light) .hover\:bg-slate-900\/70:hover { background-color: rgba(22,27,39,0.75); }
-:not(.theme-light) .hover\:bg-slate-800:hover     { background-color: var(--dk-bg-elevated); }
-:not(.theme-light) .hover\:bg-slate-800\/70:hover { background-color: rgba(29,36,56,0.78); }
-:not(.theme-light) .hover\:bg-slate-800\/60:hover { background-color: rgba(29,36,56,0.68); }
-:not(.theme-light) .hover\:bg-slate-800\/40:hover { background-color: rgba(29,36,56,0.48); }
-:not(.theme-light) .hover\:bg-slate-700:hover     { background-color: var(--dk-bg-hover); }
-:not(.theme-light) .hover\:bg-slate-700\/60:hover { background-color: rgba(35,43,66,0.68); }
-
-/* ── Border calibration — visible on new charcoal surfaces ── */
-/* Tailwind's border-slate-800 (#1e293b) is near-invisible on  */
-/* the new bg-slate-900 (#161b27) — replace with white alpha   */
-:not(.theme-light) .border-slate-800            { border-color: var(--dk-border); }
-:not(.theme-light) .border-slate-800\/80        { border-color: rgba(255,255,255,0.08); }
-:not(.theme-light) .border-slate-800\/60        { border-color: rgba(255,255,255,0.06); }
-:not(.theme-light) .border-slate-800\/50        { border-color: rgba(255,255,255,0.05); }
-
-/* Keep slate-700 borders slightly stronger */
-:not(.theme-light) .border-slate-700            { border-color: rgba(255,255,255,0.12); }
-:not(.theme-light) .border-slate-700\/60        { border-color: rgba(255,255,255,0.08); }
-:not(.theme-light) .border-slate-700\/50        { border-color: rgba(255,255,255,0.07); }
-:not(.theme-light) .border-slate-700\/40        { border-color: rgba(255,255,255,0.06); }
-:not(.theme-light) .border-slate-700\/30        { border-color: rgba(255,255,255,0.05); }
-
-/* Hover borders */
-:not(.theme-light) .hover\:border-slate-700:hover { border-color: rgba(255,255,255,0.14); }
-:not(.theme-light) .hover\:border-slate-600:hover { border-color: rgba(255,255,255,0.18); }
-
-/* ── Text softening — reduce eye strain, not readability ─── */
-/* Avoid glowing pure-white text (#f1f5f9) on dark backgrounds */
-:not(.theme-light) .text-slate-100 { color: var(--dk-heading); }
-:not(.theme-light) .text-slate-200 { color: #bccbdc; }
-
-/* ── Navigation header ───────────────────────────────────── */
-:not(.theme-light) header {
-  background-color: rgba(15,17,23,0.97) !important;
-  border-bottom-color: rgba(255,255,255,0.07) !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.05);
-}
-
-/* ── Dark mode scrollbar ─────────────────────────────────── */
-:not(.theme-light) *::-webkit-scrollbar-thumb {
-  background-color: rgba(100,116,139,0.3);
-}
-
-/* ── Dark mode code blocks — calibrated for new bg ───────── */
-:not(.theme-light) pre {
-  background-color: rgba(8,10,16,0.70) !important;
-  border-color: rgba(255,255,255,0.07) !important;
-}
-
-/* ── Card surface depth — subtle but present ─────────────── */
-:not(.theme-light) .rounded-2xl.border,
-:not(.theme-light) .rounded-xl.border {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04);
-}
-
-/* Modal refinements */
-:not(.theme-light) .shadow-2xl.shadow-black\/60 {
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 4px 16px rgba(0,0,0,0.5);
-}
+/* Code blocks, surface grading, border calibration and text softening all
+   used to be hard-coded `:not(.theme-light)` overrides here — one theme
+   pretending to be a system. They now live in theme.css as palette
+   variables, so all three colour modes get them. */
 
 /* ============================================================
    READING TYPOGRAPHY SYSTEM
@@ -328,17 +227,17 @@ code, pre, kbd, samp {
 .reading-text blockquote {
   margin: 1.3em 0;
   padding: 0.7em 0 0.7em 1.2em;
-  border-left: 3px solid rgba(99, 130, 246, 0.4);
+  border-left: 3px solid color-mix(in srgb, var(--u-accent) 42%, transparent);
   border-radius: 0 6px 6px 0;
   font-style: italic;
   color: var(--dk-secondary);
-  background: rgba(99, 130, 246, 0.04);
+  background: color-mix(in srgb, var(--u-accent) 5%, transparent);
 }
 
 /* ── HR ──────────────────────────────────────────────────── */
 .reading-text hr {
   border: none;
-  border-top: 1px solid rgba(100, 116, 139, 0.2);
+  border-top: 1px solid var(--dk-border-strong);
   margin: 1.75em 0;
 }
 
@@ -352,7 +251,7 @@ code, pre, kbd, samp {
 .reading-text th,
 .reading-text td {
   padding: 0.6em 0.9em;
-  border: 1px solid rgba(100, 116, 139, 0.22);
+  border: 1px solid var(--dk-border-strong);
   text-align: left;
   line-height: 1.55;
   color: var(--dk-body);
@@ -361,7 +260,7 @@ code, pre, kbd, samp {
   font-weight: 600;
   font-size: 0.85em;
   letter-spacing: 0.02em;
-  background: rgba(100, 116, 139, 0.1);
+  background: var(--dk-border);
   color: var(--dk-heading);
 }
 .reading-text td:first-child { font-weight: 500; }
@@ -372,19 +271,10 @@ code, pre, kbd, samp {
   line-height: var(--reading-lh);
 }
 
-/* ============================================================
-   DARK MODE TEXT CALIBRATION
-   Reduces eye strain for long reading sessions.
-   Uses layered grays instead of pure-white-on-black.
-   ============================================================ */
-
-/* Reading content — calibrated for both modes */
-:not(.theme-light) .reading-text strong { color: var(--dk-heading); }
-:not(.theme-light) .reading-text p      { color: var(--dk-body); }
-:not(.theme-light) .reading-text li     { color: var(--dk-body); }
-:not(.theme-light) .reading-text h1,
-:not(.theme-light) .reading-text h2     { color: var(--dk-heading); }
-:not(.theme-light) .reading-text h3     { color: var(--dk-secondary); }
+/* List items were the one reading-text element the base rules above never
+   coloured — everything else already reads --dk-*, which theme.css now
+   redefines per mode. */
+.reading-text li { color: var(--dk-body); }
 
 /* ============================================================
    FEED CARD READABILITY IMPROVEMENTS
@@ -427,12 +317,6 @@ code, pre, kbd, samp {
 
 /* ── Collection dot colors — stay vivid ─────────────────── */
 /* (bg-blue-500, bg-violet-500, etc. are already fine) */
-
-/* ── Selection highlight ─────────────────────────────────── */
-::selection {
-  background-color: rgba(59,130,246,0.25);
-  color: inherit;
-}
 
 /* Phase P: crossfade for the pre-content filler word (ChatMessage.jsx
    StreamingDots). Tailwind ships no fade utility, and a CSS *animation*

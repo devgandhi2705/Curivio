@@ -17,9 +17,9 @@ const CY = H / 2
 const RADIUS = 120
 
 const TYPE_COLOR = {
-  prerequisite: "#F59E0B",  // amber-400
-  related:      "#38BDF8",  // sky-400
-  advanced:     "#A78BFA",  // violet-400
+  prerequisite: "var(--u-warn)",
+  related:      "var(--u-info)",
+  advanced:     "var(--u-secondary)",
 }
 
 const TYPE_LABEL = {
@@ -121,7 +121,7 @@ export default function TopicGraph({ data, loading }) {
             y1={CY}
             x2={node.x}
             y2={node.y}
-            stroke="#1E293B"
+            style={{ stroke: "var(--u-track)" }}
             strokeWidth="1.5"
           />
         ))}
@@ -133,13 +133,13 @@ export default function TopicGraph({ data, loading }) {
           const anchor = labelAnchor(node.x)
           return (
             <g key={i}>
-              <circle cx={node.x} cy={node.y} r="5" fill={color} opacity="0.85" />
+              <circle cx={node.x} cy={node.y} r="5" style={{ fill: color }} opacity="0.85" />
               <text
                 x={lx}
                 y={ly}
                 textAnchor={anchor}
                 dominantBaseline="middle"
-                fill={color}
+                style={{ fill: color }}
                 fontSize="10"
                 fontFamily="ui-monospace, monospace"
                 opacity="0.9"
@@ -151,14 +151,14 @@ export default function TopicGraph({ data, loading }) {
         })}
 
         {/* Center node */}
-        <circle cx={CX} cy={CY} r="32" fill="#0F172A" stroke="#3B82F6" strokeWidth="2" />
-        <circle cx={CX} cy={CY} r="28" fill="#1E293B" />
+        <circle cx={CX} cy={CY} r="32" style={{ fill: "var(--u-surface)", stroke: "var(--u-accent)" }} strokeWidth="2" />
+        <circle cx={CX} cy={CY} r="28" style={{ fill: "var(--u-track)" }} />
         <text
           x={CX}
           y={CY - 5}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill="#93C5FD"
+          style={{ fill: "var(--u-accent-soft)" }}
           fontSize="10"
           fontWeight="600"
           fontFamily="ui-sans-serif, sans-serif"
@@ -170,7 +170,7 @@ export default function TopicGraph({ data, loading }) {
           y={CY + 8}
           textAnchor="middle"
           dominantBaseline="middle"
-          fill="#475569"
+          style={{ fill: "var(--u-axis)" }}
           fontSize="8"
           fontFamily="ui-sans-serif, sans-serif"
         >

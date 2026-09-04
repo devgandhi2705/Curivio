@@ -2,6 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 import './index.css'
+// After index.css on purpose: the palette overrides a handful of Tailwind
+// utilities at equal specificity (.text-white above all), so load order is
+// what decides them.
+import './theme.css'
 import router from './router/index.jsx'
 import { AuthProvider } from './contexts/AuthContext.jsx'
 import { SidebarSubsectionProvider } from './contexts/SidebarSubsection.jsx'

@@ -62,7 +62,7 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
     >
       <div className={`flex-shrink-0 w-[3px] h-7 rounded-full bg-gradient-to-b ${grad} opacity-90`} />
       <div className="flex-1 min-w-0 pr-5">
-        <p className={`text-[13px] font-medium leading-snug truncate ${isActive ? "text-white" : "text-slate-300 group-hover:text-white"}`}>
+        <p className={`text-[13px] font-medium leading-snug truncate ${isActive ? "text-slate-100" : "text-slate-300 group-hover:text-white"}`}>
           {project.name}
         </p>
         <p className="text-[10px] flex items-center gap-1.5">
@@ -87,7 +87,7 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
           <DotsIcon />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-[#1e2330] border border-slate-700/60 rounded-lg shadow-2xl py-1 overflow-hidden isolate" style={{ backdropFilter: "none" }}>
+          <div className="u-pop absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/60 rounded-lg shadow-2xl py-1 overflow-hidden isolate" style={{ backdropFilter: "none" }}>
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename?.(project) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"

@@ -1,0 +1,2481 @@
+/* ============================================================================
+   CURIVIO LANDING v4 — motion architecture rebuild
+   Everything scoped under `.lp`. Nothing leaks into the app.
+
+   ── THE MOTION MODEL ──────────────────────────────────────────────────────
+   v3's model was "animate once on entry, then freeze". v4 replaces it with
+   two coexisting layers:
+
+   AMBIENT   never stops, never resets, independent of scroll. CSS keyframes
+             plus a rAF loop that runs whether or not anything is scrolling.
+
+   EVENT     a pure function of scroll position, not a one-shot trigger.
+             Each staged element reads `--p` (-1 below → 0 centred → +1 above)
+             and derives its own transform. Because it is a function of
+             position rather than an event, scrolling back up replays it
+             automatically — there is no "fire once" state to reset.
+
+   All scroll values are written by ONE rAF loop as custom properties, reads
+   batched before writes so nothing thrashes layout.
+   ========================================================================= */
+
+/* index.css sets `overflow-x: hidden` on html AND body for the app's mobile
+   baseline. That makes body a scroll container, which silently breaks every
+   position:sticky descendant. `clip` gives the same protection without
+   creating a scroller. :has() scopes it to the landing only. */
+html:has(.lp), body:has(.lp) { overflow-x: clip; overflow-y: visible; }
+/* The paper colour lives on `.lp`, which stops at the footer — so anything the
+   browser paints beyond the document (overscroll, a viewport taller than the
+   page) fell back to white with the fixed weave still drawn over it, which
+   showed as a pale band under the footer. Literal values because custom
+   properties declared on `.lp` are not in scope up here; they mirror --paper. */
+html:has(.lp) { background: #EFEDDC; }
+html:has(.lp[data-theme="dark"]) { background: #211D17; }
+
+.lp {
+  /* ── light: manila / uncoated recycled stock ──
+     #EFEDDC vs the #F4F1EA cliché: hue 54° not 42°, L90 not L94, chroma 19
+     not 10. Warmer than the cliché, in a different temperature family. */
+  --paper:       #EFEDDC;
+  --card:        #F8F7EE;
+  --sunk:        #E5E2CE;
+  --ink:         #241F17;
+  --ink-soft:    #6B6252;
+  --rule:        #D8D3BC;
+  --rule-soft:   #E5E2CE;
+
+  --moss:        #3D5138;
+  --yellow-ink:  #6E5600;
+  --blue-ink:    #2C5578;
+  --pink-ink:    #8E3A5A;
+
+  --mark-yellow: rgba(226, 208, 74, .62);
+  --mark-blue:   rgba(103, 164, 214, .40);
+  --mark-pink:   rgba(214, 122, 158, .36);
+  --mark-moss:   rgba(126, 165, 112, .42);
+
+  --cta-bg:      #3D5138;
+  --cta-bg-hi:   #4A6144;
+  --cta-fg:      #F6F4E8;
+
+  --grain:       .06;
+  --shadow-sm:   0 1px 2px rgba(36, 31, 23, .06);
+  --shadow-lg:   0 2px 4px rgba(36, 31, 23, .05), 0 24px 60px -28px rgba(36, 31, 23, .32);
+
+  --serif: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --sans:  'Atkinson Hyperlegible', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  overflow-x: clip;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+
+  --sp: 0; --mx: 0; --my: 0; --tp: 0; --bp: 0;
+
+  /* cursor-parallax reach, shared by .lp-l and the floating source cards so
+     the two never drift apart; --lamp is the cursor lamp's strength */
+  --par-x: 26px;
+  --par-y: 19px;
+  --lamp:  30%;
+}
+
+/* Dark is a CHOICE, not a system reading. The page ships light for everyone
+   and only goes dark when the visitor flips the switch, which is why this is
+   an attribute selector rather than a prefers-color-scheme query. */
+.lp[data-theme="dark"] {
+  /* #16130F was effectively black and read as oppressive. This is a warm
+     charcoal — still clearly dark, but with the surfaces, rules and soft ink
+     all lifted by the same amount so the separation between paper, card and
+     rule survives instead of collapsing into one flat black. */
+  --paper:       #211D17;
+    --card:        #2E2820;
+    --sunk:        #282219;
+    --ink:         #F2ECE1;
+    --ink-soft:    #ABA093;
+    --rule:        #423A2F;
+    --rule-soft:   #362F26;
+
+    --moss:        #8FB37E;
+    --yellow-ink:  #E8D64F;
+    --blue-ink:    #86B4DC;
+    --pink-ink:    #E092AE;
+
+    --mark-yellow: rgba(242, 231, 91, .20);
+    --mark-blue:   rgba(134, 180, 220, .20);
+    --mark-pink:   rgba(224, 146, 174, .18);
+    --mark-moss:   rgba(143, 179, 126, .20);
+    --mark-lift:   #FBF6E7;
+
+    --cta-bg:      #8FB37E;
+    --cta-bg-hi:   #A2C391;
+    --cta-fg:      #191510;
+
+    --grain:       .045;
+    --shadow-sm:   0 1px 2px rgba(0, 0, 0, .35);
+    --shadow-lg:   0 2px 4px rgba(0, 0, 0, .4), 0 24px 60px -28px rgba(0, 0, 0, .8);
+
+    /* a light moss over dark paper blooms readily — it needs far less than
+       the dark moss needs to register over light paper */
+    --lamp:        16%;
+
+    /* the weave rides on --rule/--rule-soft, which sit much closer to the
+       paper on ink than they do on stock — it needs more of itself to read */
+  --weave:       .9;
+}
+
+/* ══ AMBIENT ══════════════════════════════════════════════════════════════
+   Runs forever, with no user input at all. This is the layer that stops the
+   page from ever being visually inert.                                     */
+
+.lp-grain {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  opacity: var(--grain);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)'/%3E%3C/svg%3E");
+  animation: lp-drift 34s linear infinite;
+}
+@keyframes lp-drift {
+  0%   { transform: translate3d(0, 0, 0); }
+  50%  { transform: translate3d(-16px, 11px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+/* slow continuous float — the source cards never settle */
+@keyframes lp-float {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  33%      { transform: translate3d(4px, -13px, 0) rotate(.5deg); }
+  66%      { transform: translate3d(-3px, -6px, 0) rotate(-.4deg); }
+}
+/* accent breathing — CTA and live markers */
+@keyframes lp-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes lp-pulse   { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.35); opacity: .35; } }
+/* the caret in the topic field, always live */
+@keyframes lp-caret   { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+/* paper rules drift independently of scroll */
+@keyframes lp-rules-drift { 0%, 100% { background-position-y: 0; } 50% { background-position-y: 9px; } }
+
+.lp-above { position: relative; z-index: 1; }
+
+/* ══ THE STOCK — page-wide lattice, trim marks, and the drawn plates ═══════
+   Measured problem: below the hero, mean ink coverage ran 0.07-0.38 of the
+   viewport width and four section boundaries were 240-300px of bare paper.
+   Three answers, in increasing size: a weave everywhere, ticks in the
+   gutters, and a drawn plate in each void. No gradients — the flatness is
+   the complaint, and a two-stop wash is still one flat thing.              */
+
+/* (1) THE WEAVE — the hero had ruled paper and nothing below it did, so the
+   page went flat the moment you scrolled past it. Two superposed patterns at
+   different pitches (fine dots on a 9px lattice, wide rules every 46px) read
+   as stock rather than as a grid, which one pattern alone always does.
+   Kept at ~3% ink: it must never compete with a glyph. */
+.lp-weave {
+  position: fixed; inset: -60px; pointer-events: none; z-index: 0;
+  /* --rule-soft sits about ten levels off the paper; at half opacity that
+     measured as SD 0.02 — literally invisible. So: --rule, not --rule-soft.
+     Horizontal rules ONLY — with vertical ones too it became square graph
+     paper, which is a different, more technical material than the manila
+     stock this page is set on, and it fought the text. Horizontal rules at
+     44px are the pitch the hero's own ruled layer already uses, so the whole
+     page is now one sheet instead of a ruled hero on a blank body. The dot
+     lattice underneath is what keeps it from reading as a lined notepad. */
+  opacity: var(--weave, .6);
+  background-image:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--rule) 55%, transparent) 1px, transparent 1.1px),
+    repeating-linear-gradient(to bottom, var(--rule) 0 1px, transparent 1px 44px);
+  background-size: 8px 8px, 100% 44px;
+  animation: lp-weave-drift 52s ease-in-out infinite;
+}
+/* the whole field breathes a few pixels — enough that the paper is never
+   perfectly static, small enough that you never catch it moving */
+@keyframes lp-weave-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(9px, -7px, 0); }
+}
+
+/* (2) TRIM MARKS — 144px of margin either side at 1440 was carrying nothing.
+   Ticks are what a printed sheet has there, and being absolute (not fixed)
+   they scroll past, so the gutter reads as part of the page rather than as
+   furniture bolted to the window. */
+.lp { position: relative; }
+.lp-edge {
+  position: absolute; top: 0; bottom: 0; width: 6px;
+  pointer-events: none; z-index: 0; opacity: .5;
+  background-image: repeating-linear-gradient(to bottom, var(--rule) 0 1px, transparent 1px 46px);
+}
+.lp-edge-l { left: 30px; }
+.lp-edge-r { right: 30px; }
+/* below 1280 the gutter is real layout margin, not spare room — the ticks
+   would sit against the text instead of out in the margin */
+@media (max-width: 1279px) { .lp-edge { display: none; } }
+
+/* (3) THE PLATES — see the Plate component for how the geometry is built.
+   Positioned into the measured voids, always behind content (z-index 0 under
+   .lp-above's 1) and never interactive. */
+.lp-sec { position: relative; }
+.lp-plate {
+  position: absolute; pointer-events: none; z-index: 0;
+  color: var(--ink-soft);
+  animation: lp-plate-drift 24s ease-in-out infinite;
+  /* The cursor moves every plate on `translate`, deliberately not `transform` —
+     the drift keyframes above already own transform, and two things cannot own
+     one property. A plate whose section carries no `data-tilt` just sits at 0. */
+  translate: calc(var(--tx, 0) * 26px) calc(var(--ty, 0) * 18px);
+  transition: translate .14s ease-out;
+}
+@keyframes lp-plate-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  33%      { transform: translate3d(-9px, 7px, 0); }
+  66%      { transform: translate3d(6px, -5px, 0); }
+}
+.lp-plate-node {
+  fill: currentColor; opacity: .3;
+  animation: lp-plate-twinkle calc(var(--t, 7s) * .55) ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes lp-plate-twinkle { 0%, 100% { opacity: .16; } 50% { opacity: .6; } }
+/* the edges DRAW and retract rather than fading — same device as the anatomy
+   glyphs and the hero's typed line, so the plate belongs to the same page */
+.lp-plate-edge {
+  stroke: currentColor; stroke-width: .7; opacity: .3;
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: lp-plate-draw 8.5s ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes lp-plate-draw {
+  0%, 8%    { stroke-dashoffset: 1; }
+  38%, 62%  { stroke-dashoffset: 0; }
+  92%, 100% { stroke-dashoffset: -1; }
+}
+.lp-plate-rings circle {
+  stroke: currentColor; stroke-width: .6; opacity: .22;
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: lp-plate-ring 15s ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes lp-plate-ring {
+  0%, 6%   { stroke-dashoffset: 1; }
+  46%, 66% { stroke-dashoffset: 0; }
+  96%, 100% { stroke-dashoffset: -1; }
+}
+
+/* placements — each one sits in a void the coverage scan actually reported */
+/* taller than they were: at 270px the pair stopped short of the section's
+   lower half and left a 240px band under the button still reading as blank */
+.lp-plate-cta    { top: 5%; width: 380px; height: 380px; opacity: .8; }
+.lp-plate-cta-l  { left: -40px; }
+.lp-plate-cta-r  { right: -40px; }
+/* the footer measured 0.08 coverage — the thinnest strip on the page. One
+   wide, low plate behind it, well under the link row. */
+.lp-plate-foot   { left: 50%; margin-left: -420px; bottom: -30px; width: 840px; height: 250px; opacity: .55; }
+
+/* The arc, anatomy and features sections have the same flanking void the CTA
+   had: their copy column is capped at 5xl/6xl and everything either side of it
+   was bare paper. Same wires, same cursor channel. Each placement stays clear
+   of that section's own 3D piece — the corridor holds the arc's right, the
+   lesson stack the anatomy's left rail, the package box the features' top
+   right — so the plates take the sides those pieces do not use. */
+.lp-plate-arc-a  { top: 16%;   left: -70px;  width: 360px; height: 340px; opacity: .7; }
+.lp-plate-arc-b  { top: 52%;   left: -40px;  width: 320px; height: 300px; opacity: .55; }
+.lp-plate-arc-c  { bottom: 6%; left: -60px;  width: 340px; height: 300px; opacity: .5; }
+.lp-plate-an-l   { bottom: 3%; left: -70px;  width: 340px; height: 300px; opacity: .6; }
+.lp-plate-an-r   { top: 30%;   right: -80px; width: 330px; height: 300px; opacity: .5; }
+.lp-plate-feat-l { top: 26%;   left: -70px;  width: 350px; height: 320px; opacity: .6; }
+.lp-plate-feat-b { bottom: 2%; right: -60px; width: 360px; height: 300px; opacity: .5; }
+
+/* Under 1180 the plates would sit under the text column instead of beside it.
+   The two that live in a genuine vertical void (arc, features header) stay,
+   pushed to the edges and faded; the flanking ones go. */
+@media (max-width: 1279px) {
+  .lp-plate-arc-a, .lp-plate-arc-b, .lp-plate-arc-c,
+  .lp-plate-an-l, .lp-plate-an-r,
+  .lp-plate-feat-l, .lp-plate-feat-b { display: none; }
+}
+@media (max-width: 1179px) {
+  .lp-plate-cta, .lp-plate-foot { display: none; }
+}
+@media (max-width: 767px) { .lp-plate { display: none; } }
+
+/* (4) THE GUTTER RAIL — a permanent index, not a label ═══════════════════
+   Was four rotated section names that scrolled past. Shopify Editions keeps a
+   full section index pinned in its left gutter with the current one in ink
+   and the rest dropped back, so the margin is navigation for the whole page
+   rather than a caption for one screen. Same idea here.
+
+   Hidden over the hero: the floating source cards sit at left:2% (28px at
+   1440) and would collide. `--sp` is the hero's own scroll progress, already
+   written every frame, so the rail simply arrives as the hero leaves. */
+.lp-rail {
+  position: fixed; left: 44px; top: 50%; transform: translateY(-50%);
+  z-index: 3; width: 112px;
+  font-family: var(--sans); font-size: .6875rem; line-height: 1.2;
+  opacity: clamp(0, calc(var(--sp, 0) * 2.2 - .5), 1);
+  transition: opacity .3s ease;
+}
+.lp-rail ol { display: flex; flex-direction: column; gap: .55rem; }
+.lp-rail a {
+  display: flex; align-items: baseline; justify-content: space-between; gap: .5rem;
+  color: var(--ink-soft); opacity: .42; text-decoration: none;
+  border-left: 1px solid transparent; padding-left: .6rem;
+  transition: opacity .3s ease, color .3s ease, border-color .3s ease, padding-left .3s ease;
+}
+.lp-rail li[data-on="true"] a {
+  opacity: 1; color: var(--ink);
+  border-left-color: var(--moss); padding-left: .85rem;
+}
+.lp-rail a:hover { opacity: .8; }
+.lp-rail li[data-on="true"] a:hover { opacity: 1; }
+.lp-rail-n { font-variant-numeric: tabular-nums; opacity: .7; flex: none; }
+/* Below 1400 the gutter can no longer hold the words clear of the text
+   column — max-w-6xl leaves (W-1152)/2 — so the numerals carry it alone. */
+@media (max-width: 1399px) { .lp-rail { width: 30px; } .lp-rail-name { display: none; } }
+@media (max-width: 1179px) { .lp-rail { display: none; } }
+
+/* ── THE ARMILLARY — scroll-spun, cursor-tilted, three rings for three weeks
+   `--p` comes from the [data-stage] wrapper and inherits into the svg;
+   --mx/--my are the pointer values the hero already writes every frame. The
+   perspective is on the wrapper, so rotateX/rotateY read as real depth
+   rather than as a flat skew. */
+/* Measured, not guessed: the day rows' ink stops at x≈1193 at 1440, so the
+   free column is 1200→1440. A 360px sphere set to bleed 110px off the right
+   keeps ~70% on the page — including the core, which is the part worth
+   seeing — and never crosses the text. (An earlier 470px at right:-70 was
+   sized from a still-mode measurement, where the unpinned hero makes the
+   whole page shorter and the boundary void wider; motion-on is the layout
+   almost everyone gets.) */
+.lp-armil {
+  position: absolute; right: -70px;
+  /* Was pinned to the section's bottom edge. 33% puts its top level with the
+     Day 1 row (measured: section top 1231, day 1 top 1680, height 1289), and
+     a percentage rather than a pixel offset so it stays put if the heading
+     above it ever reflows. */
+  top: 33%;
+  width: 360px; height: 360px;
+  /* -70 not -110: with the centre at x1360 in a 1440 viewport the pointer
+     could never get to its right, so --tx was only ever reachable across
+     [-1, +0.16] and the thing could physically only tilt one way. Pulling it
+     in moves the centre to ~1330 and buys back the other side. The 40px it
+     now passes behind the tail of a day row is hairline work at .46 opacity
+     sitting under the text, which is what the reference does with its art. */
+  z-index: 0; pointer-events: none;
+  perspective: 780px;
+}
+/* the pointer tilt — wide angles on purpose. At the old ±7°/±10° the response
+   was real but sub-perceptual, which read as "it just animates on its own".
+   The base -14° is the instrument sitting on its stand rather than facing you
+   flat on. */
+.lp-armil-3d {
+  position: absolute; inset: 0;
+  transform-style: preserve-3d;
+  /* it shifts as well as turns — a pure rotation at this size reads as
+     subtle no matter how many degrees you give it, while a little travel
+     reads immediately as "that is following me" */
+  transform:
+    translate3d(calc(var(--tx, 0) * 16px), calc(var(--ty, 0) * 12px), 0)
+    rotateX(calc(-10deg + var(--ty, 0) * -34deg))
+    rotateY(calc(var(--tx, 0) * 52deg))
+    rotateZ(calc(var(--p, 0) * 12deg));
+  /* slower than the .13s the through-objects use: leaving a hover-only piece
+     should settle back, not snap */
+  transition: transform .3s cubic-bezier(.2, .8, .3, 1);
+  will-change: transform;
+}
+/* An OSCILLATION, not a revolution. A full turn sends every ring through a
+   perfect edge-on line twice a cycle, where a circle renders as a hairline
+   and effectively vanishes — the same complaint as the dasharray loop, just
+   arriving by geometry instead. ±20° keeps every ring open at all times. */
+.lp-armil-spin {
+  position: absolute; inset: 0;
+  transform-style: preserve-3d;
+  animation: lp-armil-turn 40s ease-in-out infinite;
+}
+/* ±9°, down from ±20°: with the pointer now swinging 46° the ambient turn
+   was competing with it, and a tilt you cannot tell you caused is the same
+   as no tilt at all. */
+@keyframes lp-armil-turn {
+  0%, 100% { transform: rotateY(-9deg); }
+  50%      { transform: rotateY(9deg); }
+}
+
+.lp-armil-layer {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  overflow: visible; backface-visibility: visible;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) rotateZ(var(--rz, 0deg));
+}
+.lp-armil, .lp-armil-notes { color: var(--ink-soft); }
+
+/* Always drawn. These used to run a dasharray loop that ENDED retracted, so
+   for part of every cycle the rings were simply gone — that is the
+   "sometimes it does not show". */
+.lp-armil-mer, .lp-armil-ring {
+  stroke: currentColor; fill: none; stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+}
+.lp-armil-mer  { opacity: .46; }
+.lp-armil-ring { opacity: .72; }
+
+.lp-armil-core { fill: var(--moss); opacity: .9; }
+.lp-armil-halo {
+  fill: none; stroke: var(--moss); stroke-width: 1.2;
+  transform-box: view-box; transform-origin: 150px 150px;
+  animation: lp-armil-halo 4.5s ease-out infinite;
+}
+@keyframes lp-armil-halo {
+  0%   { transform: scale(1);   opacity: .8; }
+  100% { transform: scale(3.4); opacity: 0; }
+}
+
+/* flat over the instrument, never tilted */
+.lp-armil-notes { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.lp-armil-day { fill: currentColor; opacity: .85; }
+.lp-armil-lab {
+  fill: currentColor; opacity: .72;
+  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1179px) { .lp-armil { right: -150px; width: 300px; height: 300px; opacity: .6; } }
+@media (max-width: 767px)  { .lp-armil { display: none; } }
+
+/* ══ THE DAY CORRIDOR — the arc's backdrop and its argument ═══════════════
+   Sticky for the length of the section with `margin-bottom: -100vh`, so it
+   pins behind everything while taking up no layout height — the same device
+   the Editions page uses to hang a full-screen canvas behind a scrolling
+   document. `overflow: hidden` clips the near pages as they pass the camera,
+   which is what sells it as a corridor rather than a pile of cards. */
+.lp-corr {
+  position: sticky; top: 0; height: 100vh; margin-bottom: -100vh;
+  /* No overflow:hidden. It existed to clip sheets passing the camera, but
+     this container top IS the viewport top, so all it actually did was slice
+     the near sheet off along a hard horizontal edge. Anything leaving the
+     container is off-screen anyway. */
+  z-index: 0; pointer-events: none;
+  perspective: 1200px;
+  /* The vanishing point sits UP AND RIGHT of where the near sheet is, so the
+     corridor fans from the anchor out into the top-right corner rather than
+     converging on itself. Putting the origin on the anchor collapsed the whole
+     run into a 208x111 footprint; putting it in the corner opens it across
+     the void, and keeps the recession pointing away from the text column
+     instead of back over it. */
+  perspective-origin: 92% 8%;
+  /* The fade lives HERE, not on the stage. CSS opacity is a grouping property:
+     on an element that also declares transform-style: preserve-3d it forces
+     the browser to flatten the subtree, and the corridor was silently
+     rendering in 2D — near and far sheets came back measured at 236px and
+     222px when they should differ by a factor of three. */
+  /* gone by --ap .26, which is where Day 1 has settled into the viewport.
+     It is the opening statement of the section, not a backdrop for all of it. */
+  opacity: clamp(0, calc(.85 - var(--ap, 0) * 3.3), .85);
+}
+.lp-corr-stage {
+  position: absolute; inset: 0;
+  transform-style: preserve-3d;
+  /* --ap is the section's own 0→1 scroll progress. Pushing the whole corridor
+     1100px back across it is the "hidden in 3D" half of the brief: the days
+     do not just cover the picture, the picture withdraws behind them. */
+  transform:
+    translate3d(calc(var(--tx, 0) * 44px), calc(var(--ty, 0) * 34px), calc(-60px + var(--ap, 0) * -3200px))
+    rotateX(calc(6deg + var(--ty, 0) * -16deg))
+    rotateY(calc(-10deg + var(--tx, 0) * 24deg));
+  transition: transform .13s ease-out;
+  will-change: transform;
+}
+/* The slot holds the placement, the page does the floating. One element
+   cannot carry a static placement transform and an animated one at the same
+   time, and the sheets needed a life of their own between cursor moves.
+   Aligned to the text block: the heading run spans y177-413 centred on 295,
+   and at top:27% the corridor centred at 425 — 13% puts it on the same line. */
+.lp-corr-slot {
+  position: absolute; left: 68%; top: 13%;
+  width: 400px; height: 266px;
+  transform-style: preserve-3d;
+  transform: translate3d(calc(-50% + var(--x)), calc(-50% + var(--y)), var(--z)) rotateY(var(--ry));
+  /* the far end of the corridor fades out rather than stopping — which is the
+     whole point of ending the labels on N */
+  opacity: calc(1 - var(--i) * .072);
+}
+.lp-corr-page {
+  position: absolute; inset: 0;
+  border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  border-radius: 3px; padding: .85rem .95rem;
+  box-shadow: 0 12px 40px -22px rgba(36, 31, 23, .5);
+  display: flex; flex-direction: column;
+  animation: lp-corr-bob 7s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -.55s);
+}
+@keyframes lp-corr-bob {
+  0%, 100% { transform: translateY(-7px); }
+  50%      { transform: translateY(7px); }
+}
+.lp-corr-n {
+  display: block;
+  font-family: var(--sans); font-weight: 700; font-size: .6875rem;
+  font-variant-numeric: tabular-nums; color: var(--ink-soft);
+  letter-spacing: .06em; margin-bottom: .55rem;
+}
+.lp-corr-page i {
+  display: block; height: 1px; background: var(--rule);
+  margin-bottom: .42rem; border-radius: 1px;
+}
+.lp-corr-page > i:nth-of-type(1) { width: 96%; }
+.lp-corr-page > i:nth-of-type(2) { width: 88%; }
+.lp-corr-page > i:nth-of-type(3) { width: 54%; }
+
+.lp-corr-title {
+  display: block; height: 5px; width: 68%; border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 34%, transparent);
+  margin-bottom: .6rem;
+}
+.lp-corr-hl {
+  display: block; height: 6px; width: 46%; border-radius: 2px;
+  background: var(--mark-yellow);
+  margin-bottom: .42rem;
+}
+.lp-corr-foot { display: flex; align-items: center; gap: .3rem; margin-top: auto; }
+.lp-corr-cite {
+  width: 22px; height: 7px; border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--moss) 45%, transparent);
+  background: color-mix(in srgb, var(--moss) 12%, transparent);
+}
+.lp-corr-bars { display: flex; align-items: flex-end; gap: 2px; height: 10px; margin-left: auto; }
+.lp-corr-bars u {
+  display: block; width: 3px; border-radius: 1px;
+  background: color-mix(in srgb, var(--moss) 55%, transparent);
+}
+.lp-corr-bars u:nth-child(1) { height: 60%; }
+.lp-corr-bars u:nth-child(2) { height: 100%; }
+.lp-corr-bars u:nth-child(3) { height: 38%; }
+
+/* Below 1100 the text column is nearly the full width and the corridor lands
+   on top of the lead rather than beside it — measured 715px2 of overlap at
+   1024, zero at 1280 and above. Between 1100 and 1279 it still clipped a
+   corner of the lead, so it sits further right there. */
+@media (max-width: 1279px) { .lp-corr-slot { left: 76%; } .lp-corr { perspective-origin: 98% 8%; } }
+@media (max-width: 1099px) { .lp-corr { display: none; } }
+
+/* ── THE LESSON STACK — five planes, the read one lifted out ────────────── */
+.lp-stack { margin-top: 1.5rem; max-width: 250px; perspective: 800px; }
+.lp-stack svg {
+  width: 100%; height: auto; overflow: visible;
+  transform: translate3d(calc(var(--tx, 0) * 7px), calc(var(--ty, 0) * 5px), 0)
+             rotateX(calc(var(--ty, 0) * -20deg)) rotateY(calc(var(--tx, 0) * 26deg));
+  transition: transform .3s cubic-bezier(.2, .8, .3, 1);
+}
+.lp-stack-sheet {
+  transform: translate(0, 0);
+  transition: transform .5s cubic-bezier(.2, .8, .3, 1), opacity .45s ease;
+  opacity: .42;
+}
+/* the read move steps out of the stack, toward the reader and to the left —
+   the direction the eye is coming from, since the copy sits to its left */
+.lp-stack-sheet[data-on="true"] { transform: translate(-13px, -7px); opacity: 1; }
+.lp-stack-face {
+  fill: color-mix(in srgb, var(--card) 88%, transparent);
+  stroke: var(--rule); stroke-width: 1.1;
+  transition: stroke .45s ease, fill .45s ease;
+}
+.lp-stack-sheet[data-on="true"] .lp-stack-face {
+  stroke: currentColor;
+  fill: color-mix(in srgb, currentColor 8%, var(--card));
+}
+.lp-stack-rule {
+  stroke: var(--ink-soft); stroke-width: 1; opacity: .3;
+  transition: opacity .45s ease;
+}
+.lp-stack-sheet[data-on="true"] .lp-stack-rule { opacity: .6; }
+/* the rail collapses to static under 1024 and the column stops being a
+   column — the stack would land on top of the blocks it describes */
+@media (max-width: 1023px) { .lp-stack { display: none; } }
+
+/* ══ EVENT — scroll-position staging primitive ════════════════════════════
+   `--p` is written per staged element by the rAF loop:
+        -1  fully below the viewport (approaching)
+         0  centred
+        +1  fully above (departed)
+   Everything below is a pure function of it, so reversing the scroll
+   reverses the animation with no trigger state to reset.                   */
+
+/* Applies to every [data-stage] element automatically — the engine writes
+   `--p`, the element derives everything else. No class bookkeeping. */
+.lp [data-stage] {
+  --pp:   calc(var(--p, 0) + (var(--i, 0) * .055));
+  --in:   max(0, calc(var(--pp) * -1));   /* 1 approaching → 0 centred */
+  --out:  max(0, var(--pp));              /* 0 centred     → 1 departed */
+  --near: clamp(0, calc(1 - (var(--in) + var(--out)) * 1.45), 1);
+
+  opacity: clamp(0, calc(1 - var(--in) * 1.25 - var(--out) * .75), 1);
+  transform:
+    translate3d(0, calc(var(--in) * 70px + var(--out) * -30px), 0)
+    scale(calc(1 - var(--out) * .06));
+  will-change: transform, opacity;
+}
+
+/* Depth-of-field staging: off-centre items recede optically, not merely in
+   opacity — the centred one is sharp, its neighbours soften. Pattern taken
+   from 21st.dev's "Horizontal Depth Fade", implemented natively. */
+/* Floor is .26, not .1: at .1 the off-centre items read as blank page, which
+   left one legible item per 900px screen (measured span 73px at y=4620).
+   .26 keeps the neighbours as visible-but-soft, which is what depth of field
+   actually looks like. */
+.lp [data-stage].lp-st-dof {
+  opacity: clamp(.26, calc(.26 + var(--near) * .74), 1);
+  filter: blur(calc((1 - var(--near)) * 3px));
+  transform:
+    translate3d(0, calc(var(--in) * 60px + var(--out) * -36px), 0)
+    scale(calc(.93 + var(--near) * .07));
+}
+
+/* ── type ────────────────────────────────────────────────────────────────── */
+/* 7.1vw / 6.5rem, not 8.4vw / 7.5rem: the headline column is 519px at 1440,
+   and the longest line ("One lesson.") measured 587px at the old 120px — it
+   wrapped to five lines instead of three. Capped so the widest line fits the
+   column with room to spare at every width, since the column stops growing
+   once max-w-6xl caps the container. */
+.lp-display {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(3rem, 7.1vw, 6.5rem);
+  line-height: .96; letter-spacing: -.03em; color: var(--ink);
+}
+.lp-h2 {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(2rem, 4.6vw, 3.5rem);
+  line-height: 1.06; letter-spacing: -.02em; color: var(--ink);
+}
+.lp-h3 {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(1.375rem, 2.3vw, 1.875rem);
+  line-height: 1.22; color: var(--ink);
+}
+.lp-lead {
+  font-family: var(--serif); font-size: clamp(1.125rem, 1.7vw, 1.5rem);
+  line-height: 1.5; color: var(--ink-soft);
+}
+.lp-body { font-family: var(--serif); font-size: 1rem; line-height: 1.66; color: var(--ink-soft); }
+/* names the two card actions in the copy; the bolded words match the chips in
+   the demo panel exactly, so the sentence and the picture teach the same thing */
+.lp-sub {
+  font-family: var(--sans); font-size: .8125rem; line-height: 1.6;
+  color: var(--ink-soft);
+}
+.lp-sub b { font-weight: 700; color: var(--moss); }
+.lp-eyebrow {
+  font-family: var(--serif); font-style: italic; font-weight: 400;
+  font-size: .875rem; text-transform: none; letter-spacing: 0; color: var(--ink-soft);
+}
+.lp-ui   { font-family: var(--sans); font-size: .875rem; }
+.lp-chip { font-family: var(--sans); font-size: .75rem; font-variant-numeric: tabular-nums; }
+.lp-fine { font-family: var(--sans); font-size: .75rem; color: var(--ink-soft); opacity: .82; }
+.lp-num  { font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.lp-bignum {
+  font-family: var(--serif); font-weight: 400;
+  font-size: clamp(5rem, 15vw, 13rem);
+  line-height: .78; letter-spacing: -.045em;
+  color: var(--ink); font-variant-numeric: lining-nums;
+}
+
+.lp-surface { background: var(--card); border: 1px solid var(--rule); }
+.lp-rule-t  { border-top: 1px solid var(--rule); }
+
+/* ── highlighter mark ────────────────────────────────────────────────────── */
+.lp-mark {
+  --mark: var(--mark-yellow);
+  color: var(--mark-lift, inherit);
+  background-image: linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 0 0;
+  border-radius: .1em;
+  padding: 0 .1em; margin: 0 -.1em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  transition: background-size .42s cubic-bezier(.2, .7, .3, 1);
+}
+.lp-mark-blue { --mark: var(--mark-blue); }
+.lp-mark-pink { --mark: var(--mark-pink); }
+.lp-mark-moss { --mark: var(--mark-moss); }
+.lp-mark.lp-mark-on { background-size: 100% 100%; }
+
+.lp-display .lp-mark, .lp-h2 .lp-mark { background-size: 0% 68%; background-position: 0 86%; }
+.lp-display .lp-mark.lp-mark-on, .lp-h2 .lp-mark.lp-mark-on { background-size: 100% 68%; }
+
+/* On paper a full wash reads as marker over the words. On ink it goes muddy —
+   the pigment has nowhere to darken to. So dark mode marks display type with
+   a band through the lower third: same gesture, mechanism that works on ink. */
+.lp[data-theme="dark"] .lp-display .lp-mark,
+.lp[data-theme="dark"] .lp-h2 .lp-mark {
+  --mark: rgba(242, 231, 91, .42);
+  background-size: 0 26%; background-position: 0 92%; border-radius: 0;
+}
+.lp[data-theme="dark"] .lp-display .lp-mark.lp-mark-on,
+.lp[data-theme="dark"] .lp-h2 .lp-mark.lp-mark-on { background-size: 100% 26%; }
+
+/* ── the theme switch, in the nav ────────────────────────────────────────
+   Sits beside the nav link rather than down in the footer with the motion
+   toggle: motion is a preference you set once, theme is one people flip. */
+.lp-theme {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; flex: none;
+  border-radius: 6px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--rule) 80%, transparent);
+  background: color-mix(in srgb, var(--card) 45%, transparent);
+  color: var(--ink-soft);
+  transition: color .16s ease, background .16s ease, border-color .16s ease;
+}
+.lp-theme svg { width: 15px; height: 15px; }
+.lp-theme:hover { color: var(--ink); border-color: var(--ink-soft); }
+
+/* ── buttons / links ─────────────────────────────────────────────────────── */
+.lp-btn {
+  font-family: var(--sans); font-weight: 700; position: relative;
+  background: var(--cta-bg); color: var(--cta-fg);
+  border: 1px solid transparent; cursor: pointer;
+  transition: background .18s ease, transform .18s cubic-bezier(.2,.8,.3,1);
+}
+.lp-btn:hover { background: var(--cta-bg-hi); }
+.lp-btn:active { transform: scale(.98); }
+.lp-link {
+  font-family: var(--sans); color: var(--ink-soft); cursor: pointer;
+  text-decoration-line: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: var(--rule);
+  transition: color .16s ease, text-decoration-thickness .16s ease, text-decoration-color .16s ease;
+}
+.lp-link:hover { color: var(--ink); text-decoration-thickness: 2px; text-decoration-color: var(--ink-soft); }
+
+.lp-tag {
+  font-family: var(--sans); font-size: .6875rem;
+  padding: .12rem .42rem; border-radius: .25rem;
+  border: 1px solid currentColor; font-variant-numeric: tabular-nums;
+}
+.lp-i-moss { color: var(--moss); }  .lp-i-yellow { color: var(--yellow-ink); }
+.lp-i-blue { color: var(--blue-ink); } .lp-i-pink { color: var(--pink-ink); }
+.lp-i-soft { color: var(--ink-soft); }
+
+/* live dot — ambient, always pulsing */
+.lp-live { position: relative; display: inline-flex; width: 6px; height: 6px; }
+.lp-live::before, .lp-live::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: currentColor;
+}
+.lp-live::after { animation: lp-pulse 2.4s ease-in-out infinite; }
+
+/* ── LOGO SLOT ───────────────────────────────────────────────────────────── */
+.lp-logo-slot {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; border-radius: 6px; overflow: hidden;
+  background: var(--cta-bg); color: var(--cta-fg);
+}
+.lp-logo-slot > svg, .lp-logo-slot > img { width: 100%; height: 100%; display: block; }
+
+/* ── nav ─────────────────────────────────────────────────────────────────── */
+/* Glass, not a painted bar: the page has to be visibly moving underneath it.
+   The tint is thin enough to read through, and `saturate` is what stops
+   blurred content going grey and giving the whole thing a frosted-plastic
+   look. The inset hairline is the lit top edge of a pane of glass — it is
+   what separates "glass" from "semi-transparent rectangle". */
+.lp-nav {
+  background: color-mix(in srgb, var(--paper) 30%, transparent);
+  backdrop-filter: blur(16px) saturate(185%);
+  -webkit-backdrop-filter: blur(20px) saturate(185%);
+  border-bottom: 1px solid color-mix(in srgb, var(--rule) 65%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--card) 55%, transparent);
+}
+/* No backdrop-filter (older Firefox, some Android WebViews) → fall back to an
+   opaque bar, because 52% tint over live text is unreadable without the blur */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .lp-nav { background: color-mix(in srgb, var(--paper) 94%, transparent); }
+}
+.lp-progress { position: absolute; left: 0; bottom: -1px; height: 1px; background: var(--moss); width: var(--w, 0%); }
+
+/* ══ § 1  HERO — real z-depth ═════════════════════════════════════════════
+   Five layers on genuinely different rates. `--d` is the layer's depth:
+   higher = nearer the viewer = moves more, on BOTH cursor and scroll.      */
+/* The nav is in flow, so without this the hero — and therefore the 100dvh
+   sticky stage — begins 65px down the document while claiming a full viewport
+   of height. At rest its bottom 65px sit below the fold, which is why the
+   old layout's top gap (157px) and bottom gap (146px) never matched despite
+   being centred. Pulling the hero up by exactly the nav height makes the
+   stage box and the viewport agree both before and after it sticks. */
+.lp { --lp-nav-h: 65px; }
+/* 170vh = 100 of pinned stage + 70 of handoff. It was 300vh, which pinned the
+   hero for 1800px of scroll while it ran out of things to say after ~600 —
+   measured as two dead screens (visible content spanning 351px of 900 at
+   y=1250-1750). Runway is content-derived, not a round number: the same bug
+   that left 1412px of void in v3's anatomy section. */
+.lp-hero { position: relative; height: 150vh; margin-top: calc(var(--lp-nav-h) * -1); }
+
+/* Top-aligned with a measured offset, NOT centred: centring makes the gap a
+   by-product of the headline's height. flex-start + padding-top makes it a
+   number — 65px below the nav at 900px tall, down from 157px. */
+.lp-stage {
+  position: sticky; top: 0; height: 100dvh;
+  overflow: hidden; display: flex; align-items: flex-start;
+  padding-top: calc(var(--lp-nav-h) + clamp(2.5rem, 7vh, 4.5rem));
+  perspective: 1400px;
+}
+/* The hero recedes rather than scrolling away — but only so far. A sticky
+   stage ALWAYS spends its last viewport-height scrolling out under the next
+   section; at the old `--sp * .8` it did that at 0.2 opacity, so ~430px of
+   every frame in that window was an empty grey field (measured span 328px of
+   900 at y=1320). Ending at 0.65 keeps the hero legible on its way out, which
+   turns the same scroll into a handoff instead of a hole. */
+.lp-stage-inner {
+  position: relative; width: 100%;
+  transform: scale(calc(1 - var(--sp) * .1)) translateY(calc(var(--sp) * -4vh));
+  opacity: calc(1 - var(--sp) * .35);
+  will-change: transform, opacity;
+}
+
+.lp-l {
+  transform: translate3d(
+    calc(var(--mx) * var(--d) * var(--par-x)),
+    calc(var(--my) * var(--d) * var(--par-y) + var(--sp) * var(--d) * -150px),
+    0);
+  will-change: transform;
+}
+
+.lp-rules {
+  position: absolute; inset: -15% -8%;
+  pointer-events: none; z-index: 0;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 43px, var(--rule) 43px 44px);
+  opacity: .5;
+  animation: lp-rules-drift 19s ease-in-out infinite;
+}
+/* The cursor lamp. On ink a 14% moss wash reads as a light bloom; on paper the
+   same 14% of a DARK moss is invisible — light mode was missing the effect
+   entirely. `--lamp` is therefore a per-mode strength, not one shared number,
+   and on paper it reads as a soft shade following the cursor rather than a
+   glow. Radius is a touch wider so the falloff stays soft at the new strength. */
+.lp-lamp {
+  position: absolute; inset: -25%; pointer-events: none; z-index: 0;
+  background: radial-gradient(
+    40% 40% at calc(50% + var(--mx) * 28%) calc(50% + var(--my) * 28%),
+    color-mix(in srgb, var(--moss) var(--lamp), transparent) 0%, transparent 68%);
+}
+
+/* floating source cards — ambient float + cursor depth + dock on grade */
+.lp-src {
+  position: absolute; z-index: 2;
+  font-family: var(--sans); font-size: .6875rem;
+  font-variant-numeric: tabular-nums;
+  padding: .5rem .65rem; border-radius: 5px;
+  /* glass too — these float over the rules and the lamp, which is exactly
+     what makes the depth layers read as depth rather than as flat stickers */
+  /* 68% was tuned against bare paper. Two of these now sit on the photograph,
+     where that much transparency let the desk read straight through the label. */
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-sm);
+  align-items: center; gap: .5rem; white-space: nowrap;
+  display: none;
+  /* Opacity goes through a variable so the entrance animation below can end on
+     the CURRENT state rather than on a literal 1. An animation with `both` fill
+     beats a plain declaration, so `[data-rejected] { opacity: .28 }` would have
+     stopped working the moment the badges got an entrance. */
+  opacity: var(--src-o, 1);
+  transition: transform .9s cubic-bezier(.3,.8,.3,1), opacity .7s ease;
+  /* last of the three planes to arrive — photo, then interface, then details */
+  animation: lp-src-in .75s cubic-bezier(.2,.8,.3,1) .95s both;
+}
+/* `scale`, not `transform`: the parallax transform is written inline per card */
+@keyframes lp-src-in {
+  from { opacity: 0; scale: .88; }
+  to   { opacity: var(--src-o, 1); scale: 1; }
+}
+@media (min-width: 1180px) { .lp-src { display: flex; } }
+.lp-src-float { animation: lp-float var(--dur, 11s) ease-in-out infinite; animation-delay: var(--delay, 0s); }
+.lp-src-cut   { opacity: .3; text-decoration: line-through; }
+.lp-src-score { font-weight: 700; }
+/* graded → slides toward the sheet margin and settles */
+.lp-src[data-docked="true"] { animation-play-state: paused; }
+/* rejected → tips out of the stack. .28 read as "dimmed" against paper and as
+   "absent" against the photograph; the strike-through carries the meaning, so
+   this only has to be visibly weaker than the kept sources, not near-invisible. */
+.lp-src[data-rejected="true"] { --src-o: .46; }
+
+/* ══ THE HERO SCENE — a photograph, then the interface in front of it ══════
+   Not a card on a background image. Two planes at different depths, and the
+   only thing that sells the gap between them is that they disagree about how
+   far the cursor moved: the interface already sat at --d .95 (≈25px of travel
+   at --par-x), the photograph sits at .3 (≈8px). Same engine, same expression,
+   one new number.
+
+   `isolation` matters here. The four source badges are z-index 2 in the STAGE's
+   stacking context and are painted before this grid cell, so giving the
+   interface z-index 2 as well would have put it above them — later in the DOM
+   wins a tie. Isolating makes the two z-indexes below local, and the whole
+   composition keeps sitting under the badges, which is the order the depth
+   depends on: photo → interface → details. */
+.lp-visual { position: relative; isolation: isolate; }
+
+.lp-photo-layer {
+  position: absolute; z-index: 0;
+  --d: .3;
+  /* Up and to the right of the interface, and wider than its own column. The
+     stage already clips its overflow, so the right edge runs off the page and
+     the photograph reads as a crop out of a bigger scene instead of a picture
+     placed in a frame. */
+  top: -36%; left: 9%; width: 142%;
+}
+
+/* The FRAME is a fixed window onto the scene; the image inside it moves. That
+   split is the whole trick of the scroll: a photograph that slides as one
+   block just looks like a moving picture, but an image travelling behind a
+   stationary window is re-cropped as it goes, so different research materials
+   come into the frame and the eye reads it as walking further into the room.
+   4/3 against a 3:2 source also means you are looking at a crop from the very
+   first frame, never the whole photograph. */
+.lp-photo-frame {
+  position: relative; overflow: hidden;
+  aspect-ratio: 1.4;
+  border-radius: 10px;
+  /* the right edge runs off the stage and the left is tucked behind the
+     interface; top and bottom end in open paper, and left hard they cut two
+     600px rules across the page, which is what made the photograph look
+     pasted on. Only those two edges dissolve. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 13%, #000 89%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 13%, #000 89%, transparent 100%);
+  /* No transform of its own. The frame and the image inside it both carrying
+     one was two nested transformed-and-masked layers, and the tilt belongs to
+     the image anyway — the frame is only a window. */
+  box-shadow: 0 34px 64px -30px rgba(58,46,32,.42), 0 8px 20px -12px rgba(58,46,32,.26);
+  animation: lp-photo-in 1.15s cubic-bezier(.2,.8,.3,1) .15s both;
+}
+
+/* The push-in. Origin sits on the open notebook and its hand-drawn graph — the
+   one piece of the desk that is somebody working a thing out rather than
+   reading it — so the journey ends on evidence of understanding, and it lands
+   in the band to the RIGHT of the interface, which is the part of the frame
+   the panel never covers. */
+.lp-photo {
+  display: block; width: 100%; height: 100%;
+  object-fit: cover; object-position: 52% 40%;
+  transform-origin: 64% 44%;
+  /* Turned away in space and squaring up as you descend — the scene facing you
+     is the "coming closer" cue that scale alone cannot give. Tilt, push-in and
+     drift all on one element, so the layer promotes once. */
+  transform:
+    perspective(1400px)
+    rotateY(calc(-8deg + var(--sp, 0) * 5.4deg))
+    rotateX(calc(2.4deg - var(--sp, 0) * 1.8deg))
+    scale(calc(1.1 + var(--sp, 0) * .4))
+    translate3d(calc(var(--sp, 0) * 3.4%), calc(var(--sp, 0) * -3.2%), 0);
+  /* Graded into the page rather than dropped onto it: at full contrast the
+     photograph pulled the eye straight off the headline, which is the one
+     thing that has to stay dominant. The blur is depth of field, holding it
+     behind the crisp interface — well short of frost, and STATIC: tying it to
+     `--sp` re-rasterised a 768x519 filter every frame and the cost was plainly
+     measurable (page capture went from ~1s to repeated 5s timeouts). */
+  filter: saturate(.84) contrast(1.02) sepia(.12) blur(.7px);
+}
+
+/* The light, as its own plane. A warm pool where the window falls and a cooler
+   settling at the far corner, drifting the opposite way to the photograph so
+   the two separate as you scroll — this is the midground, and it is also what
+   keeps the push-in from reading as a flat zoom. */
+/* The gradients are fixed and the PLANE is what moves. Putting `--sp` inside
+   the gradient stops meant repainting them on every frame; translating a
+   pre-rasterised layer is free by comparison, and it drifts against the
+   photograph either way, which is the only thing the effect needed. */
+.lp-photo-light {
+  position: absolute; inset: -14%;
+  pointer-events: none;
+  /* Plain alpha, not a blend mode. `soft-light` over a filtered, transformed
+     image means the compositor cannot keep the layer independent and has to
+     read it back to blend it — for a warm wash over a warm photograph the
+     visible difference does not pay for that. */
+  background:
+    radial-gradient(46% 52% at 26% 18%, rgba(255, 228, 168, .3) 0%, rgba(255, 228, 168, 0) 70%),
+    radial-gradient(60% 60% at 94% 94%, rgba(44, 34, 22, .3) 0%, rgba(44, 34, 22, 0) 72%);
+  opacity: calc(.92 - var(--sp, 0) * .3);
+  transform: translate3d(calc(var(--sp, 0) * 7%), calc(var(--sp, 0) * 5%), 0);
+}
+
+/* Anchored. `.lp-l` moves every layer by `--sp * --d * -150px`, which at --d
+   .95 walked the interface 142px up the screen — the two planes travelled
+   together and the scroll read as one moving picture. The cursor terms are
+   kept verbatim; only the scroll term is cut, so the photograph now slides and
+   re-crops behind an interface that barely drifts. */
+.lp-ui-layer {
+  position: relative; z-index: 2;
+  transform: translate3d(
+    calc(var(--mx) * var(--d) * var(--par-x)),
+    calc(var(--my) * var(--d) * var(--par-y) + var(--sp) * -34px),
+    0);
+}
+.lp-ui-tilt {
+  /* Same direction as the photograph but half the angle: two parallel planes,
+     the nearer one facing you more squarely. Past ~4deg the panel's body text
+     starts to lose its edges, and the interface has to stay readable. */
+  transform: perspective(1400px) rotateY(-3deg) rotateX(1deg);
+  transform-origin: 62% 50%;
+  animation: lp-ui-in 1s cubic-bezier(.2,.8,.3,1) .5s both;
+}
+/* Lifted off the photograph. The existing --shadow-lg was tuned against bare
+   paper and disappeared entirely once there was an image under it. */
+.lp-visual .lp-panel {
+  box-shadow: 0 44px 74px -32px rgba(58,46,32,.5), 0 16px 34px -20px rgba(58,46,32,.36);
+  /* Solid, and the backdrop blur goes with it. The glass was right when the
+     only things behind this panel were paper rules and the cursor lamp; a
+     photograph is not that. At 90% tint the notebook was still legible THROUGH
+     the lesson text — the ghost image read as exactly the glassmorphism this
+     composition is trying not to be. An opaque card also occludes, and
+     occlusion is the strongest depth cue available: it is what makes the panel
+     read as an object in front of the scene rather than a pane laid over it. */
+  background: var(--card);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+
+/* The composition assembles back to front: the room, then the object in it,
+   then the details around it. Each `from` differs in translation, scale AND
+   angle, so it settles into place rather than sliding up from below. */
+@keyframes lp-photo-in {
+  from { opacity: 0;
+         transform: perspective(1400px) rotateY(-13deg) rotateX(4deg) scale(1.05) translateY(18px); }
+}
+@keyframes lp-ui-in {
+  from { opacity: 0;
+         transform: perspective(1400px) rotateY(-6deg) rotateX(2.5deg) scale(.95) translateY(28px); }
+}
+
+/* Dark is a re-light, not a dimmer. Dropping brightness alone turns the desk
+   into grey mud with the paper still glaring off it, which is the giveaway of
+   an inverted light mode. So: the midtones come down hard while contrast goes
+   UP, the warmth is pushed further (the scene is now lit by a lamp, not a
+   window), and the light plane swaps to a tight amber pool against a deep cool
+   surround — the paper it falls on stays legible and everything past it falls
+   away. Blend mode changes with it: soft-light lifts a dark image, overlay
+   holds the pool. */
+.lp[data-theme="dark"] .lp-photo {
+  filter: saturate(.72) contrast(1.12) brightness(.52) sepia(.26) blur(.7px);
+}
+.lp[data-theme="dark"] .lp-photo-frame {
+  box-shadow: 0 34px 64px -30px rgba(0,0,0,.66), 0 8px 20px -12px rgba(0,0,0,.5);
+}
+.lp[data-theme="dark"] .lp-photo-light {
+  background:
+    radial-gradient(38% 44% at 28% 20%, rgba(255, 198, 112, .3) 0%, rgba(255, 198, 112, 0) 68%),
+    radial-gradient(80% 80% at 88% 88%, rgba(8, 10, 16, .72) 0%, rgba(8, 10, 16, 0) 76%);
+  opacity: calc(.95 - var(--sp, 0) * .22);
+}
+
+/* ══ THE DEMO PANEL — three states, two transitions, on a loop ═════════════
+   ① INPUT → ② WORK → ③ OUTPUT. One frame, fixed size, contents crossfading
+   through it, so it reads as footage rather than three stacked cards.
+   Played scenes leave upward, unplayed scenes wait below: the stack only ever
+   travels one direction, which is what makes the cuts read as continuous.
+   Everything here is driven by `--on` / `--v` written from `step` in JSX —
+   no element owns a timer of its own.                                      */
+/* Glass, like the nav. It earns it here: the paper rules, the grain and the
+   cursor lamp all pass behind this panel, so blurring them reads as depth.
+   Tint stays high (82%) because body text sits on it — the nav can afford 30%
+   because nothing but two words sits on the nav. */
+.lp-panel {
+  position: relative; overflow: hidden;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-lg); border-radius: 6px;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .lp-panel { background: var(--card); }
+}
+.lp-panel-bar {
+  display: flex; align-items: center; gap: .55rem;
+  padding: .62rem .95rem;
+  font-family: var(--sans); font-size: .75rem;
+  border-bottom: 1px solid var(--rule);
+}
+.lp-panel-title { font-weight: 700; color: var(--ink); }
+.lp-panel-scene {
+  margin-left: auto; color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  /* remounted by key={scene}, so the label re-enters on every state change */
+  animation: lp-label .45s cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes lp-label { from { opacity: 0; transform: translateY(-6px); } }
+
+/* the scrubber — one progress line across all three states. It is what tells
+   the eye this is one take and not three unrelated screens. */
+.lp-scrub {
+  display: block; height: 2px; background: var(--moss);
+  transform-origin: left center; transform: scaleX(var(--v, 0));
+  transition: transform .5s cubic-bezier(.3,.8,.3,1);
+}
+
+.lp-scenes { position: relative; height: 300px; }
+.lp-scene {
+  position: absolute; inset: 0; padding: 1.15rem 1.25rem;
+  opacity: var(--on, 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * var(--dir, 30px)), 0);
+  filter: blur(calc((1 - var(--on, 0)) * 2.5px));
+  transition: opacity .46s ease, transform .56s cubic-bezier(.2,.8,.3,1), filter .46s ease;
+  will-change: transform, opacity;
+}
+
+/* ── ① INPUT ─────────────────────────────────────────────────────────────── */
+.lp-field {
+  display: flex; align-items: baseline; gap: 1px; min-height: 2.5rem;
+  font-family: var(--serif); font-size: clamp(1.4rem, 2.3vw, 1.9rem);
+  color: var(--ink); letter-spacing: -.01em;
+  padding-bottom: .65rem; border-bottom: 1px solid var(--rule);
+}
+.lp-typed {
+  display: inline-block; overflow: hidden; white-space: nowrap;
+  vertical-align: bottom; max-width: 0;
+}
+/* The transition is declared on the ON state only. Going back to OFF (the loop
+   restart) therefore snaps, instead of visibly un-typing behind the crossfade.
+   `--tw` is the span's real measured width, so the caret ends flush against the
+   last character whatever the topic's length. `max-width` is a layout property,
+   but it is eleven steps on one nowrap span inside a fixed-size panel —
+   nothing outside the field can reflow, and it is the only way to keep the
+   caret travelling with the text. */
+.lp-typed[data-on="true"] { max-width: var(--tw, none); transition: max-width .95s steps(11, end); }
+.lp-caret { color: var(--moss); animation: lp-caret 1.05s step-end infinite; }
+
+.lp-attached { display: flex; flex-direction: column; gap: .4rem; margin-top: .9rem; }
+.lp-attach {
+  display: inline-flex; align-items: center; gap: .5rem;
+  align-self: flex-start; max-width: 100%;
+  font-family: var(--sans); font-size: .75rem; color: var(--ink);
+  background: var(--sunk); border: 1px solid var(--rule);
+  border-radius: 4px; padding: .3rem .55rem;
+  opacity: var(--on, 0);
+  transform: translate3d(calc((1 - var(--on, 0)) * -10px), 0, 0)
+             scale(calc(.96 + var(--on, 0) * .04));
+  transition: opacity .34s ease, transform .34s cubic-bezier(.2,.85,.3,1);
+}
+.lp-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-attach-meta { color: var(--ink-soft); flex: none; font-variant-numeric: tabular-nums; }
+.lp-ic { width: 13px; height: 13px; flex: none; color: var(--ink-soft); }
+
+.lp-enter-row { position: absolute; right: 1.25rem; bottom: 1.15rem; }
+.lp-key {
+  display: inline-flex; align-items: center;
+  font-family: var(--sans); font-size: .6875rem; font-weight: 700;
+  padding: .32rem .6rem; border-radius: 4px;
+  border: 1px solid var(--rule); background: var(--sunk); color: var(--ink-soft);
+  box-shadow: 0 2px 0 var(--rule);
+  transition: transform .14s ease, box-shadow .14s ease, background .22s ease, color .22s ease;
+}
+.lp-key[data-on="true"] {
+  transform: translateY(2px); box-shadow: 0 0 0 var(--rule);
+  background: var(--cta-bg); color: var(--cta-fg); border-color: transparent;
+}
+.lp-key-ret { width: 11px; height: 11px; margin-left: .35rem; opacity: .8; }
+
+/* ── ② WORK ──────────────────────────────────────────────────────────────── */
+.lp-scene-head {
+  font-family: var(--sans); font-size: .625rem; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-soft); margin-bottom: .45rem;
+  opacity: calc(var(--on, 1) * .68);
+  transition: opacity .3s ease;
+}
+.lp-scene-head-2 { margin-top: .95rem; }
+.lp-row {
+  display: flex; align-items: center; gap: .6rem; padding: .19rem 0;
+  font-family: var(--sans); font-size: .75rem; font-variant-numeric: tabular-nums;
+  opacity: var(--on, 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * 7px), 0);
+  transition: opacity .34s ease, transform .34s ease;
+}
+.lp-row-name { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lp-row-meta { color: var(--ink-soft); flex: none; }
+.lp-row-score { font-weight: 700; flex: none; width: 2.5em; text-align: right; }
+.lp-row-verdict { color: var(--ink-soft); flex: none; width: 2.3em; }
+.lp-row[data-cut="true"] { opacity: calc(var(--on, 0) * .5); }
+.lp-row[data-cut="true"] .lp-row-name { text-decoration: line-through; }
+
+/* the read sweep — a band of light crossing the file being chunked */
+.lp-scan {
+  flex: 1 1 auto; min-width: 28px; height: 3px; border-radius: 2px;
+  background: var(--rule); position: relative; overflow: hidden;
+}
+.lp-scan::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-101%);
+  background: linear-gradient(90deg, transparent, var(--moss), transparent);
+}
+.lp-scan[data-on="true"]::after { animation: lp-sweep 1.15s ease-in-out infinite; }
+@keyframes lp-sweep { to { transform: translateX(101%); } }
+/* read → the track fills and stays filled, so finished files read as finished */
+.lp-scan::before {
+  content: ""; position: absolute; inset: 0; background: currentColor;
+  transform: scaleX(0); transform-origin: left center;
+  transition: transform .55s cubic-bezier(.2,.8,.3,1);
+}
+.lp-scan[data-done="true"]::before { transform: scaleX(1); }
+
+/* the grade — bar LENGTH is the score, so the number is a caption, not the
+   message. This is the "show it, don't write it" half of the section. */
+.lp-bar {
+  flex: 1 1 auto; min-width: 32px; height: 3px; border-radius: 2px;
+  background: var(--rule); overflow: hidden; margin-left: auto;
+}
+.lp-bar > i {
+  display: block; height: 100%; border-radius: 2px; background: currentColor;
+  transform-origin: left center; transform: scaleX(calc(var(--v, 0) * var(--on, 0)));
+  transition: transform .6s cubic-bezier(.2,.8,.3,1) .12s;
+}
+
+.lp-tally {
+  position: absolute; left: 1.25rem; bottom: 1.15rem;
+  font-family: var(--sans); font-size: .6875rem; font-weight: 700; color: var(--moss);
+  opacity: var(--on, 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
+  transition: opacity .4s ease, transform .4s ease;
+}
+
+/* ── ③ OUTPUT ──────────────────────────────────────────────────────────────
+   The lesson is WRITTEN, not faded in: the headline wipes left-to-right and
+   each paragraph wipes top-down on its own beat, so the third state has three
+   events of its own instead of arriving all at once. */
+.lp-lesson-t {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(1.0625rem, 1.45vw, 1.35rem); line-height: 1.24;
+  color: var(--ink); margin-bottom: .7rem;
+  opacity: calc(.15 + var(--on, 0) * .85);
+  clip-path: inset(0 calc((1 - var(--on, 0)) * 100%) 0 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
+  transition: opacity .4s ease, transform .5s cubic-bezier(.2,.8,.3,1),
+              clip-path .62s cubic-bezier(.3,.75,.35,1);
+}
+.lp-lesson-p {
+  font-family: var(--serif); font-size: clamp(.8125rem, .95vw, .9375rem);
+  line-height: 1.58; color: var(--ink-soft); margin-bottom: .55rem; max-width: 34em;
+  opacity: calc(.08 + var(--on, 0) * .92);
+  clip-path: inset(0 0 calc((1 - var(--on, 0)) * 100%) 0);
+  transition: opacity .45s ease, clip-path .6s cubic-bezier(.3,.75,.35,1);
+}
+
+/* the two card actions the app ships — this is where the demo stops being a
+   readout and becomes something you could touch */
+/* The rule is drawn, not just present — a static hairline sitting under an
+   empty area announced the footer several beats before it had anything in it. */
+.lp-lesson-foot {
+  position: absolute; left: 1.25rem; right: 1.25rem; bottom: 1.05rem;
+}
+.lp-lesson-foot::after {
+  content: ""; display: block; order: 2; height: 1px; background: var(--rule);
+  transform: scaleX(var(--on, 0)); transform-origin: left center;
+  transition: transform .5s cubic-bezier(.3,.8,.3,1);
+}
+.lp-lesson-foot { display: flex; flex-direction: column; }
+.lp-actions { order: 1; }
+.lp-cites   { order: 3; }
+.lp-actions { display: flex; gap: .4rem; margin-bottom: .75rem; }
+.lp-act {
+  font-family: var(--sans); font-size: .6875rem; font-weight: 700;
+  padding: .3rem .6rem; border-radius: 4px;
+  color: var(--moss); border: 1px solid color-mix(in srgb, var(--moss) 40%, transparent);
+  background: color-mix(in srgb, var(--moss) 10%, transparent);
+  opacity: var(--on, 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * 8px), 0)
+             scale(calc(.94 + var(--on, 0) * .06));
+  transition: opacity .34s ease calc(var(--i, 0) * 90ms),
+              transform .38s cubic-bezier(.2, 1.3, .4, 1) calc(var(--i, 0) * 90ms);
+}
+/* the citation is the payoff of the whole demo: the claim, then the receipt */
+.lp-cite, .lp-cites b {
+  font-family: var(--sans); font-size: .5625rem; font-weight: 700;
+  color: var(--moss); background: color-mix(in srgb, var(--moss) 17%, transparent);
+  border-radius: 3px; padding: .14em .36em; line-height: 1;
+}
+.lp-cite {
+  display: inline-block; margin-left: .3em; vertical-align: super;
+  opacity: var(--on, 0); transform: scale(calc(.5 + var(--on, 0) * .5));
+  transition: opacity .3s ease, transform .34s cubic-bezier(.2, 1.35, .4, 1);
+}
+.lp-cites { display: flex; flex-direction: column; gap: .3rem; padding-top: .7rem; }
+.lp-cites > span {
+  display: flex; align-items: center; gap: .45rem; min-width: 0;
+  font-family: var(--sans); font-size: .6875rem; color: var(--ink-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: var(--on, 0);
+  transform: translate3d(calc((1 - var(--on, 0)) * -8px), 0, 0);
+  transition: opacity .36s ease, transform .36s ease;
+}
+.lp-cites b { flex: none; }
+
+/* ── the scroll cue, pinned to the stage floor ───────────────────────────── */
+.lp-hint {
+  position: absolute; left: 50%; bottom: clamp(1.25rem, 3.4vh, 2.25rem);
+  transform: translateX(-50%); z-index: 3;
+  opacity: calc(1 - var(--sp) * 4);
+}
+.lp-hint-in { display: flex; align-items: center; gap: .6rem; }
+.lp-hint-line { animation: lp-hint 2.4s ease-in-out infinite; }
+@keyframes lp-hint {
+  0%, 100% { transform: translateY(0); opacity: .35; }
+  50%      { transform: translateY(7px); opacity: .9; }
+}
+
+/* headline words set up from behind a mask, once, on load.
+   nowrap because each .lp-word IS one line of the headline — without it a
+   line containing a space ("One lesson.") can break in the middle and the
+   three-line headline silently becomes five. */
+.lp-word { display: inline-block; overflow: hidden; vertical-align: bottom; white-space: nowrap; }
+.lp-word > span {
+  display: inline-block; transform: translateY(102%);
+  animation: lp-set .82s cubic-bezier(.16, .84, .3, 1) forwards;
+  animation-delay: calc(var(--i) * 75ms);
+}
+@keyframes lp-set { to { transform: translateY(0); } }
+.lp-fade-up { opacity: 0; animation: lp-fade .7s ease forwards; animation-delay: calc(var(--i) * 75ms + .4s); }
+@keyframes lp-fade { to { opacity: 1; } }
+
+/* Tablet: the scene survives, scaled back. The photograph pulls in and loses
+   some of its bleed, and the parallax reach drops for every hero layer at once
+   — one pair of numbers rather than a --d override per layer, and the layers
+   stay in proportion to each other, which is the part that reads as depth. */
+@media (max-width: 1279px) {
+  .lp { --par-x: 16px; --par-y: 12px; }
+  /* Held further up and to the right than on desktop, and proportionally
+     larger. The column shrinks faster than the panel inside it does, so the
+     desktop offsets put the photograph almost entirely UNDER the interface —
+     a 20px sliver showing, which is occlusion, not depth. */
+  .lp-photo-layer { top: -19%; left: 6%; width: 138%; }
+  /* shallower turn and a shorter journey — the same choreography, travelling
+     less far, because there is less room for it to travel in */
+  .lp-photo {
+    /* Tighter from the start. The strip left showing past the interface here is
+       the top of the frame, which in this photograph is the out-of-focus far
+       edge of the desk — at the desktop's opening scale a tablet saw blur and
+       little else. Starting further in puts the papers in that strip. */
+    object-position: 52% 46%;
+    transform:
+      perspective(1400px)
+      rotateY(calc(-5.5deg + var(--sp, 0) * 3.6deg))
+      rotateX(calc(1.6deg - var(--sp, 0) * 1.2deg))
+      scale(calc(1.22 + var(--sp, 0) * .26))
+      translate3d(calc(var(--sp, 0) * 2.2%), calc(var(--sp, 0) * -1.8%), 0);
+  }
+}
+/* Below 1024 the hero grid drops to one column, so the interface is full width
+   and the photograph is no longer beside anything — held at the desktop offsets
+   it stretched into a band right across the page. It goes back to sitting
+   directly behind the interface, a little wider on each side and lifted so a
+   strip of it still shows above. */
+@media (max-width: 1023px) {
+  .lp-photo-layer { top: -13%; left: -4%; width: 108%; }
+}
+
+/* Touch: no cursor to follow, so the cursor term goes to zero. The scroll term
+   in the same expression is untouched — the layers still separate on scroll. */
+@media (hover: none) {
+  .lp { --par-x: 0px; --par-y: 0px; }
+}
+
+@media (max-width: 900px) {
+  /* the negative margin exists only to align a sticky 100dvh stage with the
+     viewport; with the stage static it just slides the eyebrow under the nav */
+  .lp-hero  { height: auto; margin-top: 0; }
+  .lp-stage { position: static; height: auto; padding: 2rem 0 3.5rem; perspective: none; }
+  .lp-stage-inner { transform: none; opacity: 1; }
+  .lp-l     { transform: none; }
+  .lp-lamp  { display: none; }
+  .lp-hint  { display: none; }
+  /* narrower column → the lesson wraps to more lines, so the frame grows once */
+  .lp-scenes { height: 360px; }
+
+  /* Mobile keeps the order — photograph behind, interface in front — but stops
+     trying to hold an angle in a column this narrow: the stage drops its
+     perspective here, so a rotated plane would just be a skewed rectangle.
+     Depth is carried by the overlap and the shadow instead. The interface is
+     pushed down so a band of the photograph stays visible above it. */
+  .lp-visual { padding-top: 5.5rem; }
+  .lp-photo-layer { top: 0; left: -5%; width: 110%; --d: 0; }
+  /* The stage drops its perspective here, so a turned plane would just be a
+     skewed rectangle — the frame sits square and depth is carried by overlap
+     and shadow instead. The push-in stays, because with no cursor to follow
+     scroll is the only movement left, but it travels a fraction of the desktop
+     distance: `--sp` runs its whole 0→1 in ~150px of scroll on a static stage
+     rather than over a 150vh runway, so a full-range zoom would snap. */
+  .lp-photo-frame { border-radius: 8px; aspect-ratio: 3 / 2; }
+  .lp-photo {
+    transform: scale(calc(1.02 + var(--sp, 0) * .1));
+    filter: saturate(.8) contrast(1) sepia(.14);
+  }
+  .lp-ui-tilt { transform: none; }
+}
+
+/* ══ § 2  WEDGE — full-bleed scroll-linked band ═══════════════════════════
+   The negative margin is the second half of the hero handoff. A 100dvh sticky
+   stage whose content occupies its top ~600px has ~300px of deliberate air
+   underneath; on the way out that air is the first thing you see, and it read
+   as a blank screen between the hero and the band (measured: 265px of nothing
+   below the nav at y=1200). Lifting the band into that air means it rises
+   over the receding hero instead of queueing behind it — the two sections
+   overlap for about a fifth of a screen, which is the transition. z-index
+   puts it above the hero it is climbing over. */
+.lp-band {
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  background: var(--sunk); overflow: hidden;
+  margin-top: -22vh; z-index: 2;
+}
+@media (max-width: 900px) { .lp-band { margin-top: 0; } }
+.lp-marquee {
+  display: flex; width: max-content; will-change: transform;
+  transform: translate3d(calc(var(--bp) * var(--band-shift, -50%)), 0, 0);
+}
+.lp-marquee-row { display: flex; align-items: center; gap: 3.5rem; padding: 1.15rem 1.75rem; }
+.lp-marquee-item {
+  font-family: var(--serif); font-size: clamp(1.05rem, 1.9vw, 1.6rem);
+  color: var(--ink-soft); white-space: nowrap; display: flex; align-items: center; gap: .85rem;
+}
+.lp-marquee-item s { opacity: .55; text-decoration-thickness: 1px; }
+.lp-marquee-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--moss); flex: none; }
+
+/* ══ § 3  ANATOMY — sticky rail, runway DERIVED from content ══════════════
+   v3 bug: the section had a hardcoded `min-height: 260vh` (2340px) while its
+   content was 928px, leaving 1412px of void with the rail already released.
+   The runway is now set from the real content height in JS, so the rail is
+   pinned for exactly as long as there is content beside it.                */
+.lp-anatomy { position: relative; }
+.lp-anatomy-rail { position: sticky; top: 15vh; }
+.lp-step {
+  display: flex; align-items: center; gap: .55rem;
+  border-left: 2px solid var(--rule);
+  padding-left: 1rem;
+  transition: border-color .4s ease, opacity .4s ease;
+  opacity: .34;
+}
+.lp-step[data-active="true"] { opacity: 1; border-left-color: currentColor; }
+/* the rail's own position marker — a second, smaller signal alongside the
+   border-left so "where am I in the five" reads at a glance without text */
+.lp-step-dot {
+  width: 5px; height: 5px; border-radius: 50%; flex: none;
+  background: var(--rule);
+  transform: scale(1);
+  transition: background .35s ease, transform .35s cubic-bezier(.3,.8,.3,1.3), box-shadow .35s ease;
+}
+.lp-step[data-active="true"] .lp-step-dot {
+  background: currentColor; transform: scale(1.7);
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* No [data-stage]: that primitive is a page-ENTRANCE fade, tuned for content
+   sliding in once from off-screen. These blocks scroll past inside a pinned
+   rail instead, so --p swings across its full -1..1 range as you pass them —
+   it drove off-centre blocks down to 25-31% opacity, which read as thin,
+   faded text rather than as a deliberate hierarchy (that was the "low text
+   quality" in the screenshot). Hierarchy instead comes from `data-active`
+   alone, with a floor high enough to stay legible while scrolling past. */
+.lp-blockrow {
+  border-left: 2px solid transparent;
+  padding-left: 1.25rem;
+  opacity: .62;
+  transform: translate3d(0, 0, 0);
+  transition: opacity .45s ease, border-color .45s ease, transform .45s cubic-bezier(.2,.8,.3,1);
+}
+.lp-blockrow[data-active="true"] { opacity: 1; border-left-color: currentColor; transform: translate3d(5px, 0, 0); }
+
+/* ── anatomy icons — AMBIENT breathe always running, EVENT draw on activation,
+   both scoped to `.lp-blockrow[data-active]` so they replay every time a
+   block comes back to centre rather than firing once. ─────────────────── */
+.lp-an-icon-wrap {
+  animation: lp-breathe 5s ease-in-out infinite;
+  opacity: .55;
+  transition: opacity .4s ease;
+}
+.lp-blockrow[data-active="true"] .lp-an-icon-wrap { opacity: 1; animation-play-state: paused; }
+.lp-an-icon { width: 30px; height: 30px; color: currentColor; }
+
+/* Evidence: three bars GROW from the baseline — evidence accumulating */
+.lp-an-bar {
+  transform-origin: bottom center;
+  transform: scaleY(.22);
+  transition: transform .55s cubic-bezier(.2,.8,.3,1) var(--bd, 0s);
+}
+.lp-blockrow[data-active="true"] .lp-an-bar { transform: scaleY(1); }
+
+/* Mechanism + Implication + Sources: the glyph DRAWS itself in, via
+   pathLength="1" so dasharray/dashoffset work the same regardless of the
+   path's real length. Same device as the highlighter marks and the hero's
+   typed line — the ink resolves it, rather than a plain fade. */
+.lp-an-draw {
+  stroke-dasharray: 1; stroke-dashoffset: 1; opacity: .4;
+  transition: stroke-dashoffset .75s cubic-bezier(.2,.8,.3,1) var(--dd, 0s),
+              opacity .4s ease var(--dd, 0s);
+}
+.lp-blockrow[data-active="true"] .lp-an-draw { stroke-dashoffset: 0; opacity: 1; }
+
+/* Comparison: the beam TIPS toward the newer approach — a scale, not a chart */
+.lp-an-beam {
+  transform-origin: 16px 11px;
+  transform: rotate(0deg);
+  transition: transform .6s cubic-bezier(.3,.6,.3,1.35);
+}
+.lp-blockrow[data-active="true"] .lp-an-beam { transform: rotate(-7deg); }
+
+/* the "Integrated" phrase wipes in with the same block that draws its icon */
+.lp-an-mark { background-size: 0% 100%; }
+.lp-blockrow[data-active="true"] .lp-an-mark { background-size: 100% 100%; }
+
+/* ══ § 4  PROGRESSION — Day 1 / 7 / 21, NO CONTAINERS ════════════════════
+   No borders, no cards, no fills. Hierarchy comes from type scale, a single
+   hairline rule, overlap and stagger. The highlighter ink stays, because it
+   is carrying the progression.                                             */
+/* The generic .lp-st-dof runs to 3px of blur on a .26 opacity floor. Right
+   for the feature rows, but here it read as a glass smear — measured: every
+   off-centre day row at blur(3px)/.26, and even the centred one never got
+   sharper than blur(0.83px). Gentler in this section: the depth cue survives,
+   the text stops looking frosted. */
+/* Same call as the arc section: 3px of blur on a .26 floor read as a glass
+   smear over the feature rows too. */
+#features .lp-feat.lp-st-dof {
+  opacity: clamp(.62, calc(.62 + var(--near, 0) * .38), 1);
+  filter: blur(calc((1 - var(--near, 0)) * .85px));
+}
+
+#how .lp-day.lp-st-dof {
+  opacity: clamp(.62, calc(.62 + var(--near, 0) * .38), 1);
+  filter: blur(calc((1 - var(--near, 0)) * .85px));
+}
+
+/* ── THE SEAM — small, and moving whenever you are ───────────────────────
+   The figure that stood here was a 200px drawn fan. It resolved once and then
+   sat there, so the band read as something you had to stop and wait through
+   for no payoff. This is a fifth the size and its one moving part is tied
+   straight to scroll position — the bead rides the rule as you pass, so there
+   is never a moment where it asks you to wait. The five ticks keep the
+   meaning: one day opening into five moves. */
+.lp-seam {
+  position: absolute; left: 0; right: 0; bottom: -70px;
+  height: 168px; pointer-events: none; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+  color: var(--ink-soft);
+}
+.lp-seam-card {
+  width: 44px; height: 30px; flex: none;
+  border: 1px solid var(--rule); border-radius: 2px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  padding: 7px 8px 0;
+}
+.lp-seam-card i { display: block; height: 1px; background: var(--rule); margin-bottom: 4px; }
+.lp-seam-card i:nth-child(1) { width: 100%; }
+.lp-seam-card i:nth-child(2) { width: 62%; }
+.lp-seam-rule {
+  flex: 1 1 auto; width: 1px;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--ink-soft) 42%, transparent),
+    color-mix(in srgb, var(--ink-soft) 10%, transparent));
+}
+/* --p runs -1 → +1 across the transit, so (p+1)/2 is a 0 → 1 track position */
+.lp-seam-bead {
+  position: absolute; left: 50%; top: 34px;
+  width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%;
+  background: var(--moss);
+  transform: translateY(calc(clamp(0, calc((var(--p, 0) + 1) / 2), 1) * 100px));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--moss) 14%, transparent);
+}
+.lp-seam-fan { display: flex; align-items: center; gap: 26px; flex: none; }
+.lp-seam-fan b {
+  display: block; width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor;
+  opacity: clamp(.25, calc(.25 + var(--near, 0) * .75), 1);
+  transform: translateY(calc((1 - clamp(0, var(--near, 0), 1)) * -7px));
+  transition: opacity .4s ease calc(var(--i) * 60ms),
+              transform .45s cubic-bezier(.2, 1.2, .4, 1) calc(var(--i) * 60ms);
+}
+@media (max-width: 767px) { .lp-seam { display: none; } }
+
+.lp-day { position: relative; }
+.lp-day + .lp-day { margin-top: clamp(3.5rem, 9vh, 7rem); }
+.lp-day-rule { height: 1px; background: var(--rule); transform-origin: left center; transform: scaleX(var(--near, 1)); transition: transform .5s ease; }
+.lp-day-n {
+  font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: .75rem; letter-spacing: .02em;
+}
+/* each day sits further right — the progression is spatial, not boxed.
+   nth-of-type, not nth-child: `.lp-day` is the only <article> in its
+   container, so this counts day cards regardless of what non-article
+   siblings (the loop list, the transition line) sit ahead of them. */
+.lp-day:nth-of-type(1) { margin-left: 0; }
+.lp-day:nth-of-type(2) { margin-left: 8%; }
+.lp-day:nth-of-type(3) { margin-left: 16%; }
+.lp-day:nth-of-type(4) { margin-left: 24%; }
+@media (max-width: 900px) {
+  .lp-day:nth-of-type(2), .lp-day:nth-of-type(3), .lp-day:nth-of-type(4) { margin-left: 0; }
+}
+
+/* the day number, set as a ghosted numeral — it strengthens as its row comes
+   to centre, so the arc reads as a countdown you are moving through.
+   `.lp-loop-item` used to wrap a separate 01-04 list; that list is now folded
+   into the day rows above, so the wrapper is gone with it. */
+/* Bold and dark, not a ghost. Weight 400 at 6% opacity read as a watermark
+   nobody could see at 208px; the day number is the spine of this list. Still
+   ramps with --near so the row being read carries the darkest numeral. */
+.lp-loop-num {
+  color: var(--ink); font-weight: 700;
+  opacity: clamp(.5, calc(.5 + var(--near, 0) * .45), .95);
+  transition: opacity .4s ease;
+}
+.lp-loop-body { max-width: 34rem; }
+
+/* ══ § 5  BEYOND THE LESSON — four features, four live demos ══════════════
+   Rows alternate side so the eye crosses the page instead of running down one
+   gutter. The panels are SOLID, not glass: unlike the hero's, nothing moves
+   behind them — glass here would cost a compositor layer and show nothing.  */
+.lp-feat {
+  display: grid; align-items: center;
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1fr);
+  gap: 2.5rem 4rem;
+}
+.lp-feat + .lp-feat { margin-top: clamp(4rem, 10vh, 8rem); }
+/* order, not direction: direction:rtl would also flip the text inside */
+.lp-feat-flip .lp-feat-copy { order: 2; }
+.lp-feat-flip .lp-feat-demo { order: 1; }
+
+.lp-feat-copy { max-width: 30rem; }
+.lp-feat-n {
+  font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: 1.75rem; line-height: 1; color: var(--ink);
+  opacity: clamp(.14, calc(.14 + var(--near, 0) * .5), .64);
+  transition: opacity .4s ease;
+}
+.lp-feat-list { display: flex; flex-direction: column; gap: .7rem; }
+.lp-feat-list li { display: flex; gap: .65rem; align-items: baseline; }
+.lp-feat-bullet {
+  width: 5px; height: 5px; border-radius: 50%; flex: none;
+  background: currentColor; opacity: .55; transform: translateY(-2px);
+}
+
+/* the demo frame — same chrome language as the hero panel so the page reads
+   as one product, minus the glass */
+.lp-fpanel {
+  background: var(--card); border: 1px solid var(--rule);
+  box-shadow: var(--shadow-lg); border-radius: 6px; overflow: hidden;
+}
+.lp-fbar {
+  display: flex; align-items: center; gap: .55rem;
+  padding: .55rem .9rem; border-bottom: 1px solid var(--rule);
+  font-family: var(--sans); font-size: .6875rem; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft);
+}
+/* fixed height so a row never resizes as its demo cycles — the chat demo is
+   the tallest (bubble + tool + sources + two lines + a pinned composer) and
+   sets the number */
+.lp-fbody { position: relative; height: 280px; padding: 1.1rem 1.15rem; }
+.lp-fbar .lp-live { color: var(--moss); }
+
+/* the section's own contents index — four names before four long rows */
+.lp-featindex {
+  font-family: var(--sans); font-size: .75rem; color: var(--ink-soft);
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+}
+.lp-featindex span { display: inline-flex; align-items: center; gap: .5rem; }
+.lp-featindex b { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.lp-featindex i { font-style: normal; opacity: .4; }
+
+/* shared on/off primitive for everything inside the demos — one declaration
+   instead of the same three lines repeated per element */
+.lp-fx {
+  opacity: var(--on, 0);
+  transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
+  transition: opacity .34s ease calc(var(--i, 0) * 80ms),
+              transform .38s cubic-bezier(.2, .8, .3, 1) calc(var(--i, 0) * 80ms);
+}
+/* Same beat, but the element never leaves — it waits at .24 and lights up.
+   For a fixed list whose members arrive one per beat (the offline stores, the
+   four tiles) the plain .lp-fx leaves the frame nearly empty for the first
+   second of every cycle: exactly the void the hero handoff had to fix. Lists
+   that light up read as a list being filled; lists that pop in read as a gap. */
+.lp-fx-dim {
+  opacity: calc(.24 + var(--on, 0) * .76);
+  transform: none;
+}
+
+/* ── 01 Unpack — the popover, over a real paragraph ──────────────────────── */
+.lp-up-para {
+  font-family: var(--serif); font-size: .9375rem; line-height: 1.6;
+  color: var(--ink); max-width: 26em;
+}
+/* left offset, not flush: the real popover is centred on the selection, and
+   parking it in the corner left the right half of the frame empty. `right`
+   stays as the clamp so a narrow phone frame shrinks it instead of clipping. */
+.lp-pop {
+  position: absolute; left: 4rem; right: 1.15rem; bottom: 1rem;
+  max-width: 288px;   /* POPOVER_WIDTH in UnpackPopover.jsx */
+  background: var(--sunk); border: 1px solid var(--rule);
+  border-radius: 8px; box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.lp-pop-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .35rem .6rem; border-bottom: 1px solid var(--rule);
+  font-family: var(--sans); font-size: .625rem; font-weight: 700; color: var(--ink-soft);
+}
+.lp-pop-bar i { font-style: normal; opacity: .55; }
+.lp-pop-menu { display: flex; flex-direction: column; gap: .22rem; padding: .35rem; }
+.lp-pop-btn {
+  font-family: var(--sans); font-size: .75rem; font-weight: 500;
+  padding: .3rem .5rem; border-radius: 4px; color: var(--ink);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+  transition: background .2s ease, color .2s ease, transform .2s cubic-bezier(.2,.8,.3,1);
+}
+/* the action about to be taken — reads as the cursor resting on it */
+.lp-pop-btn[data-armed="true"] {
+  background: var(--cta-bg); color: var(--cta-fg); transform: translateX(2px);
+}
+.lp-pop-body { padding: .5rem .65rem; }
+.lp-pop-def  { font-family: var(--serif); font-size: .8125rem; line-height: 1.5; color: var(--ink-soft); }
+.lp-pop-ctx  { font-family: var(--serif); font-size: .8125rem; line-height: 1.5; color: var(--ink); font-weight: 500; margin-top: .3rem; }
+.lp-pop-caret { font-size: .75rem; margin-left: .1em; }
+.lp-pop-fine { font-family: var(--sans); font-size: .625rem; color: var(--ink-soft); margin-top: .3rem; }
+
+.lp-skel { display: flex; flex-direction: column; gap: .3rem; }
+.lp-skel i {
+  height: 7px; border-radius: 3px; background: var(--rule);
+  animation: lp-breathe 1.3s ease-in-out infinite;
+}
+.lp-skel i:nth-child(1) { width: 72%; }
+.lp-skel i:nth-child(2) { width: 100%; animation-delay: .15s; }
+.lp-skel i:nth-child(3) { width: 84%;  animation-delay: .3s; }
+
+.lp-lang { display: flex; flex-wrap: wrap; gap: .3rem; }
+.lp-langc {
+  font-family: var(--sans); font-size: .6875rem;
+  padding: .22rem .45rem; border-radius: 4px;
+  border: 1px solid var(--rule); color: var(--ink-soft);
+  animation: lp-fade .3s ease both; animation-delay: calc(var(--i) * 60ms);
+}
+.lp-langc[data-armed="true"] { background: var(--cta-bg); color: var(--cta-fg); border-color: transparent; }
+.lp-tr { font-family: var(--serif); font-size: 1.0625rem; color: var(--ink); line-height: 1.4; }
+
+.lp-audio { display: flex; align-items: center; gap: .6rem; }
+.lp-wave { display: flex; align-items: center; gap: 2px; height: 20px; flex: 1 1 auto; }
+.lp-wave i {
+  flex: 1 1 auto; background: var(--moss); border-radius: 1px;
+  height: 30%; transform-origin: center;
+  animation: lp-wave 1s ease-in-out infinite; animation-delay: var(--bd, 0s);
+}
+@keyframes lp-wave { 0%, 100% { height: 22%; } 50% { height: 100%; } }
+.lp-audio .lp-pop-fine { margin-top: 0; flex: none; }
+
+/* ── 02 Chat ─────────────────────────────────────────────────────────────── */
+.lp-chat { display: flex; flex-direction: column; }
+.lp-cbub {
+  align-self: flex-end; max-width: 82%;
+  font-family: var(--serif); font-size: .8125rem; line-height: 1.45;
+  color: var(--cta-fg); background: var(--cta-bg);
+  padding: .45rem .7rem; border-radius: 10px 10px 3px 10px;
+}
+.lp-tool {
+  display: inline-flex; align-items: center; gap: .45rem; align-self: flex-start;
+  margin-top: .7rem;
+  font-family: var(--sans); font-size: .6875rem; color: var(--ink-soft);
+  border: 1px solid var(--rule); border-radius: 4px; padding: .2rem .45rem;
+  background: var(--sunk);
+}
+.lp-spin {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  border: 1.5px solid var(--rule); border-top-color: var(--moss);
+}
+.lp-spin[data-on="true"] { animation: lp-spin .7s linear infinite; }
+@keyframes lp-spin { to { transform: rotate(360deg); } }
+.lp-srcs { display: flex; gap: .3rem; margin-top: .35rem; }
+.lp-srcchip {
+  font-family: var(--sans); font-size: .625rem; color: currentColor;
+  border: 1px solid currentColor; border-radius: 3px; padding: .1rem .35rem;
+}
+.lp-cline {
+  font-family: var(--serif); font-size: .8125rem; line-height: 1.55;
+  color: var(--ink); margin-top: .55rem; max-width: 32em;
+}
+/* the composer is pinned to the floor of the frame, like the real one */
+.lp-comp {
+  position: absolute; left: 1.15rem; right: 1.15rem; bottom: 1rem;
+  border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--sunk); padding: .35rem .4rem .35rem .55rem;
+}
+.lp-comp-att {
+  display: inline-flex; align-items: center; gap: .35rem; margin-bottom: .3rem;
+  font-family: var(--sans); font-size: .625rem; color: var(--ink);
+  background: var(--card); border: 1px solid var(--rule);
+  border-radius: 3px; padding: .15rem .35rem;
+}
+.lp-comp-row { display: flex; align-items: center; gap: .5rem; }
+.lp-comp-ph { flex: 1 1 auto; font-family: var(--sans); font-size: .75rem; color: var(--ink-soft); opacity: .7; }
+.lp-comp-send {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--cta-bg); color: var(--cta-fg);
+}
+.lp-comp-arrow { width: 11px; height: 11px; transform: rotate(-90deg); }
+
+/* ── 03 Keep — four tiles, four small habits ─────────────────────────────── */
+.lp-tiles {
+  display: grid; grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr; gap: .6rem;
+}
+.lp-tile {
+  display: flex; flex-direction: column; gap: .3rem; min-width: 0;
+  border: 1px solid var(--rule); border-radius: 5px;
+  padding: .55rem .65rem; background: var(--sunk);
+}
+.lp-tile-h {
+  font-family: var(--sans); font-size: .5625rem; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: currentColor;
+}
+.lp-tile-sub { font-family: var(--sans); font-size: .625rem; color: var(--ink-soft); margin-top: auto; }
+.lp-tile-glyph { width: 22px; height: 22px; color: currentColor; }
+.lp-tile-chip {
+  font-family: var(--sans); font-size: .5625rem; color: var(--ink-soft);
+  border: 1px solid var(--rule); border-radius: 3px;
+  padding: .1rem .3rem; align-self: flex-start; margin-top: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+/* remounted by key on change, so a new count drops in rather than swapping */
+.lp-cnt {
+  font-family: var(--serif); font-size: 1.75rem; line-height: 1; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  animation: lp-label .4s cubic-bezier(.2,.8,.3,1) both;
+}
+.lp-cnt i { font-family: var(--sans); font-size: .75rem; font-style: normal; color: var(--ink-soft); }
+/* the note WRITES itself — same clip-path device as the hero's lesson */
+.lp-notetxt {
+  font-family: var(--serif); font-size: .75rem; line-height: 1.4; color: var(--ink);
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path .9s cubic-bezier(.3,.75,.35,1);
+}
+.lp-notetxt[data-on="true"] { clip-path: inset(0 0 0 0); }
+.lp-sbars { display: flex; align-items: flex-end; gap: 3px; height: 16px; margin-top: auto; }
+.lp-sbars i {
+  flex: 1 1 auto; border-radius: 1px; background: var(--rule);
+  height: 100%; transform-origin: bottom center; transform: scaleY(.35);
+  transition: transform .45s cubic-bezier(.2,.8,.3,1) var(--bd, 0s), background .3s ease var(--bd, 0s);
+}
+.lp-sbars i[data-on="true"] { transform: scaleY(1); background: currentColor; }
+
+/* ── 04 Offline ──────────────────────────────────────────────────────────── */
+.lp-off { display: flex; flex-direction: column; }
+.lp-off-top {
+  display: flex; align-items: center; gap: .6rem;
+  padding-bottom: .6rem; border-bottom: 1px solid var(--rule);
+  color: var(--moss);
+}
+.lp-off[data-offline="true"] .lp-off-top { color: var(--pink-ink); }
+.lp-sig { width: 22px; height: 22px; flex: none; }
+.lp-sig-arc { opacity: 1; transition: opacity .35s ease var(--ad, 0s); }
+/* .5, not .22: at 22px three faint arcs under a full-strength slash left only
+   the slash legible — the glyph read as a pen, not as a signal that was cut */
+.lp-sig[data-off="true"] .lp-sig-arc { opacity: .5; }
+.lp-sig-case { stroke: var(--card); stroke-width: 3.5; }
+/* the slash DRAWS across when the signal goes, rather than appearing */
+.lp-sig-slash {
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  transition: stroke-dashoffset .45s cubic-bezier(.2,.8,.3,1);
+}
+.lp-sig[data-off="true"] .lp-sig-slash { stroke-dashoffset: 0; }
+.lp-off-state {
+  flex: 1 1 auto; font-family: var(--sans); font-size: .75rem; font-weight: 700;
+  color: currentColor;
+  animation: lp-label .4s cubic-bezier(.2,.8,.3,1) both;   /* remounted by key */
+}
+.lp-off-mark { display: inline-flex; flex: none; width: 16px; height: 16px; align-items: center; justify-content: center; }
+.lp-off-mark svg { width: 16px; height: 16px; }
+
+.lp-off-rows { display: flex; flex-direction: column; gap: .1rem; padding-top: .55rem; }
+.lp-orow {
+  display: flex; align-items: center; gap: .55rem; padding: .2rem 0;
+  font-family: var(--sans); font-size: .75rem;
+}
+.lp-orow-name { color: var(--ink); flex: none; }
+.lp-orow-line { flex: 1 1 auto; height: 1px; background: var(--rule); }
+.lp-odot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--rule); transform: scale(1);
+  transition: background .35s ease, transform .35s cubic-bezier(.3,.8,.3,1.4);
+}
+.lp-odot[data-on="true"] { background: var(--moss); transform: scale(1.25); }
+/* the payoff: with the signal gone, a lesson is still sitting there open */
+.lp-ocard {
+  position: absolute; left: 1.15rem; right: 1.15rem; bottom: 1rem;
+  display: flex; flex-direction: column; gap: .15rem;
+  border: 1px solid var(--rule); border-left: 2px solid var(--moss);
+  border-radius: 5px; background: var(--sunk); padding: .5rem .6rem;
+}
+.lp-ocard-t { font-family: var(--serif); font-size: .875rem; color: var(--ink); }
+.lp-ocard-m { font-family: var(--sans); font-size: .625rem; color: var(--ink-soft); }
+
+@media (max-width: 900px) {
+  /* one column: flipping sides is meaningless when there is only one gutter,
+     and `order` would otherwise drop every second demo above its own copy */
+  .lp-feat { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+  .lp-feat-flip .lp-feat-copy { order: 0; }
+  .lp-feat-flip .lp-feat-demo { order: 0; }
+  .lp-feat-copy { max-width: none; }
+  .lp-fbody { height: 300px; }
+}
+
+/* ══ § 6  CTA ═════════════════════════════════════════════════════════════ */
+.lp-cta-dot { animation: lp-breathe 3.6s ease-in-out infinite; }
+
+/* ── proximity-reactive (pointer distance, set in JS) ────────────────────── */
+.lp-prox {
+  --pxo: calc(var(--px, 0) * 8px);
+  --pyo: calc(var(--py, 0) * 8px);
+}
+
+.lp :focus-visible { outline: 2px solid var(--moss); outline-offset: 3px; border-radius: 3px; }
+
+
+/* ══ THE PACKAGE OBJECT — a card index, not a cube ════════════════════════
+   FOUR NUMBERS DEFINE THE WHOLE THING. Every card position is a function of
+   its own --i against these, so the stack has one rhythm instead of four
+   hand-picked offsets, and it stays symmetric about its centre plane:
+   i 0→3 puts z at +1.5·dz → −1.5·dz, x and y stepping evenly across the same
+   span. Change --dz here and the object re-spaces itself correctly.
+
+   FOUR ELEMENTS, ONE TRANSFORM EACH. This is the part that matters. Scroll
+   depth, pointer rotation, idle drift and the selection pop all want to
+   transform this object at the same time; giving them one element each means
+   they compose instead of overwriting each other, and none of them has to
+   know the others exist. */
+.lp-pkg {
+  --cw: 292px;   /* card width                          */
+  --ch: 184px;   /* card height                         */
+  --dz: 44px;    /* depth between cards                 */
+  /* NEGATIVE: cards further back sit HIGHER, so each one's label strip stays
+     exposed above the card in front of it — the way a card index works, and
+     the reason all four features are legible at once. Stepping them downward
+     instead (the first attempt) buried every label but the front card's, and
+     the object read as one card with debris behind it. Matches --strip. */
+  /* BIGGER than --strip on purpose. When the step only equalled the strip,
+     perspective shrink left each rear card about 10px of clear surface — just
+     visible, but almost impossible to actually hit, which is why cards 3 and 4
+     "would not open". The extra 14px is hit area, and it is why --dz came DOWN
+     at the same time: less depth between cards means less shrink eating the
+     exposed band. */
+  --dy: -52px;   /* vertical step: one strip, plus clearance */
+  --dx: 12px;    /* lateral step                        */
+  --strip: 38px; /* height of the always-visible band   */
+  --ry-max: 15deg;  /* pointer rotation range, Y */
+  --rx-max: 10deg;  /* pointer rotation range, X */
+
+  position: relative;
+  height: 500px;
+  perspective: 1250px;
+  perspective-origin: 50% 46%;
+}
+/* [data-stage] already writes this element's own opacity and entrance
+   translate; --near inherits from it into everything below. */
+
+.lp-pkg-scroll, .lp-pkg-rot, .lp-pkg-idle, .lp-pkg-vol {
+  position: absolute; inset: 0;
+  transform-style: preserve-3d;
+  /* the whole 3D stack is decoration; .lp-pkg-hit takes every event */
+  pointer-events: none;
+}
+
+/* ── THE HIT LAYER ────────────────────────────────────────────────────────
+   Flat, untransformed, and sitting above everything. Four rectangles whose
+   top/left/width/height are measured from where the cards actually render, so
+   this needs no geometry of its own and cannot drift out of step with the
+   3D layout at any breakpoint. */
+.lp-pkg-hit { position: absolute; inset: 0; z-index: 6; }
+.lp-pkg-hit-btn {
+  position: absolute;
+  padding: 0; border: 0; background: none;
+  cursor: pointer;
+  border-radius: 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Before the measurement lands (first paint, JS disabled) the buttons have no
+   inline box. Stacking them as a plain column keeps all four clickable rather
+   than collapsing them onto each other at 0×0. */
+.lp-pkg-hit-btn:not([style]) { position: static; display: block; width: 100%; height: 25%; }
+.lp-pkg-hit-btn:focus-visible { outline: 2px solid var(--moss); outline-offset: 2px; }
+
+/* (1) SCROLL — the object arrives from further away and settles. Depth and
+   scale only; the fade belongs to [data-stage] on the parent, and putting an
+   opacity here would flatten preserve-3d and collapse the whole stack. */
+.lp-pkg-scroll {
+  transform:
+    translate3d(0, 0, calc((1 - var(--near, 1)) * -230px))
+    scale(calc(.93 + var(--near, 1) * .07));
+}
+
+/* (2) POINTER — the spring's output, nothing else. The base angles are what
+   make it read as a volume at rest; the --sx/--sy terms are the interaction,
+   held to a range that shows the sides without ever spinning it. */
+.lp-pkg-rot {
+  transform:
+    rotateY(calc(-14deg + var(--sx, 0) * var(--ry-max)))
+    rotateX(calc(9deg + var(--sy, 0) * (var(--rx-max) * -1)));
+}
+
+/* (3) IDLE — under a degree and a half, over eleven seconds. Enough that the
+   object is never quite dead; not enough to notice as an animation. */
+.lp-pkg-idle { animation: lp-pkg-breathe 11s ease-in-out infinite; }
+@keyframes lp-pkg-breathe {
+  0%, 100% { transform: rotateY(-1.2deg) rotateX(.45deg) translateZ(-4px); }
+  50%      { transform: rotateY(1.2deg)  rotateX(-.45deg) translateZ(4px); }
+}
+
+/* ── the volume: floor, back wall, two rails ───────────────────────────────
+   Four cards alone in space read as four loose rectangles. Filed into
+   something, they read as one object — which is the whole difference. */
+.lp-pkg-floor, .lp-pkg-back, .lp-pkg-rail {
+  position: absolute; left: 50%; top: 50%;
+  border: 1px solid var(--rule);
+}
+/* Sized off the same constants as the stack, so the tray always closes around
+   whatever the cards are doing. The stack now runs upward as it goes back, so
+   the floor sits under the FRONT card (the lowest) and the back wall stands
+   behind the rearmost one. */
+.lp-pkg-floor {
+  width: calc(var(--cw) + 58px);
+  height: calc(var(--dz) * 3 + 84px);
+  margin: calc((var(--dz) * 3 + 84px) / -2) 0 0 calc((var(--cw) + 58px) / -2);
+  /* NEGATIVE. rotateX(90deg) maps local +Z onto −Y, so a positive translateZ
+     lifted the floor 146px ABOVE the cards, where it read as a stray pale
+     parallelogram cutting across the top of the stack. */
+  transform: rotateX(90deg) translateZ(calc((var(--ch) / 2 + var(--dy) * -1.5 + 16px) * -1));
+  /* the stack's cast shadow, pooled on the floor plane under it — the piece
+     that makes the object look like it is standing on something */
+  background:
+    radial-gradient(58% 46% at 47% 46%, rgba(36, 31, 23, .34) 0%, rgba(36, 31, 23, 0) 72%),
+    color-mix(in srgb, var(--sunk) 86%, transparent);
+}
+.lp-pkg-back {
+  width: calc(var(--cw) + 58px); height: calc(var(--ch) + 40px);
+  margin: calc((var(--ch) + 40px) / -2) 0 0 calc((var(--cw) + 58px) / -2);
+  transform: translate3d(0, calc(var(--dy) * 1.5), calc(var(--dz) * -1.5 - 26px));
+  background: color-mix(in srgb, var(--sunk) 55%, transparent);
+  border-color: color-mix(in srgb, var(--rule) 70%, transparent);
+}
+/* Two thin uprights, not side walls. Full-height panels at each side closed
+   the object into an opaque box that read as a stray parallelogram floating
+   past the cards — the tray swallowed the thing it was meant to hold. A pair
+   of posts does the same job (the cards are filed BETWEEN something) and
+   leaves the stack the object. */
+.lp-pkg-rail {
+  width: calc(var(--dz) * 3 + 74px); height: 3px;
+  margin: -1.5px 0 0 calc((var(--dz) * 3 + 74px) / -2);
+  background: color-mix(in srgb, var(--rule) 92%, transparent);
+  border: 0;
+}
+/* rotateY(90deg) alone: the bar's own width then runs along Z, which is all a
+   rail has to do. The three-rotation version was a long way round to the same
+   place and got the axis wrong on the way. */
+.lp-pkg-rail-l {
+  transform: translate3d(calc(var(--cw) / -2 - 20px), calc(var(--ch) / 2 + var(--dy) * -1.5 + 14px), 0)
+             rotateY(90deg);
+}
+.lp-pkg-rail-r {
+  transform: translate3d(calc(var(--cw) / 2 + 20px), calc(var(--ch) / 2 + var(--dy) * -1.5 + 14px), 0)
+             rotateY(90deg);
+}
+
+/* ── (4) the cards ─────────────────────────────────────────────────────────
+   The button carries STACK GEOMETRY only, and deliberately has no transition:
+   --sep comes off the spring every frame, and a transition on the same
+   property would re-smooth an already-smoothed value into lag. The selection
+   pop lives one level down on .lp-pkg-face, where a transition is right. */
+.lp-pkg-card {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--cw); height: var(--ch);
+  margin: calc(var(--ch) / -2) 0 0 calc(var(--cw) / -2);
+  transform-style: preserve-3d;
+  transform:
+    translate3d(
+      calc((var(--i) - 1.5) * var(--dx)),
+      calc((var(--i) - 1.5) * var(--dy)),
+      calc((1.5 - var(--i)) * (var(--dz) + var(--sep, 0) * 15px)))
+    rotateX(-3deg);
+  /* NO `color: inherit` here. The accent arrives via the .lp-i-* class on this
+     same element, which is the same specificity and earlier in the file — so
+     resetting colour here silently beat it and every card's currentColor fell
+     back to ink, which is why all four strips rendered identically grey. */
+}
+.lp-pkg-face {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 55%, var(--rule));
+  border-radius: 4px;
+  background: var(--card);
+  /* Three lengths, not one. A single soft blur reads as a glow under the card;
+     a real shadow is a tight dark contact line where the card meets the one
+     behind it, a mid falloff, and a wide ambient. Because these cards sit on
+     separate z planes inside preserve-3d, each card's shadow lands on the card
+     behind it — which is what makes the stack look stacked rather than drawn. */
+  box-shadow:
+    0 1px 2px rgba(36, 31, 23, .3),
+    0 8px 14px -6px rgba(36, 31, 23, .3),
+    0 26px 44px -20px rgba(36, 31, 23, .38);
+  /* one overshoot and done — the same physical read as the pointer spring,
+     expressed as a curve because this one is a state change, not a signal */
+  transition:
+    transform .48s cubic-bezier(.22, 1.28, .36, 1),
+    box-shadow .3s ease, opacity .3s ease, border-color .3s ease;
+}
+/* driven by the hit layer's pointer/focus state, since the card itself no
+   longer receives events */
+.lp-pkg-card[data-hover="true"] .lp-pkg-face {
+  transform: translateZ(18px);
+  /* lifted: the contact line softens and the ambient spreads, which is what
+     lifting an object off a surface actually does to its shadow */
+  box-shadow:
+    0 2px 4px rgba(36, 31, 23, .22),
+    0 14px 22px -8px rgba(36, 31, 23, .3),
+    0 36px 58px -22px rgba(36, 31, 23, .44);
+}
+/* selected: out of the stack, squared up to the viewer, and slightly larger */
+.lp-pkg-card[data-on="true"] { z-index: 4; }
+.lp-pkg-card[data-on="true"] .lp-pkg-face {
+  /* Comes forward INTO THE FRONT CARD'S SLOT — offset by exactly the steps
+     that separate it from i=0, so it lands where card 01 sits and never above
+     it. The previous offset moved the selected card UP by (1.5 − i)·dy, which
+     for the front cards meant riding up over the rear cards' exposed strips
+     and swallowing their clicks: pick 01 or 02 and 03/04 became unhittable,
+     which is exactly the "3rd and 4th do not open" symptom. Moving down-front
+     covers only empty floor. */
+  transform: translate3d(calc(var(--i) * var(--dx) * -1), calc(var(--i) * var(--dy) * -1), 110px)
+             rotateX(3deg) scale(1.04);
+  /* out of the stack entirely: no contact line left, all ambient */
+  box-shadow:
+    0 4px 8px rgba(36, 31, 23, .18),
+    0 22px 34px -12px rgba(36, 31, 23, .3),
+    0 54px 80px -28px rgba(36, 31, 23, .5);
+}
+/* everything else steps back and quietens, so the chosen one is alone in front */
+.lp-pkg[data-sel="true"] .lp-pkg-card[data-on="false"] .lp-pkg-face {
+  transform: translateZ(-56px);
+  /* .42 dimmed them so far they stopped counting as the other three features
+     and the object looked like one card with haze behind it */
+  opacity: .56;
+}
+
+/* The exposed band. Its height IS --dy, so the strip and the stack step are
+   the same number by construction and a card can never half-cover the label
+   of the one behind it. The accent lives here as a tinted band rather than as
+   a hairline border, which is what makes the four features tell apart at a
+   glance from across the section. */
+.lp-pkg-strip {
+  flex: 0 0 var(--strip);
+  display: flex; align-items: center; gap: .5rem;
+  padding: 0 .85rem;
+  background: color-mix(in srgb, currentColor 30%, var(--card));
+  border-bottom: 1px solid color-mix(in srgb, currentColor 60%, var(--rule));
+  /* the accent as a solid edge down the left of the strip: at 13% tint alone
+     all four strips read as the same grey band from across the section, and
+     the colour coding — which is how you tell the four apart before reading —
+     did nothing */
+  box-shadow: inset 3px 0 0 currentColor;
+}
+.lp-pkg-tab {
+  font-family: var(--sans); font-size: .625rem; font-weight: 700;
+  letter-spacing: .1em; color: currentColor;
+}
+.lp-pkg-name {
+  font-family: var(--sans); font-size: .875rem; font-weight: 700;
+  letter-spacing: -.01em; color: var(--ink);
+}
+.lp-pkg-body { padding: .8rem .85rem; }
+.lp-pkg-art {
+  display: block;
+  color: currentColor;
+  transition: transform .48s cubic-bezier(.22, 1.28, .36, 1);
+}
+.lp-pkg-art svg { width: 92px; height: auto; display: block; }
+.lp-pkg-card[data-on="true"] .lp-pkg-art { transform: scale(1.14); transform-origin: left top; }
+
+/* the payoff for clicking: the feature's own sentence, which is not on the
+   card until you ask for it */
+.lp-pkg-reveal {
+  display: block;
+  margin-top: .5rem;
+  max-width: 216px;
+  font-family: var(--serif); font-size: .8125rem; line-height: 1.35;
+  color: var(--ink-soft);
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .3s ease .1s, transform .38s cubic-bezier(.22, 1.28, .36, 1) .1s;
+}
+.lp-pkg-card[data-on="true"] .lp-pkg-reveal { opacity: 1; transform: none; }
+/* The front card reads its line from the start, so the object says what it is
+   before anyone clicks it — and the click then moves that same line onto
+   whichever card you picked, rather than revealing text the page never had. */
+.lp-pkg[data-sel="false"] .lp-pkg-card[data-first] .lp-pkg-reveal {
+  opacity: 1; transform: none;
+}
+
+/* dark: the same object under a different light. Surfaces separate more
+   strongly because there is less tonal room between them, and each card gets
+   a top edge catch so the stack's depth stays readable. */
+/* Same three-length construction, deeper — on a dark ground a shadow has less
+   tonal room to work in, so the contact line does most of the separating and
+   the top-edge catch light does the rest. */
+.lp[data-theme="dark"] .lp-pkg-face {
+  background: color-mix(in srgb, var(--card) 94%, var(--ink));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, .55),
+    0 8px 14px -6px rgba(0, 0, 0, .5),
+    0 26px 44px -18px rgba(0, 0, 0, .62),
+    inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.lp[data-theme="dark"] .lp-pkg-card[data-hover="true"] .lp-pkg-face {
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, .45),
+    0 14px 22px -8px rgba(0, 0, 0, .52),
+    0 36px 58px -20px rgba(0, 0, 0, .68),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.lp[data-theme="dark"] .lp-pkg-card[data-on="true"] .lp-pkg-face {
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, .4),
+    0 22px 34px -12px rgba(0, 0, 0, .55),
+    0 54px 80px -26px rgba(0, 0, 0, .72),
+    inset 0 1px 0 rgba(255, 255, 255, .1);
+}
+.lp[data-theme="dark"] .lp-pkg-floor {
+  background:
+    radial-gradient(58% 46% at 47% 46%, rgba(0, 0, 0, .5) 0%, rgba(0, 0, 0, 0) 72%),
+    color-mix(in srgb, var(--sunk) 88%, transparent);
+}
+.lp[data-theme="dark"] .lp-pkg-back  { background: color-mix(in srgb, var(--sunk) 70%, transparent); }
+
+/* tablet: shallower perspective, smaller object, less swing */
+@media (max-width: 1279px) {
+  .lp-pkg {
+    /* --dy stays NEGATIVE here too, and still exceeds --strip. The earlier
+       positive value in this block was a leftover from the first stacking
+       direction and would have flipped the whole index upside down on tablet,
+       burying every label. */
+    --cw: 250px; --ch: 162px; --dz: 38px; --dy: -44px; --dx: 10px; --strip: 34px;
+    --ry-max: 11deg; --rx-max: 7deg;
+    height: 424px; perspective: 1500px;
+  }
+  .lp-pkg-art svg { width: 84px; }
+  .lp-pkg-reveal { max-width: 176px; }
+}
+
+/* Under 1024 the object is gone entirely.
+   The section drops to one column here, so the stack had to lie down as a flat
+   list of four tappable cards — 01 Unpack / 02 Chat / 03 Keep / 04 Offline,
+   each with its glyph and its one line. But the four detailed feature rows
+   directly underneath say precisely the same four things at greater length,
+   so on a phone the page introduced every feature twice in a row, once as a
+   summary card and once properly. The detailed rows are the better of the two,
+   so the summary loses.
+
+   The object earns its place only where it is actually a 3D object standing
+   beside the headline; flattened into a column it is just a duplicate table of
+   contents. Nothing else in the section changes — the copy column simply takes
+   the full width, which the lg: grid already does on its own. */
+@media (max-width: 1023px) {
+  .lp-pkg { display: none; }
+}
+
+/* ══ STILL MODE — complete, finished, non-broken static state ════════════
+   Driven by `.lp[data-motion="off"]`, NOT by the media query directly.
+
+   Why: on Windows, "Show animations in Windows" (Settings → Accessibility →
+   Visual effects) is a single OS switch that Chrome and Edge report to the
+   web as `prefers-reduced-motion: reduce`. Plenty of people have it off for
+   battery or perceived speed rather than motion sensitivity, and for them a
+   media-query-only rule silently kills the whole page with no way back.
+
+   So the OS value is the DEFAULT, and the footer control can override it per
+   visitor (persisted in localStorage). Someone who set reduce deliberately
+   still lands on the static page and is never overridden without asking.
+   ════════════════════════════════════════════════════════════════════════ */
+.lp[data-motion="off"] *,
+.lp[data-motion="off"] *::before,
+.lp[data-motion="off"] *::after {
+  animation-duration: .001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .001ms !important;
+}
+
+.lp[data-motion="off"] .lp-grain { animation: none; }
+/* The plate's edges are drawn by an animation that ENDS retracted, so with the
+   global duration cut to nothing they would fall back to their base state —
+   which is invisible. Land them drawn instead; still mode means the figure is
+   finished, not erased. */
+.lp[data-motion="off"] .lp-weave { animation: none; }
+/* the rail fades in on --sp, which never advances with the hero unpinned */
+.lp[data-motion="off"] .lp-rail { opacity: 1; }
+/* rings are always drawn now, so still mode only has to stop the turn and
+   sit the instrument square to the reader */
+.lp[data-motion="off"] .lp-armil-3d,
+.lp[data-motion="off"] .lp-armil-spin { animation: none; transform: rotateX(-14deg); }
+.lp[data-motion="off"] .lp-armil-halo { animation: none; opacity: 0; }
+/* --ap never advances with the engine off, so the corridor would sit at full
+   presence over every day row. Push it back and down to a quiet backdrop. */
+.lp[data-motion="off"] .lp-corr { position: absolute; top: 0; height: 62vh; margin-bottom: 0; }
+.lp[data-motion="off"] .lp-corr { opacity: .4; }
+/* --p and --near never advance with the engine off */
+.lp[data-motion="off"] .lp-corr-page { animation: none; transform: none; }
+.lp[data-motion="off"] .lp-seam-bead { transform: translateY(50px); }
+.lp[data-motion="off"] .lp-seam-fan b { opacity: 1; transform: none; }
+/* the package object, held at its resting three-quarter view. Selection still
+   works — it is a state, not an animation — it just arrives instantly. */
+.lp[data-motion="off"] .lp-pkg-idle { animation: none; transform: none; }
+.lp[data-motion="off"] .lp-pkg-face,
+.lp[data-motion="off"] .lp-pkg-art,
+.lp[data-motion="off"] .lp-pkg-reveal { transition: none; }
+.lp[data-motion="off"] .lp-corr-stage {
+  transform: translate3d(0, 0, -420px) rotateX(6deg) rotateY(-10deg);
+}
+/* anatomyIdx never advances with the engine off, so four of five planes would
+   sit at .42 forever — the stack should read as a finished stack, not as one
+   highlighted sheet and four ghosts */
+.lp[data-motion="off"] .lp-stack svg { transform: none; }
+.lp[data-motion="off"] .lp-stack-sheet { opacity: .85; transform: none; }
+.lp[data-motion="off"] .lp-stack-rule { opacity: .5; }
+.lp[data-motion="off"] .lp-plate { animation: none; }
+.lp[data-motion="off"] .lp-plate-node { animation: none; opacity: .3; }
+.lp[data-motion="off"] .lp-plate-edge,
+.lp[data-motion="off"] .lp-plate-rings circle { animation: none; stroke-dashoffset: 0; }
+
+/* every staged element lands at its finished state */
+.lp[data-motion="off"] [data-stage] {
+  opacity: 1 !important; transform: none !important; filter: none !important;
+}
+.lp[data-motion="off"] .lp-loop-num { opacity: .7 !important; }
+.lp[data-motion="off"] .lp-day-rule { transform: scaleX(1) !important; }
+
+/* hero: unpinned, flat, showing the finished annotated sheet */
+/* Same reason as the mobile rules: both negative margins exist only to make a
+   sticky 100dvh stage line up with the viewport. With the stage static they
+   slide the eyebrow under the nav and pull the band up over the panel. */
+.lp[data-motion="off"] .lp-hero  { height: auto; margin-top: 0; }
+.lp[data-motion="off"] .lp-band  { margin-top: 0; }
+.lp[data-motion="off"] .lp-stage { position: static; height: auto; padding-block: 3.5rem; perspective: none; }
+.lp[data-motion="off"] .lp-stage-inner { transform: none; opacity: 1; }
+.lp[data-motion="off"] .lp-l     { transform: none; }
+.lp[data-motion="off"] .lp-lamp  { display: none; }
+.lp[data-motion="off"] .lp-rules { animation: none; opacity: .35; }
+/* glass reads as glass because things move behind it; with the lamp gone and
+   the layers frozen, it is just a smear over static text — so it goes solid,
+   same call as the nav */
+.lp[data-motion="off"] .lp-src,
+.lp[data-motion="off"] .lp-panel {
+  background: var(--card); backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.lp[data-motion="off"] .lp-src   { animation: none; }
+/* the scene, assembled and held. The stage drops its perspective in still mode,
+   so the two tilts have nothing to be measured against and would read as skew;
+   the overlap and the shadows carry the depth on their own. Opacity is left to
+   .lp-src's own `var(--src-o)` declaration, so the cut source still dims. */
+.lp[data-motion="off"] .lp-photo-frame,
+.lp[data-motion="off"] .lp-ui-tilt { animation: none; transform: none; }
+/* held at the start of the journey, not the end: the broad view of the desk is
+   the readable one, and the close crop only makes sense as somewhere you
+   arrived. The depth-of-field blur goes with the movement that motivated it. */
+.lp[data-motion="off"] .lp-photo {
+  transform: scale(1.1);
+  filter: saturate(.8) contrast(1) sepia(.14);
+}
+.lp[data-motion="off"] .lp-photo-light { opacity: .8; }
+.lp[data-motion="off"] .lp-word > span { transform: none; }
+.lp[data-motion="off"] .lp-fade-up { opacity: 1; }
+.lp[data-motion="off"] .lp-hint  { display: none; }
+
+/* the demo panel: step is pinned to the last beat, so ③ is showing and
+   finished. Kill the residual blur/offset on the two scenes behind it and
+   stop the file-read sweep, which is the one thing here that loops forever. */
+.lp[data-motion="off"] .lp-scene { transform: none; filter: none; }
+.lp[data-motion="off"] .lp-scan::after { animation: none; opacity: 0; }
+.lp[data-motion="off"] .lp-caret { animation: none; }
+/* the lesson is written by clip-path; with motion off it is simply written */
+.lp[data-motion="off"] .lp-lesson-t,
+.lp[data-motion="off"] .lp-lesson-p { clip-path: none; transform: none; }
+.lp[data-motion="off"] .lp-act { transform: none; }
+/* frosted glass depends on the page moving behind it — with motion off it is
+   just a smear over static text, so the bar goes solid */
+.lp[data-motion="off"] .lp-nav {
+  background: var(--paper); backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.lp[data-motion="off"] .lp-marquee { transform: none !important; flex-wrap: wrap; width: auto; }
+.lp[data-motion="off"] .lp-marquee > [aria-hidden="true"] { display: none; }
+.lp[data-motion="off"] .lp-marquee-row { flex-wrap: wrap; gap: 1rem 2.5rem; }
+
+.lp[data-motion="off"] .lp-mark { background-size: 100% 100%; }
+.lp[data-motion="off"] .lp-display .lp-mark,
+.lp[data-motion="off"] .lp-h2 .lp-mark { background-size: 100% 68%; }
+
+.lp[data-motion="off"] .lp-anatomy-rail { position: static; }
+.lp[data-motion="off"] .lp-step,
+.lp[data-motion="off"] .lp-blockrow { opacity: 1; }
+/* With the motion engine not running, anatomyIdx never advances past its
+   initial block — so without this, four of five icons would sit frozen
+   half-drawn forever. Still mode means finished, not "paused mid-gesture". */
+.lp[data-motion="off"] .lp-blockrow    { transform: none; }
+.lp[data-motion="off"] .lp-an-icon-wrap { opacity: 1; animation: none; }
+.lp[data-motion="off"] .lp-an-bar      { transform: scaleY(1); }
+.lp[data-motion="off"] .lp-an-draw     { stroke-dashoffset: 0; opacity: 1; }
+.lp[data-motion="off"] .lp-an-beam     { transform: rotate(-7deg); }
+.lp[data-motion="off"] .lp-an-mark     { background-size: 100% 100%; }
+.lp[data-motion="off"] .lp-step-dot    { background: currentColor; transform: scale(1.7); }
+
+/* § 5: the tick is pinned to each demo's `still` phase in JSX, so all four are
+   showing a finished result rather than a half-played beat. What is left is
+   the handful of purely-CSS loops inside them — the global rule above cuts
+   their duration to nothing, which for a keyframe that ENDS somewhere other
+   than its resting state (the wave, the skeleton) leaves it stopped at a
+   random height. Land them explicitly instead. */
+.lp[data-motion="off"] .lp-wave i  { animation: none; height: 55%; }
+.lp[data-motion="off"] .lp-skel i  { animation: none; }
+.lp[data-motion="off"] .lp-spin    { animation: none; }
+.lp[data-motion="off"] .lp-notetxt { clip-path: none; }
+.lp[data-motion="off"] .lp-sig-slash { transition: none; }
+
+/* ── the motion control itself ───────────────────────────────────────────── */
+.lp-motion-toggle {
+  font-family: var(--sans); font-size: .75rem; color: var(--ink-soft);
+  display: inline-flex; align-items: center; gap: .5rem;
+  cursor: pointer; background: none; border: 0; padding: .25rem 0;
+  transition: color .16s ease;
+}
+.lp-motion-toggle:hover { color: var(--ink); }
+.lp-motion-track {
+  width: 26px; height: 14px; border-radius: 7px; flex: none;
+  border: 1px solid var(--rule); background: var(--sunk); position: relative;
+}
+.lp-motion-track::after {
+  content: ""; position: absolute; top: 1px; left: 1px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--ink-soft);
+  transition: transform .2s cubic-bezier(.2,.8,.3,1), background .2s ease;
+}
+.lp[data-motion="on"] .lp-motion-track { border-color: var(--moss); }
+.lp[data-motion="on"] .lp-motion-track::after { transform: translateX(12px); background: var(--moss); }
+
+/* ══ PHONES — tighter section rhythm ══════════════════════════════════════
+   The rhythm was set on a 1440px canvas, where ~100px of air between blocks
+   reads as composure. On a 390px screen the same numbers are most of a
+   viewport: the run from the end of the anatomy list to "The complete
+   package" was 176px of nothing (a section's bottom padding plus the next
+   one's top), so you scroll through a blank screen to get from one idea to
+   the next. Same proportions, re-set for the smaller canvas.
+
+   Scroll staging is deliberately NOT touched here — [data-stage] runs on
+   phones exactly as it does on desktop. */
+@media (max-width: 767px) {
+  /* `.lp .lp-sec` outranks the py-* utilities without
+     needing !important on any of them. */
+  .lp .lp-sec { padding-top: 3.25rem; padding-bottom: 3.25rem; }
+  .lp .lp-anatomy > div { padding-top: 3rem; padding-bottom: 2.5rem; }
+
+  /* the header-to-content gaps, which were the largest single drops */
+  .lp .lp-feat-head { margin-bottom: 2.75rem; gap: 2rem; }
+  .lp #how .lp-lead { margin-bottom: 3rem; }
+
+  /* Between the repeated blocks inside a section. These are `+ sibling`
+     margin-TOP rules upstream, not margin-bottom — overriding the wrong
+     property here would have ADDED a gap on top of the existing one instead
+     of shrinking it. The clamps' vh terms are also the problem on a phone:
+     9vh of a tall, narrow viewport is larger than the 3.5rem floor, so the
+     gaps grew exactly where there was least room for them. */
+  .lp .lp-day + .lp-day   { margin-top: 3rem; }
+  .lp .lp-feat + .lp-feat { margin-top: 3.25rem; }
+}
+

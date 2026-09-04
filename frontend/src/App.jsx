@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import { useNavigate, useLocation, Navigate, NavLink } from 'react-router-dom'
 import ChatWorkspace from './components/chat/ChatWorkspace.jsx'
 import ProjectsPage from './components/feed/ProjectsPage.jsx'
@@ -20,6 +20,7 @@ import { getToken } from './api/auth.js'
 import { checkIsAdmin } from './api/admin.js'
 import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 import { parseOnboardingStep, onboardingStepPath } from './utils/onboardingRoute.js'
+import { UI_MODES, UI_MODE_LABELS, getUiTheme, setUiTheme, subscribeUiTheme } from './lib/uiTheme.js'
 
 // ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
 // Shared between the AppLayout badge and DataLossSection's mark-as-seen, so
@@ -271,6 +272,121 @@ function DataLossSection({ inputCls, btnPrimary }) {
   )
 }
 
+// ── Appearance ────────────────────────────────────────────────────────────────
+
+function SunIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <circle cx="8" cy="8" r="3.1" />
+      <path d="M8 1.2v1.6M8 13.2v1.6M14.8 8h-1.6M2.8 8H1.2M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1M12.8 12.8l-1.1-1.1M4.3 4.3 3.2 3.2" />
+    </svg>
+  )
+}
+
+function MoonIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+      <path d="M13.4 9.6A5.8 5.8 0 0 1 6.4 2.6a5.9 5.9 0 1 0 7 7Z" />
+    </svg>
+  )
+}
+
+function DropIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+      <path d="M8 1.8c2.4 2.9 4.2 5.2 4.2 7.1a4.2 4.2 0 1 1-8.4 0c0-1.9 1.8-4.2 4.2-7.1Z" />
+    </svg>
+  )
+}
+
+const UI_MODE_ICON = { light: SunIcon, dark: MoonIcon, legacy: DropIcon }
+
+/**
+ * Segmented control, centred rather than stretched. Light and Dark are icon
+ * only — a sun and a moon need no caption — while Legacy keeps its label,
+ * because "the old blue one" is a name, not a picture.
+ *
+ * The selection is a single pill that slides between slots rather than
+ * backgrounds switching on and off; the movement is what tells you the states
+ * belong to one control. Segments are unequal widths, so the pill is measured
+ * from the live buttons rather than assuming even thirds.
+ */
+function AppearanceControl() {
+  const mode  = useSyncExternalStore(subscribeUiTheme, getUiTheme, () => 'light')
+  const modes = UI_MODES
+
+  const trackRef = useRef(null)
+  const [pill, setPill] = useState(null)
+
+  useLayoutEffect(() => {
+    const track = trackRef.current
+    if (!track) return
+    const measure = () => {
+      const active = track.querySelector('[aria-checked="true"]')
+      if (!active) return
+      const t = track.getBoundingClientRect()
+      const a = active.getBoundingClientRect()
+      setPill({ left: a.left - t.left, width: a.width })
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(track)
+    return () => ro.disconnect()
+  }, [mode, modes.length])
+
+  return (
+    <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Appearance</p>
+
+      <div className="flex justify-center">
+        <div
+          ref={trackRef}
+          role="radiogroup"
+          aria-label="Colour mode"
+          className="relative inline-flex gap-1 p-1 rounded-lg bg-slate-950/60 border border-slate-800"
+        >
+          {pill && (
+            <span
+              aria-hidden="true"
+              className="absolute inset-y-1 rounded-md bg-blue-600 shadow-sm"
+              style={{
+                left: 0,
+                width: pill.width,
+                transform: `translateX(${pill.left}px)`,
+                transition: 'transform 420ms cubic-bezier(.32,.72,0,1), width 420ms cubic-bezier(.32,.72,0,1)',
+              }}
+            />
+          )}
+          {modes.map(id => {
+            const Icon = UI_MODE_ICON[id]
+            const active = id === mode
+            const labelled = id === 'legacy'
+            return (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={active}
+                aria-label={labelled ? undefined : UI_MODE_LABELS[id]}
+                title={UI_MODE_LABELS[id]}
+                onClick={e => {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setUiTheme(id, { x: r.left + r.width / 2, y: r.top + r.height / 2 })
+                }}
+                className={`relative z-10 flex items-center justify-center gap-1.5 h-8 rounded-md text-xs font-medium ${
+                  labelled ? 'px-3' : 'w-10'
+                } ${active ? 'text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                {labelled && UI_MODE_LABELS[id]}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── SettingsPanel ─────────────────────────────────────────────────────────────
 
 function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }) {
@@ -447,7 +563,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
 
   return (
-    <div className={`${positionClass} w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
+    <div className={`${positionClass} u-pop w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         {section !== "main" && (
           <button onClick={back} className="text-slate-500 hover:text-slate-300 transition-colors mr-1">
@@ -461,6 +577,15 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
 
       {section === "main" && (
         <>
+          {/* Straight under the title, above the account row — it is the one
+              item here that leaves the app rather than changing it. */}
+          <div className="px-4 py-2 border-b border-slate-800/60">
+            <button onClick={() => navigate('/about')}
+              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors">
+              About Curivio
+            </button>
+          </div>
+
           <div className="px-4 py-3 border-b border-slate-800/60">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
@@ -473,7 +598,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
             </div>
           </div>
 
-          <div className="px-4 py-2">
+          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Account</p>
             {[
               { label: "Edit Profile",    id: "profile"  },
@@ -487,10 +612,6 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
                 </svg>
               </button>
             ))}
-            <button onClick={() => navigate('/about')}
-              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors mt-0.5">
-              About Curivio
-            </button>
             {/* Sign out lands on the landing page, not the login form. A full
                 reload (rather than navigate) is deliberate: clearing the session
                 in place would let AuthGuard bounce to /login?next=… first, and it
@@ -499,27 +620,16 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
               className="w-full text-left px-2 py-2 text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 rounded-lg transition-colors mt-0.5">
               Sign Out
             </button>
+            {/* Directly under Sign Out, but kept red and spaced off the list:
+                the two sit together because both end a session, and they stay
+                visually apart because only one of them is reversible. */}
+            <button onClick={() => setSection("danger")}
+              className="w-full text-left px-2 py-2 text-sm text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors mt-1.5">
+              Delete Account…
+            </button>
           </div>
 
-          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Feed</p>
-            <div className="flex gap-1.5 bg-slate-950/60 border border-slate-800 rounded-lg p-1">
-              {[
-                { id: "legacy", label: "Legacy feed" },
-                { id: "v2",     label: "Feed v2"     },
-              ].map(({ id, label }) => (
-                <button key={id} onClick={() => handleSetFeedVersion(id)} disabled={savingFeed}
-                  className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${
-                    feedVersion === id
-                      ? "bg-blue-600 text-white"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                  }`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {feedErr && <p className="text-xs text-red-400 mt-1.5">{feedErr}</p>}
-          </div>
+          <AppearanceControl />
 
           <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Support</p>
@@ -527,13 +637,6 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
               className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors flex items-center gap-1.5">
               Report Missing Data…
               {dataLossAlert && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
-            </button>
-          </div>
-
-          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
-            <button onClick={() => setSection("danger")}
-              className="w-full text-left px-2 py-2 text-sm text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-              Delete Account…
             </button>
           </div>
         </>
@@ -550,7 +653,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           <div>
             <label className="block text-xs text-slate-500 mb-1">Email</label>
             <input type="email" value={user?.email || ""} disabled
-              className="w-full bg-[#0a0c12] border border-white/5 rounded-lg px-4 py-2.5 text-slate-600 text-sm cursor-not-allowed select-none" />
+              className="w-full bg-slate-950 border border-white/5 rounded-lg px-4 py-2.5 text-slate-600 text-sm cursor-not-allowed select-none" />
           </div>
           {profileErr && <p className="text-xs text-red-400">{profileErr}</p>}
           {profileMsg && <p className="text-xs text-green-400">{profileMsg}</p>}
@@ -728,7 +831,7 @@ function QueuePanel({ queue, onItemClick, positionClass = "absolute right-0 top-
   const groups = groupByDate(filtered)
 
   return (
-    <div className={`${positionClass} w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
+    <div className={`${positionClass} u-pop w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
       <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ClockIcon className="w-3.5 h-3.5 text-amber-400" />
@@ -806,21 +909,14 @@ function QueuePanel({ queue, onItemClick, positionClass = "absolute right-0 top-
 
 function LogoMark() {
   return (
-    <div className="relative w-7 h-7 flex-shrink-0">
-      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
-      <div className="absolute inset-0 rounded-xl flex items-center justify-center">
-        <svg style={{ width: '16px', height: '16px' }} viewBox="0 0 20 20" fill="none">
-          <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
-          <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
-          <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
-          <path d="M10 4 L10 2.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-          <path d="M13.5 5.5 L14.6 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-          <path d="M6.5 5.5 L5.4 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-          <path d="M14.5 8 L16 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-          <path d="M5.5 8 L4 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-        </svg>
-      </div>
-    </div>
+    <img
+      src="/logo.webp"
+      alt=""
+      width="28"
+      height="28"
+      draggable="false"
+      className="u-logo w-7 h-7 flex-shrink-0 rounded-[9px] select-none"
+    />
   )
 }
 
@@ -834,7 +930,7 @@ function NavItem({ item, collapsed, onClick, badge }) {
         className={({ isActive }) => [
           'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
           isActive
-            ? 'bg-white/[0.07] text-white'
+            ? 'bg-white/[0.07] text-slate-100'
             : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
           collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
         ].join(' ')}
@@ -1100,7 +1196,7 @@ function Sidebar({
               title={collapsed ? 'Settings' : undefined}
               className={[
                 'flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
-                showSettings ? 'bg-white/[0.07] text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
+                showSettings ? 'bg-white/[0.07] text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
                 collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 w-full px-3 py-2' : 'w-full px-3 py-2',
               ].join(' ')}
             >
@@ -1370,6 +1466,8 @@ export default function AppLayout() {
   const overflowRef = useRef(null)
   const [showDesktopOverflow, setShowDesktopOverflow] = useState(false)
   const desktopOverflowRef = useRef(null)
+  const [openMobileSubmenu, setOpenMobileSubmenu] = useState(null) // Index of open submenu on mobile
+  const [openDesktopSubmenu, setOpenDesktopSubmenu] = useState(null) // Index of open submenu on desktop
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
@@ -1445,7 +1543,14 @@ export default function AppLayout() {
     return () => document.removeEventListener("mousedown", onDown)
   }, [showOverflow])
 
-  useEffect(() => { setShowOverflow(false) }, [view])
+  useEffect(() => {
+    if (showOverflow) setOpenMobileSubmenu(null)
+  }, [showOverflow])
+
+  useEffect(() => { 
+    setShowOverflow(false)
+    setOpenMobileSubmenu(null)
+  }, [view])
 
   useEffect(() => {
     if (!showDesktopOverflow) return
@@ -1455,6 +1560,10 @@ export default function AppLayout() {
     }
     document.addEventListener("mousedown", onDown)
     return () => document.removeEventListener("mousedown", onDown)
+  }, [showDesktopOverflow])
+
+  useEffect(() => {
+    if (showDesktopOverflow) setOpenDesktopSubmenu(null)
   }, [showDesktopOverflow])
 
   useEffect(() => { setShowDesktopOverflow(false) }, [view])
@@ -1606,7 +1715,7 @@ export default function AppLayout() {
             </svg>
           </button>
           {showOverflow && (
-            <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
+            <div className="u-pop absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
               {(actionsByView[view] ?? []).map((action, i) => (
                 action.share ? (
                   <ShareButton
@@ -1615,6 +1724,41 @@ export default function AppLayout() {
                     label={action.label}
                     menuItem
                   />
+                ) : action.submenu ? (
+                  <div key={i}>
+                    <button
+                      onClick={() => setOpenMobileSubmenu(openMobileSubmenu === i ? null : i)}
+                      className={[
+                        'w-full text-left px-3.5 py-2 text-[13px] transition-colors flex items-center justify-between',
+                        action.variant === 'danger'
+                          ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                          : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
+                      ].join(' ')}
+                    >
+                      <span>{action.label}</span>
+                      <svg className={`w-4 h-4 transition-transform ${openMobileSubmenu === i ? 'rotate-180' : ''}`} viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M4.5 6a.75.75 0 0 1 .75 0l3.75 3 3.75-3a.75.75 0 0 1 1.06 1.06l-4.25 3.5a.75.75 0 0 1-1.06 0l-4.25-3.5A.75.75 0 0 1 4.5 6z" />
+                      </svg>
+                    </button>
+                    {openMobileSubmenu === i && (
+                      <div className="bg-slate-800/50 border-t border-slate-700/40">
+                        {action.submenu.map((subaction, j) => (
+                          <button
+                            key={j}
+                            onClick={() => { subaction.onClick(); setShowOverflow(false); setOpenMobileSubmenu(null) }}
+                            className={[
+                              'w-full text-left px-6 py-2 text-[13px] transition-colors',
+                              subaction.variant === 'danger'
+                                ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                                : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.08]',
+                            ].join(' ')}
+                          >
+                            {subaction.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <button
                     key={i}
@@ -1657,7 +1801,7 @@ export default function AppLayout() {
             </svg>
           </button>
           {showDesktopOverflow && (
-            <div className="absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
+            <div className="u-pop absolute top-full right-0 mt-1.5 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-visible z-50">
               {(actionsByView['feed'] ?? []).map((action, i) => (
                 action.share ? (
                   <ShareButton
@@ -1666,12 +1810,53 @@ export default function AppLayout() {
                     label={action.label}
                     menuItem
                   />
+                ) : action.submenu ? (
+                  <div
+                    key={i}
+                    onMouseEnter={() => setOpenDesktopSubmenu(i)}
+                    onMouseLeave={() => setOpenDesktopSubmenu(null)}
+                    className="relative group"
+                  >
+                    <button
+                      onClick={() => setOpenDesktopSubmenu(openDesktopSubmenu === i ? null : i)}
+                      className={[
+                        'w-52 text-left px-3.5 py-2 text-[13px] transition-colors flex items-center justify-between whitespace-nowrap',
+                        action.variant === 'danger'
+                          ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                          : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',
+                        openDesktopSubmenu === i ? 'bg-white/[0.05]' : '',
+                      ].join(' ')}
+                    >
+                      <span>{action.label}</span>
+                      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.75 2.75a.75.75 0 0 0-1.06 1.06l3.75 3.75-3.75 3.75a.75.75 0 1 0 1.06 1.06l4.25-4.25a.75.75 0 0 0 0-1.06L5.75 2.75Z" />
+                      </svg>
+                    </button>
+                    {openDesktopSubmenu === i && (
+                      <div className="absolute right-full top-0 mr-2 w-auto bg-slate-900 border border-slate-700/60 rounded-lg shadow-2xl shadow-black/60 py-1 z-50 min-w-max">
+                        {action.submenu.map((subaction, j) => (
+                          <button
+                            key={j}
+                            onClick={() => { subaction.onClick(); setShowDesktopOverflow(false); setOpenDesktopSubmenu(null) }}
+                            className={[
+                              'block w-full text-left px-3.5 py-2 text-[13px] transition-colors whitespace-nowrap',
+                              subaction.variant === 'danger'
+                                ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
+                                : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.08]',
+                            ].join(' ')}
+                          >
+                            {subaction.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <button
                     key={i}
                     onClick={() => { action.onClick(); setShowDesktopOverflow(false) }}
                     className={[
-                      'w-full text-left px-3.5 py-2 text-[13px] transition-colors',
+                      'w-52 text-left px-3.5 py-2 text-[13px] transition-colors whitespace-nowrap',
                       action.variant === 'danger'
                         ? 'text-red-400 hover:text-red-300 hover:bg-red-500/10'
                         : 'text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]',

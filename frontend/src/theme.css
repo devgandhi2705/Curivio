@@ -1,0 +1,719 @@
+/* ============================================================================
+   CURIVIO APP — COLOUR GRADING SYSTEM
+
+   Three modes, selected by `data-ui` on <html>:
+
+     light    warm paper — near-white cards on a soft manila ground
+     dark     warm charcoal — the same palette after dusk
+     legacy   the blue/charcoal grading the app shipped with, unchanged
+
+   ── HOW IT WORKS ──────────────────────────────────────────────────────────
+   Not a single component was restyled. tailwind.config.js routes every colour
+   utility through `rgb(var(--u-<family>-<shade>, <stock fallback>) / <alpha>)`,
+   so redefining the variables below repaints the whole product.
+
+   ── THE ONE THING THAT ISN'T A STRAIGHT SWAP ──────────────────────────────
+   This app was written dark-first, and the slate ramp encodes that: 800–950
+   are always SURFACES and 50–400 are always TEXT (verified across all 1,900
+   slate utilities in the codebase). So `light` does not "lighten" the ramp —
+   it INVERTS it. slate-950 becomes the page ground, slate-100 becomes the
+   darkest ink, and every `bg-slate-900 text-slate-300` card in the app turns
+   into ink-on-paper without touching the markup.
+
+   Accent families follow the same rule for the same reason: 100–400 are accent
+   TEXT (bright on dark), 500–600 are accent FILLS, 700–950 are accent TINTS
+   (dark washes). Light mode darkens the first group, keeps the second
+   saturated, and lightens the third.
+
+   ── WHY THESE PARTICULAR VALUES ───────────────────────────────────────────
+   This is a reading app, so two things were measured rather than eyeballed:
+
+   TEXT CONTRAST. Every text shade clears WCAG AA against both the card and
+   the page it can land on; body and heading shades clear AAA. Ratios are in
+   the comments. The first pass of this palette failed here — it borrowed the
+   landing page's ink straight over, which is tuned for 20px editorial serif on
+   a wide column, not 11px meta text in a dense table.
+
+   SURFACE SEPARATION. page → card → well are spaced ~1.13 (dark) and ~1.19
+   (light) in contrast ratio, in line with what GitHub and Linear use. The
+   first pass spaced them ~1.04 and everything collapsed into one flat wash.
+
+   CHROMA. The landing's paper carries a lot of yellow, which reads as warmth
+   across a hero and as staining across a full screen of UI. Both grounds here
+   are pulled most of the way to neutral and keep the warmth as a tint, so
+   content colour — not the substrate — is what the eye lands on.
+
+   Two utility/shade pairs break the pattern and get explicit rules at the
+   bottom of this file rather than a variable: `.text-slate-700` (used as the
+   faintest possible text, while `border-slate-700` needs to be a pale rule)
+   and `.text-white` (which means "on-accent", not "white").
+   ========================================================================= */
+
+
+/* ══ LIGHT — warm paper ══════════════════════════════════════════════════
+   `html:not([data-ui])` and not `:root` — :root matches the same element as
+   [data-ui="legacy"], so declaring the light palette there would leak every
+   accent legacy deliberately leaves undefined into legacy. index.html sets the
+   attribute before first paint; this is only the pre-script fallback.        */
+
+html:not([data-ui]),
+[data-ui="light"] {
+  /* ── neutral spine (inverted: 950 = page ground, 100 = ink) ──
+     Contrast quoted against the card, which is where most text sits. */
+  --u-slate-950: 228 224 210;   /* #E4E0D2  page ground   */
+  --u-slate-900: 246 244 235;   /* #F6F4EB  card — off-white, 1.20 over page */
+  --u-slate-800: 218 213 195;   /* #DAD5C3  well / card rule, 1.33 under card */
+  --u-slate-700: 201 195 175;   /* #C9C3AF  rule / hover fill */
+  --u-slate-600:  94  86  67;   /* #5E5643  faint meta      6.6:1 / 5.5:1 */
+  --u-slate-500:  84  76  59;   /* #544C3B  secondary       7.7:1 / 6.4:1 */
+  --u-slate-400:  69  62  46;   /* #453E2E  dim body        9.6:1 */
+  --u-slate-300:  53  47  34;   /* #352F22  body           12.1:1 */
+  --u-slate-200:  40  34  23;   /* #282217  strong         14.3:1 */
+  --u-slate-100:  29  24  16;   /* #1D1810  heading ink    16.0:1 */
+  --u-slate-50:   20  16   7;   /* #141007 */
+
+  /* ── primary / interactive → moss, the landing's CTA colour ── */
+  --u-blue-100:  27  39  23;
+  --u-blue-200:  34  48  25;
+  --u-blue-300:  44  62  34;
+  --u-blue-400:  60  90  50;   /* #3C5A32  accent text / links  7.5:1 */
+  --u-blue-500:  70 101  58;   /* #46653A  fill (hover — lighter, as before) */
+  --u-blue-600:  53  80  44;   /* #35502C  fill (rest) — 8.6:1 with on-accent */
+  --u-blue-700:  44  67  36;
+  --u-blue-800: 203 216 196;   /* tints from here up */
+  --u-blue-900: 222 231 216;
+  --u-blue-950: 237 241 234;
+
+  /* ── secondary → dusty slate-blue. Cool enough to read as a second voice
+     (it carries the user's own chat bubble), desaturated enough not to sit
+     on the warm ground like a foreign object. ── */
+  --u-violet-200:  36  49  61;
+  --u-violet-300:  47  64  78;
+  --u-violet-400:  63  85 104;   /* #3F5568  7.4:1 */
+  --u-violet-500:  78 104 126;
+  --u-violet-600:  64  86 105;   /* fill */
+  --u-violet-700:  53  71  89;
+  --u-violet-800: 203 212 220;
+  --u-violet-900: 220 227 233;
+  --u-violet-950: 236 240 243;
+
+  --u-indigo-400:  63  85 104;
+  --u-indigo-500:  78 104 126;
+  --u-purple-400:  63  85 104;
+  --u-purple-600:  64  86 105;
+  --u-purple-700:  53  71  89;
+  --u-purple-900: 220 227 233;
+  --u-purple-950: 236 240 243;
+
+  /* ── success → deep teal-green, kept distinct from moss ── */
+  --u-emerald-300:  24  84  73;
+  --u-emerald-400:  26  92  80;
+  --u-emerald-500:  29  99  85;   /* #1D6355  6.8:1 */
+  --u-emerald-600:  24  85  73;
+  --u-emerald-700:  20  71  61;
+  --u-emerald-800: 198 222 216;
+  --u-emerald-900: 217 233 228;
+  --u-emerald-950: 235 243 241;
+
+  --u-green-400:  26  92  80;
+  --u-green-900: 217 233 228;
+  --u-green-950: 235 243 241;
+  --u-teal-300:   24  84  73;
+  --u-teal-400:   26  92  80;
+  --u-teal-800:  198 222 216;
+  --u-teal-900:  217 233 228;
+  --u-teal-950:  235 243 241;
+
+  /* ── warning / highlight → yellow-ink ── */
+  --u-amber-200:  68  51   0;
+  --u-amber-300:  84  64   0;
+  --u-amber-400:  94  72   0;   /* #5E4800  7.9:1 */
+  --u-amber-500: 115  89  10;   /* #73590A  6.0:1 */
+  --u-amber-600:  95  74   5;
+  --u-amber-800: 226 214 172;
+  --u-amber-900: 235 226 196;
+  --u-amber-950: 242 236 218;
+
+  --u-orange-300: 114  58   8;
+  --u-orange-400: 133  68   9;
+  --u-orange-500: 158  82  11;
+  --u-orange-700: 122  63   8;
+  --u-orange-900: 242 227 208;
+  --u-orange-950: 249 240 230;
+  --u-yellow-400:  94  72   0;
+  --u-yellow-500: 115  89  10;
+
+  /* ── danger ── */
+  --u-red-300: 123  31  20;
+  --u-red-400: 142  36  24;   /* #8E2418  8.3:1 */
+  --u-red-500: 169  50  37;
+  --u-red-600: 151  40  27;   /* #97281B — 7.9:1 with on-accent */
+  --u-red-700: 126  33  22;
+  --u-red-800: 240 210 205;
+  --u-red-900: 246 226 222;
+  --u-red-950: 251 239 236;
+
+  /* ── rose / pink ── */
+  --u-rose-200: 107  40  65;
+  --u-rose-300: 116  43  71;
+  --u-rose-400: 126  47  76;   /* #7E2F4C  8.4:1 */
+  --u-rose-500: 150  58  92;
+  --u-rose-600: 133  51  82;
+  --u-rose-700: 110  43  68;
+  --u-rose-800: 238 214 223;
+  --u-rose-900: 245 229 235;
+  --u-rose-950: 250 240 244;
+
+  --u-pink-400: 126  47  76;
+  --u-pink-600: 133  51  82;
+  --u-pink-700: 110  43  68;
+  --u-pink-900: 245 229 235;
+  --u-pink-950: 250 240 244;
+
+  /* ── info → muted teal-blue ── */
+  --u-sky-300:  30  76  91;
+  --u-sky-400:  36  90 108;
+  --u-sky-500:  43 107 128;
+  --u-sky-700:  34  82  95;
+  --u-sky-800: 201 220 226;
+  --u-sky-900: 218 231 235;
+  --u-sky-950: 235 242 244;
+
+  --u-cyan-300:  30  76  91;
+  --u-cyan-400:  36  90 108;
+  --u-cyan-500:  43 107 128;
+  --u-cyan-800: 201 220 226;
+  --u-cyan-900: 218 231 235;
+  --u-cyan-950: 235 242 244;
+
+  /* ── grey aliases: the app mixes gray/zinc into slate in a few places ── */
+  --u-gray-300:  53  47  34;
+  --u-gray-400:  69  62  46;
+  --u-gray-500:  84  76  59;
+  --u-gray-600:  94  86  67;
+  --u-zinc-400:  69  62  46;
+  --u-zinc-700: 201 195 175;
+  --u-zinc-800: 218 213 195;
+
+  /* ── overlays & on-accent ──
+     `bg-white/[0.04]` is a dark-UI idiom: a white film that lifts a surface.
+     On paper the same gesture has to be an ink film, or it is invisible. */
+  --u-white: 29 24 16;
+  --u-on-accent: 246 244 235;   /* text sitting on an accent fill */
+
+  /* ── things CSS reads directly (charts, SVG, prose) ── */
+  --u-accent:      #35502C;
+  --u-accent-soft: #46653A;
+  --u-secondary:   #405669;
+  --u-info:        #2B6B80;
+  --u-success:     #1D6355;
+  --u-warn:        #73590A;
+  --u-danger:      #A93225;
+  --u-track:       #DAD5C3;   /* chart gridlines, progress rails */
+  --u-axis:        #5E5643;
+  --u-surface:     #F6F4EB;
+  --u-mark-bg:     rgba(224, 203, 99, .55);
+  --u-mark-fg:     #1D1810;
+  --u-scrim:       rgba(29, 24, 16, .40);
+
+  --dk-bg-page:     #E4E0D2;
+  --dk-bg-card:     #F6F4EB;
+  --dk-bg-elevated: #DAD5C3;
+  --dk-bg-hover:    #C9C3AF;
+  --dk-border:        rgba(29, 24, 16, .12);
+  --dk-border-strong: rgba(29, 24, 16, .18);
+  --dk-heading:   #1D1810;
+  --dk-body:      #352F22;
+  --dk-secondary: #544C3B;
+  --dk-muted:     #6A6150;
+  --dk-accent:    #35502C;
+
+  --u-code-bg:     rgba(29, 24, 16, .06);
+  --u-code-fg:     #35502C;
+  --u-code-rule:   rgba(29, 24, 16, .12);
+  --u-pre-bg:      #EDEAE0;
+  --u-pre-fg:      #282217;
+  --u-card-shadow: 0 1px 2px rgba(29,24,16,.05), 0 1px 3px rgba(29,24,16,.07);
+  /* Overlays share the card token with the surface underneath them, so on
+     paper the shadow is the only thing separating a settings panel from the
+     sidebar it covers. It carries more weight here than it does on charcoal. */
+  --u-modal-shadow:
+    0 0 0 1px rgba(29,24,16,.07),
+    0 2px 6px rgba(29,24,16,.09),
+    0 30px 70px -18px rgba(29,24,16,.38);
+}
+
+
+/* ══ DARK — warm charcoal ════════════════════════════════════════════════ */
+
+[data-ui="dark"] {
+  --u-slate-950:  20  18  16;   /* #141210  page ground   */
+  --u-slate-900:  33  28  25;   /* #211C19  card, 1.11 over page */
+  --u-slate-800:  44  38  34;   /* #2C2622  elevated, 1.13 over card */
+  --u-slate-700:  58  51  46;   /* #3A332E  rule / hover fill */
+  --u-slate-600: 148 134 121;   /* #948679  faint meta      4.8:1 / 5.3:1 */
+  --u-slate-500: 163 150 137;   /* #A39689  secondary       5.9:1 / 6.5:1 */
+  --u-slate-400: 192 179 166;   /* #C0B3A6  dim body        8.2:1 */
+  --u-slate-300: 208 196 185;   /* #D0C4B9  body            9.9:1 */
+  --u-slate-200: 228 218 209;   /* #E4DAD1  strong         12.3:1 */
+  --u-slate-100: 243 236 228;   /* #F3ECE4  heading        14.4:1 */
+  --u-slate-50:  251 246 241;   /* #FBF6F1 */
+
+  --u-blue-100: 220 235 210;
+  --u-blue-200: 198 220 184;
+  --u-blue-300: 180 209 159;
+  --u-blue-400: 163 198 140;   /* #A3C68C  accent text / links  8.7:1 */
+  --u-blue-500:  85 112  73;   /* fill (hover — lighter) */
+  --u-blue-600:  70  96  58;   /* #46603A  fill — 6.3:1 with on-accent */
+  --u-blue-700:  58  80  48;
+  --u-blue-800:  47  65  39;
+  --u-blue-900:  37  51  32;
+  --u-blue-950:  29  40  25;
+
+  --u-violet-200: 210 222 232;
+  --u-violet-300: 185 203 217;
+  --u-violet-400: 159 182 201;   /* #9FB6C9  7.9:1 */
+  --u-violet-500: 110 140 163;
+  --u-violet-600:  86 113 138;   /* fill */
+  --u-violet-700:  70  92 113;
+  --u-violet-800:  56  73  90;
+  --u-violet-900:  43  57  69;
+  --u-violet-950:  34  44  54;
+
+  --u-indigo-400: 159 182 201;
+  --u-indigo-500: 110 140 163;
+  --u-purple-400: 159 182 201;
+  --u-purple-600:  86 113 138;
+  --u-purple-700:  70  92 113;
+  --u-purple-900:  43  57  69;
+  --u-purple-950:  34  44  54;
+
+  --u-emerald-300: 155 216 196;
+  --u-emerald-400: 127 203 180;   /* #7FCBB4  8.8:1 */
+  --u-emerald-500:  79 166 142;
+  --u-emerald-600:  61 136 117;
+  --u-emerald-700:  49 107  93;
+  --u-emerald-800:  39  84  73;
+  --u-emerald-900:  30  64  56;
+  --u-emerald-950:  23  48  43;
+
+  --u-green-400: 127 203 180;
+  --u-green-900:  30  64  56;
+  --u-green-950:  23  48  43;
+  --u-teal-300:  155 216 196;
+  --u-teal-400:  127 203 180;
+  --u-teal-800:   39  84  73;
+  --u-teal-900:   30  64  56;
+  --u-teal-950:   23  48  43;
+
+  --u-amber-200: 242 230 164;
+  --u-amber-300: 233 216 130;
+  --u-amber-400: 224 203  99;   /* #E0CB63  10.2:1 */
+  --u-amber-500: 192 167  63;
+  --u-amber-600: 158 136  48;
+  --u-amber-800:  85  73  29;
+  --u-amber-900:  62  54  22;
+  --u-amber-950:  45  39  17;
+
+  --u-orange-300: 240 197 155;
+  --u-orange-400: 227 172 117;
+  --u-orange-500: 201 140  76;
+  --u-orange-700: 132  87  43;
+  --u-orange-900:  70  47  24;
+  --u-orange-950:  51  35  18;
+  --u-yellow-400: 224 203  99;
+  --u-yellow-500: 192 167  63;
+
+  --u-red-300: 243 180 166;
+  --u-red-400: 234 147 130;   /* #EA9382  7.1:1 */
+  --u-red-500: 213 112  94;   /* #D5705E  4.9:1 as text on card */
+  --u-red-600: 176  74  56;   /* 4.6:1 with on-accent */
+  --u-red-700: 143  58  43;
+  --u-red-800: 107  44  33;
+  --u-red-900:  78  33  26;
+  --u-red-950:  55  32  24;
+
+  --u-rose-200: 240 207 220;
+  --u-rose-300: 232 180 199;
+  --u-rose-400: 224 152 178;   /* #E098B2  7.4:1 */
+  --u-rose-500: 195 110 144;
+  --u-rose-600: 165  86 119;
+  --u-rose-700: 135  68  97;
+  --u-rose-800: 102  51  74;
+  --u-rose-900:  74  38  55;
+  --u-rose-950:  53  29  40;
+
+  --u-pink-400: 224 152 178;
+  --u-pink-600: 165  86 119;
+  --u-pink-700: 135  68  97;
+  --u-pink-900:  74  38  55;
+  --u-pink-950:  53  29  40;
+
+  --u-sky-300: 173 210 222;
+  --u-sky-400: 146 192 208;
+  --u-sky-500:  96 152 172;
+  --u-sky-700:  62 107 123;
+  --u-sky-800:  48  84  97;
+  --u-sky-900:  38  66  76;
+  --u-sky-950:  29  51  59;
+
+  --u-cyan-300: 173 210 222;
+  --u-cyan-400: 146 192 208;
+  --u-cyan-500:  96 152 172;
+  --u-cyan-800:  48  84  97;
+  --u-cyan-900:  38  66  76;
+  --u-cyan-950:  29  51  59;
+
+  --u-gray-300: 208 196 185;
+  --u-gray-400: 192 179 166;
+  --u-gray-500: 163 150 137;
+  --u-gray-600: 148 134 121;
+  --u-zinc-400: 192 179 166;
+  --u-zinc-700:  58  51  46;
+  --u-zinc-800:  44  38  34;
+
+  --u-white: 246 239 232;
+  --u-on-accent: 246 240 233;
+
+  --u-accent:      #A3C68C;
+  --u-accent-soft: #C6DCB8;
+  --u-secondary:   #9FB6C9;
+  --u-info:        #92C0D0;
+  --u-success:     #7FCBB4;
+  --u-warn:        #E0CB63;
+  --u-danger:      #EA9382;
+  --u-track:       #3A332E;
+  --u-axis:        #948679;
+  --u-surface:     #211C19;
+  --u-mark-bg:     rgba(224, 203, 99, .22);
+  --u-mark-fg:     #F3ECE4;
+  --u-scrim:       rgba(8, 7, 5, .68);
+
+  --dk-bg-page:     #141210;
+  --dk-bg-card:     #211C19;
+  --dk-bg-elevated: #2C2622;
+  --dk-bg-hover:    #3A332E;
+  --dk-border:        rgba(246, 239, 232, .09);
+  --dk-border-strong: rgba(246, 239, 232, .15);
+  --dk-heading:   #F3ECE4;
+  --dk-body:      #D0C4B9;
+  --dk-secondary: #A39689;
+  --dk-muted:     #8F8276;
+  --dk-accent:    #A3C68C;
+
+  --u-code-bg:     rgba(246, 239, 232, .07);
+  --u-code-fg:     #B4D19F;
+  --u-code-rule:   rgba(246, 239, 232, .10);
+  --u-pre-bg:      #171411;
+  --u-pre-fg:      #D0C4B9;
+  --u-card-shadow: 0 1px 3px rgba(0,0,0,.40), 0 0 0 1px rgba(246,239,232,.045);
+  --u-modal-shadow: 0 24px 64px -20px rgba(0,0,0,.78), 0 4px 14px rgba(0,0,0,.50);
+}
+
+
+/* ══ LEGACY — what the app shipped with ══════════════════════════════════
+   Deliberately tiny. Every accent family is left undefined so it falls back
+   to stock Tailwind, which is exactly what the app rendered before this
+   system existed. Only the charcoal surface grading (previously hard-coded
+   as `:not(.theme-light) .bg-slate-900 {…}` overrides in index.css) and the
+   two softened text shades need stating.                                   */
+
+[data-ui="legacy"] {
+  --u-slate-950:  15  17  23;   /* #0f1117  deep charcoal, not void black */
+  --u-slate-900:  22  27  39;   /* #161b27  card */
+  --u-slate-800:  29  36  56;   /* #1d2438  elevated */
+  --u-slate-700:  35  43  66;   /* #232b42  hover */
+  --u-slate-200: 188 203 220;   /* #bccbdc  softened, no glare */
+  --u-slate-100: 216 226 240;   /* #d8e2f0 */
+  /* 300–600 and 50 intentionally unset — stock Tailwind, as before. */
+
+  --u-white: 255 255 255;
+  --u-on-accent: 255 255 255;
+
+  --u-accent:      #3b82f6;
+  --u-accent-soft: #93c5fd;
+  --u-secondary:   #a78bfa;
+  --u-info:        #38bdf8;
+  --u-success:     #10b981;
+  --u-warn:        #f59e0b;
+  --u-danger:      #ef4444;
+  --u-track:       #1e293b;
+  --u-axis:        #475569;
+  --u-surface:     #0f172a;
+  --u-mark-bg:     rgba(252, 211, 77, .80);
+  --u-mark-fg:     #020617;
+  --u-scrim:       rgba(0, 0, 0, .55);
+
+  --dk-bg-page:     #0f1117;
+  --dk-bg-card:     #161b27;
+  --dk-bg-elevated: #1d2438;
+  --dk-bg-hover:    #232b42;
+  --dk-border:        rgba(255,255,255,.07);
+  --dk-border-strong: rgba(255,255,255,.11);
+  --dk-heading:   #d8e2f0;
+  --dk-body:      #a8b8cc;
+  --dk-secondary: #677d93;
+  --dk-muted:     #3d5066;
+  --dk-accent:    #93c5fd;
+
+  --u-code-bg:     rgba(148,163,184,.12);
+  --u-code-fg:     #93c5fd;
+  --u-code-rule:   rgba(148,163,184,.15);
+  --u-pre-bg:      rgba(8,10,16,.70);
+  --u-pre-fg:      #c9d8e8;
+  --u-card-shadow: 0 1px 3px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.04);
+  --u-modal-shadow: 0 20px 60px rgba(0,0,0,.70), 0 4px 16px rgba(0,0,0,.50);
+}
+
+
+/* ══ CARD EDGES ON DARK GROUNDS ══════════════════════════════════════════
+   `border-slate-800` (132 uses) draws card edges, while `bg-slate-800` (219)
+   draws elevated surfaces. On a dark ground those want opposite things: the
+   fill must sit just above the card, the edge must sit just above BOTH or the
+   card has no visible outline at all. One shade variable cannot be both, so
+   the edge is stated separately as a light film — the same trick the app has
+   always used in legacy. Light mode needs no equivalent: #DFDBCC already
+   reads as a rule against a near-white card.                                */
+
+[data-ui="legacy"] .border-slate-800,
+[data-ui="legacy"] .divide-slate-800 > * + *   { border-color: rgba(255,255,255,.07); }
+[data-ui="legacy"] .border-slate-800\/80       { border-color: rgba(255,255,255,.08); }
+[data-ui="legacy"] .border-slate-800\/60       { border-color: rgba(255,255,255,.06); }
+[data-ui="legacy"] .border-slate-800\/50       { border-color: rgba(255,255,255,.05); }
+[data-ui="legacy"] .border-slate-700           { border-color: rgba(255,255,255,.12); }
+[data-ui="legacy"] .border-slate-700\/60       { border-color: rgba(255,255,255,.08); }
+[data-ui="legacy"] .border-slate-700\/50       { border-color: rgba(255,255,255,.07); }
+[data-ui="legacy"] .border-slate-700\/40       { border-color: rgba(255,255,255,.06); }
+[data-ui="legacy"] .border-slate-700\/30       { border-color: rgba(255,255,255,.05); }
+[data-ui="legacy"] .hover\:border-slate-700:hover { border-color: rgba(255,255,255,.14); }
+[data-ui="legacy"] .hover\:border-slate-600:hover { border-color: rgba(255,255,255,.18); }
+
+[data-ui="dark"] .border-slate-800,
+[data-ui="dark"] .divide-slate-800 > * + *   { border-color: rgba(246,239,232,.10); }
+[data-ui="dark"] .border-slate-800\/80       { border-color: rgba(246,239,232,.09); }
+[data-ui="dark"] .border-slate-800\/60       { border-color: rgba(246,239,232,.07); }
+[data-ui="dark"] .border-slate-800\/50       { border-color: rgba(246,239,232,.06); }
+[data-ui="dark"] .border-slate-700           { border-color: rgba(246,239,232,.15); }
+[data-ui="dark"] .border-slate-700\/60       { border-color: rgba(246,239,232,.10); }
+[data-ui="dark"] .border-slate-700\/50       { border-color: rgba(246,239,232,.09); }
+[data-ui="dark"] .border-slate-700\/40       { border-color: rgba(246,239,232,.08); }
+[data-ui="dark"] .border-slate-700\/30       { border-color: rgba(246,239,232,.06); }
+[data-ui="dark"] .hover\:border-slate-700:hover { border-color: rgba(246,239,232,.18); }
+[data-ui="dark"] .hover\:border-slate-600:hover { border-color: rgba(246,239,232,.22); }
+
+
+/* ══ THE TWO UTILITIES A SHADE VARIABLE CAN'T EXPRESS ════════════════════ */
+
+/* `text-white` never means the colour white in this codebase — it means "text
+   sitting on an accent fill" (bg-blue-600 buttons, gradient avatars, SVG
+   glyphs inside coloured circles). It follows the fill, not the palette. */
+.text-white { color: rgb(var(--u-on-accent, 255 255 255)); }
+
+/* `hover:text-white`, by contrast, DOES mean "brightest text" — it fires on
+   plain rows that have no accent fill, so it tracks the heading shade. */
+.hover\:text-white:hover,
+.group:hover .group-hover\:text-white { color: rgb(var(--u-slate-100, 241 245 249)); }
+
+/* slate-700 is the app's faintest text (separator dots, 9–10px meta) AND its
+   standard rule colour. Those want opposite lightness, so text gets its own
+   value while borders and fills keep the ramp. */
+[data-ui="light"] .text-slate-700,
+html:not([data-ui]) .text-slate-700 { color: #6A6150; }  /* 4.6:1 on page, 5.5:1 on card */
+[data-ui="dark"]  .text-slate-700   { color: #8F8276; }  /* 4.6:1 on card */
+
+/* Single site: a search-result highlight that hard-codes dark text on a light
+   amber fill. The ramp inverts under it, so it states both halves itself. */
+.u-mark { background: var(--u-mark-bg); color: var(--u-mark-fg); }
+
+
+/* ══ SURFACES THAT READ THE PALETTE DIRECTLY ═════════════════════════════ */
+
+html, body { background-color: rgb(var(--u-slate-950, 2 6 23)); }
+
+.rounded-2xl.border,
+.rounded-xl.border { box-shadow: var(--u-card-shadow); }
+
+/* Modal backdrops are written as `bg-black/50`–`/60`, which is right over a
+   near-black app and far too heavy over paper. The scrim follows the ground. */
+.bg-black\/50, .bg-black\/60 { background-color: var(--u-scrim); }
+
+.shadow-2xl.shadow-black\/60 { box-shadow: var(--u-modal-shadow); }
+
+.inline-code,
+code:not(pre code) {
+  background-color: var(--u-code-bg);
+  color: var(--u-code-fg);
+  border: 1px solid var(--u-code-rule);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.82em;
+}
+
+pre {
+  background-color: var(--u-pre-bg) !important;
+  border: 1px solid var(--u-code-rule) !important;
+  border-radius: 12px;
+}
+pre code {
+  background: transparent !important;
+  color: var(--u-pre-fg) !important;
+  font-size: 0.83em;
+  line-height: 1.65;
+}
+
+::selection { background-color: color-mix(in srgb, var(--u-accent) 26%, transparent); }
+
+
+/* ══ THE MARK ════════════════════════════════════════════════════════════
+   The logo is a fixed-colour tile — a deep blue-black square with the book
+   and star on it — so it cannot be tinted to match a theme. What changes per
+   theme is how it MEETS the ground it sits on.
+
+   On paper it is the darkest thing on screen, so it needs a shadow to sit in
+   the page rather than punch a hole in it. On the warm charcoal it is nearly
+   the same value as its surroundings and would dissolve, so it takes a hairline
+   ring instead. Legacy shares the tile's own blue-black family and needs least.
+
+   The tile's own corner radius is baked into the asset's alpha; the CSS radius
+   below only matches it so the ring and shadow follow the same curve.        */
+
+.u-logo {
+  object-fit: contain;
+  -webkit-user-drag: none;
+  transition: box-shadow 200ms ease, transform 200ms cubic-bezier(.2,.9,.3,1);
+}
+
+html:not([data-ui]) .u-logo,
+[data-ui="light"] .u-logo {
+  box-shadow: 0 1px 2px rgba(29,24,16,.16), 0 4px 12px -4px rgba(29,24,16,.30);
+}
+
+[data-ui="dark"] .u-logo {
+  box-shadow: 0 0 0 1px rgba(246,239,232,.13), 0 2px 10px -4px rgba(0,0,0,.7);
+}
+
+[data-ui="legacy"] .u-logo {
+  box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 2px 10px -4px rgba(0,0,0,.6);
+}
+
+/* the sidebar mark is a link to the landing page — it gets the same press
+   feedback as any other control rather than only the parent button's opacity */
+button:active .u-logo { transform: scale(.94); }
+
+
+/* ══ AUTH SCREEN — the landing's wire plates ═════════════════════════════
+   Same component, same geometry, same keyframes (landing.css already ships
+   them and is in the main bundle). Only three things differ here: the ink
+   follows the app palette instead of `--ink-soft`, which does not exist
+   outside `.lp`; everything runs at roughly half speed because this screen is
+   a pause rather than a pitch; and the landing's "hide plates under 768px"
+   rule is overridden, since on a phone the plates ARE the login screen's
+   visual identity — there is nothing else on it.                            */
+
+.u-auth-field { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+
+.u-auth-plate {
+  color: rgb(var(--u-slate-500));
+  animation-duration: 46s;            /* landing runs this at 24s */
+}
+.u-auth-plate .lp-plate-node  { animation-duration: 14s; }
+.u-auth-plate .lp-plate-edge  { animation-duration: 17s; }
+.u-auth-plate .lp-plate-rings circle { animation-duration: 30s; }
+
+.u-auth-plate-a { top: -6%;  left: -8%;  width: 620px; height: 470px; opacity: .55; }
+.u-auth-plate-b { bottom: -10%; right: -6%; width: 560px; height: 420px; opacity: .45; }
+.u-auth-plate-c { top: 34%;  right: 16%; width: 380px; height: 290px; opacity: .3; }
+
+/* The plate ink is a mid grey either way, but it has far less headroom against
+   a near-black ground than against paper — the same opacity that reads as a
+   drawn figure in light mode all but vanishes in dark. */
+[data-ui="dark"] .u-auth-plate-a { opacity: .95; }
+[data-ui="dark"] .u-auth-plate-b { opacity: .8; }
+[data-ui="dark"] .u-auth-plate-c { opacity: .55; }
+
+@media (max-width: 767px) {
+  .u-auth-plate   { display: block; }
+  .u-auth-plate-a { top: -4%; left: -30%; width: 460px; height: 350px; opacity: .5; }
+  .u-auth-plate-b { bottom: -6%; right: -30%; width: 420px; height: 320px; opacity: .4; }
+  .u-auth-plate-c { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .u-auth-plate,
+  .u-auth-plate .lp-plate-node,
+  .u-auth-plate .lp-plate-edge,
+  .u-auth-plate .lp-plate-rings circle { animation: none; }
+  .u-auth-plate .lp-plate-edge { stroke-dashoffset: 0; }
+}
+
+
+/* ══ THE SWITCH ══════════════════════════════════════════════════════════
+   Repainting the app is a state change, so it gets a transition rather than a
+   cut. `u-swapping` is set on <html> for the length of the crossfade and then
+   removed — a permanent `transition` on `*` would tax every hover in the app
+   for the sake of an interaction that happens once a month.                */
+
+html.u-swapping,
+html.u-swapping *,
+html.u-swapping *::before,
+html.u-swapping *::after {
+  transition:
+    background-color 420ms cubic-bezier(.32, .72, 0, 1),
+    border-color     420ms cubic-bezier(.32, .72, 0, 1),
+    color            420ms cubic-bezier(.32, .72, 0, 1),
+    fill             420ms cubic-bezier(.32, .72, 0, 1),
+    stroke           420ms cubic-bezier(.32, .72, 0, 1),
+    box-shadow       420ms cubic-bezier(.32, .72, 0, 1) !important;
+}
+
+/* Where the View Transitions API exists, the crossfade is a real one: the old
+   frame is held as an image and the new palette wipes in over it from the
+   control you clicked. Elsewhere the class above carries it. */
+::view-transition-old(root) { animation: none; }
+::view-transition-new(root) { animation: u-wipe 620ms cubic-bezier(.32, .72, 0, 1); }
+@keyframes u-wipe {
+  from { clip-path: circle(0% at var(--u-swap-x, 50%) var(--u-swap-y, 50%)); }
+  to   { clip-path: circle(150% at var(--u-swap-x, 50%) var(--u-swap-y, 50%)); }
+}
+
+
+/* ══ OPEN / CLOSE MOTION ═════════════════════════════════════════════════
+   Hover and press feedback live in index.css's `@layer base`, where Tailwind
+   utilities outrank them. These are opt-in classes, so they belong here.   */
+
+/* Panels, menus and dialogs arrive from where they were opened rather than
+   appearing. Exit is not animated — React unmounts these immediately and
+   holding them in the DOM to fade out would mean touching every call site. */
+@keyframes u-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes u-sheet-in {
+  from { opacity: 0; transform: translateY(10px) scale(.975); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes u-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes u-slide-r-in {
+  from { opacity: 0; transform: translateX(28px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.u-pop     { animation: u-pop-in     190ms cubic-bezier(.2, .9, .3, 1) both; }
+.u-slide-r { animation: u-slide-r-in 300ms cubic-bezier(.32, .72, 0, 1) both; }
+
+/* Every dialog in the app is a `fixed inset-0 z-50` root holding an absolutely
+   positioned backdrop and one relative card, so the whole set animates from
+   structure alone — no per-call-site class. The backdrop fades with the root;
+   `:not(.absolute)` is what separates the card from the backdrop. */
+.fixed.inset-0.z-50 { animation: u-scrim-in 180ms ease both; }
+.fixed.inset-0.z-50 > *:not(.absolute) {
+  animation: u-sheet-in 260ms cubic-bezier(.32, .72, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .u-pop, .u-slide-r,
+  .fixed.inset-0.z-50,
+  .fixed.inset-0.z-50 > *:not(.absolute) { animation-duration: 1ms; }
+  ::view-transition-new(root) { animation-duration: 1ms; }
+  html.u-swapping, html.u-swapping * { transition-duration: 1ms !important; }
+}

@@ -270,7 +270,7 @@ export default function GlobalSearch({ onClose, onNavigate }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh] px-4"
-      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+      style={{ background: "var(--u-scrim)", backdropFilter: "blur(4px)" }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
