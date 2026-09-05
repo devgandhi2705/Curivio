@@ -1423,5 +1423,19 @@ def _enrich_feed_context(feed_context: dict) -> None:
             memory = _get_mem(project_id)
             feed_context.setdefault("progression_stage",  memory.get("progression_stage", "foundation"))
             feed_context.setdefault("recent_mechanisms",  memory.get("covered_mechanisms", [])[-3:])
+
+        # Real article text for this card's sources. A card persists only its
+        # URLs plus a ~1650-char distillation, so without this the model answers
+        # a "tell me more" question from the same summary the user just read and
+        # has nothing further to say. search_cache still holds the extracted text
+        # that produced the card, keyed by the query that retrieved it — looked
+        # up here by URL. Coverage is partial (the cache has a TTL), which is why
+        # this only ever ADDS a key: a miss leaves the card exactly as it was.
+        urls = feed_context.get("source_urls") or []
+        if urls:
+            from .search_cache_service import content_for_urls  # noqa: PLC0415
+            contents = content_for_urls(urls)
+            if contents:
+                feed_context.setdefault("source_contents", contents)
     except Exception:
         logger.debug("[chat_service] _enrich_feed_context failed (non-fatal)")

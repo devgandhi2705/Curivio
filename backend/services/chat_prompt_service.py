@@ -488,8 +488,19 @@ def _build_structured_prompt(context: dict) -> str:
         composer.add_section("tension",    _build_tension_section(context, mode="web_search"),
                              priority=3, required=False, source_pack="dynamic")
 
-    composer.add_section("guidelines",     _GUIDELINES,
-                         priority=3, required=True,  source_pack="")
+    # Phase Q: _GUIDELINES is the structured path's own house style, and it
+    # directly CONTRADICTS _RESPONSE_PRINCIPLES on the one thing that matters
+    # most for output quality — it orders "Give clear, structured answers. Use
+    # bullet points" while the principles order "Decide the shape yourself
+    # ... not a default in either direction." A real logged feed turn carried
+    # BOTH (1801 prompt tokens against a 6-token question), and the model
+    # resolved the contradiction by doing neither: flat undifferentiated prose.
+    # The two also overlap on depth, honesty and continuity, so on the is_quick
+    # path the principles simply supersede them. Structured JSON mode is
+    # unchanged — there _GUIDELINES is the only style block present.
+    if not is_quick:
+        composer.add_section("guidelines", _GUIDELINES,
+                             priority=3, required=True,  source_pack="")
     composer.add_section("format_schema",
                          _RESPONSE_PRINCIPLES if is_quick else _STRUCTURED_FORMAT_DIRECTIVE,
                          priority=1, required=True,  source_pack="")
@@ -547,11 +558,12 @@ def _build_persona_section(user_name: str = "") -> str:
 # untouched and keeps _GUIDELINES below unchanged.
 _RESPONSE_PRINCIPLES = """\
 RESPONSE PRINCIPLES:
-- Decide the length and depth yourself, based on what this specific question actually needs. A quick factual question deserves a few sentences. A real "explain this to me" deserves real depth — and when the conversation, memory, or source material already in front of you genuinely supports going deeper (real prior discussion, a real document, real history here), draw on it rather than staying generic. Don't pad either way, and don't force a fixed length onto an answer that doesn't need one.
+- Decide the length and depth yourself, based on what this specific question actually needs. A quick factual question deserves a few sentences. A real "explain this to me" is a request for the full teach-through — give it in full, and when the conversation, memory, or source material in front of you supports going deeper (real prior discussion, a real document, real extracted source text), reason FROM that material rather than staying generic. Depth means more real content — a named example, a concrete number, one more step of mechanism, a tension between two sources. It never means longer sentences about the same thing, and restating what the user already has in front of them is not an answer.
 - Lead with the actual answer — not a definition, not throat-clearing, not "great question."
 - Prioritise causality over description: explain WHY things work the way they do, not just WHAT they are.
 - Name specifics and surface what's non-obvious — the company, the event, the mechanism, the second-order effect the user probably hasn't considered — rather than restating what they likely already know.
 - Decide the shape yourself too, the same way you decide length — a genuine comparison can be a table, a genuine multi-step process can be numbered, a genuine list of options can be bulleted, and a genuine short conversational answer can still just be prose. Match the structure to what this content actually is, not a default in either direction.
+- When an answer IS long enough to need structure, give it real structure rather than running it together: open with the sentence that actually answers the question, break genuinely list-like material into bullets with bolded lead-ins, and close on what is non-obvious — the second-order effect, the thing that breaks, the reason a practitioner would care. Never close by summarising what you just said. A multi-paragraph answer delivered as one undifferentiated wall is the most common way a good answer becomes unreadable; bulleting something that is really one idea is the opposite failure.
 - Write code whenever it's genuinely the clearest way to answer — a worked example, a specific technique, a syntax question — regardless of the subject. Skip code when prose serves better. Never tack code onto the end of a prose answer as an unrequested bonus. Always put code in a fenced block tagged with its language — unfenced code loses its indentation when it renders, which for Python makes it wrong rather than merely ugly.
 - When code is the answer, give it a line of framing — what the approach is and why it's shaped that way. One or two sentences, before or after the block, not a preamble. Drop it only when the user actually said they want code only ("just the code", "no explanation"), or when the answer is a single obvious line that explains itself.
 - Say plainly what you're actually sure of. When you're inferring, generalising, or working from memory rather than something concrete in front of you, say so ("as far as I know," "I'd want to check this") instead of stating it with more confidence than you have — and never manufacture a source or citation to sound more certain than you are.

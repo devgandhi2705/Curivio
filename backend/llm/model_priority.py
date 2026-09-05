@@ -89,11 +89,27 @@ TASK_MODEL_PRIORITY: dict[str, list[tuple[str, str]]] = {
     # exhausted across its whole key pool for "everyday" answers — nemotron primary
     # avoids paying that 80%+ real failure tax on the common path. Existing chain
     # kept intact as fallback.
+    # Phase R. Measured bake-off on the real feed-discussion answer prompt
+    # (same card, same question, N=2 each) scoring the ACTUAL reported defect —
+    # flat undifferentiated prose:
+    #     nemotron-nano-30b   bullets 0.0  bold  0.0  paras 1.0  chars 1024
+    #     groq gpt-oss-20b    bullets 4.0  bold 10.5  paras 6.5  chars 1833   953ms
+    #     groq gpt-oss-120b   bullets 3.5  bold 11.5  paras 6.5  chars 2833  2031ms
+    #     gemini-3.1-lite     bullets 1.0  bold  6.0  paras 5.0  chars 2508  3875ms
+    # nemotron produces ONE paragraph with zero structure no matter what the
+    # prompt asks for (verified: a dedicated formatting instruction moved it 0.0
+    # -> 0.0 bullets). Both Groq legs are FREE tier and already configured here.
+    # gpt-oss-20b goes primary on real production evidence (112/112 = 100% on
+    # surface='chat') plus the best measured structure score and 2x the speed;
+    # gpt-oss-120b sits behind it for the longer, deeper answers. OpenRouter stays
+    # in the chain but demoted — it is not merely "cheap" right now, it is
+    # HARD-BLOCKED (PaymentRequiredResponseError on every leg in the bake-off).
     "simple_qa": [
+        ("groq", GROQ_FAST_MODEL),
+        ("groq", GROQ_FALLBACK_MODEL),
+        ("gemini", GEMINI_FALLBACK_MODEL),
         ("openrouter", OPENROUTER_NEMOTRON_MODEL),
         ("gemini", GEMINI_MODEL),
-        ("groq", GROQ_FAST_MODEL),
-        ("gemini", GEMINI_FALLBACK_MODEL),
     ],
 
     # Deepest reasoning available — Gemini's flagship model stays primary (the
@@ -101,11 +117,16 @@ TASK_MODEL_PRIORITY: dict[str, list[tuple[str, str]]] = {
     # no real evidence to demote it). Nemotron inserted as an early fallback ahead
     # of Groq (which the real data also shows struggling here) to catch the real,
     # routine quota-exhaustion case without an unverified quality downgrade.
+    # Phase R: gemini-2.5-flash stays first — it is the deepest reasoning leg and
+    # real data shows 517/517 success when it is not daily-quota-exhausted. The
+    # change is BELOW it: the 120B Groq leg (free tier, best measured depth at
+    # 2833 chars with real structure) moves ahead of nemotron, which on this exact
+    # prompt returns one unstructured paragraph and is currently credit-blocked.
     "complex_reasoning": [
         ("gemini", GEMINI_MODEL),
-        ("openrouter", OPENROUTER_NEMOTRON_MODEL),
-        ("gemini", GEMINI_FALLBACK_MODEL),
         ("groq", GROQ_FALLBACK_MODEL),
+        ("gemini", GEMINI_FALLBACK_MODEL),
+        ("openrouter", OPENROUTER_NEMOTRON_MODEL),
     ],
 
     # code_execution is Gemini-3+-only (CodeExecutionToolMiddleware gate) —
@@ -125,11 +146,18 @@ TASK_MODEL_PRIORITY: dict[str, list[tuple[str, str]]] = {
     # data: this bucket shares gemini-2.5-flash's routine quota pressure, AND the
     # bake-off's own metric (tool-call format reliability) is directly on-point for
     # this bucket's actual concern — nemotron goes primary.
+    # Phase R: nemotron KEPT primary here on purpose. tools/model_bakeoff measured
+    # tool-call FORMAT reliability specifically and recommended it for this role;
+    # the Phase R bake-off measured prose formatting, which is a different thing,
+    # so there is no evidence to demote it on its own metric. The change is that
+    # the free Groq 120B leg moves up to #2 — when nemotron is credit-blocked (as
+    # it is now) this bucket previously fell through to gemini-2.5-flash, whose
+    # daily quota is routinely exhausted, and only then reached Groq.
     "tool_use": [
         ("openrouter", OPENROUTER_NEMOTRON_MODEL),
+        ("groq", GROQ_FALLBACK_MODEL),
         ("gemini", GEMINI_MODEL),
         ("gemini", GEMINI_FALLBACK_MODEL),
-        ("groq", GROQ_FALLBACK_MODEL),
     ],
 
     # Groq has no vision model configured anywhere in this stack — Gemini

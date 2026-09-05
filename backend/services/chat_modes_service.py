@@ -31,6 +31,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+_ASK_ABOUT_INSTRUCTION = """\
+The user opened this card from their feed and asked the question below.
+
+Answer THEIR question. The card is your grounding material, not your subject — do
+not write a summary of the card unless that is what they asked for. A narrow question
+gets a narrow, exact answer. An open one (“explain this”, “what does this mean”) is a
+request for the full teach-through, so give it in full.
+
+Work from what you actually have. The blocks above are compressed notes, not the
+article: use their specifics — the named company, the mechanism, the number, the
+failure mode — rather than restating them in more general language. Restating the
+summary in different words is the single most common way this answer goes wrong.
+When the answer turns on something only the underlying articles can settle, call
+web_search on the source URLs above instead of hedging.
+
+Make it worth reading:
+- Open with the one sentence that actually answers them. No preamble, no restating
+  the question, no “this card discusses…”.
+- Then the mechanism — WHY it works this way, in causal steps that follow one from
+  the next, not a list of characteristics.
+- Give genuinely list-like material real bullets with bolded lead-ins, and leave
+  genuine prose as prose. An undifferentiated wall of paragraphs is the failure mode
+  here; so is bulleting something that is really one idea.
+- End on what is genuinely non-obvious — the second-order effect, the thing that
+  breaks, the reason a practitioner would care. Never end by summarising what you
+  just wrote.
+
+Depth means more real content — a named example, a concrete number, one more step of
+mechanism, a tension between two sources. It never means longer sentences about the
+same thing. If you have nothing further that is real, stop."""
+
+
 def build_feed_context_note(feed_context: dict) -> str:
     """
     Format a feed insight card as a compact system note for the LLM.
@@ -104,6 +136,14 @@ def build_feed_context_note(feed_context: dict) -> str:
             if content:
                 parts.append(f"  [{block_type}] {content}")
     if sources:
+        # Where the cache still holds the article text behind a source, it is
+        # rendered inline under that source rather than as a bare URL. This is
+        # the difference between the model reasoning from the card's own summary
+        # (which the user has already read, so restating it answers nothing) and
+        # reasoning from the article that produced it. Sources without cached
+        # text still render exactly as before — a plain labelled URL — so a
+        # partial hit degrades gracefully instead of looking broken.
+        contents = feed_context.get("source_contents") or {}
         parts.append("Sources:")
         for index, url in enumerate(sources):
             link = source_links[index] if index < len(source_links) else None
@@ -113,6 +153,15 @@ def build_feed_context_note(feed_context: dict) -> str:
             else:
                 label = url
             parts.append(f"  • {label}")
+            body = (contents.get(url) or "").strip()
+            if body:
+                parts.append(f"    Extracted text: {body}")
+        if contents:
+            parts.append(
+                f"({len(contents)} of {len(sources)} sources include their extracted text above — "
+                "quote and reason from that text, not from the card summary. Sources shown as a bare "
+                "URL were not retrieved; use web_search if the answer needs them.)"
+            )
 
     # Prior mechanisms this user has covered in this project
     if recent_mechanisms:
@@ -125,13 +174,16 @@ def build_feed_context_note(feed_context: dict) -> str:
 
     # ── Mode-specific instruction (references the card's mechanism directly) ──
     if action == "ask_about":
-        parts.append(
-            "The user opened this card from their feed and wants to discuss it. "
-            "Use the complete card above as the starting point, then use web search "
-            "to inspect the provided source URLs and gather current evidence, source "
-            "verification, or additional context when that would improve the answer. "
-            "Reference the card and sources naturally."
-        )
+        # Phase Q: was four vague lines ("discuss it", "use the card as a starting
+        # point", "reference sources naturally"), which produced what vague
+        # instructions produce on a weak leg — one flat paragraph restating the
+        # card's own summary in more general words, no tool call, nothing named that
+        # the card had not already said. Modelled instead on
+        # feed_v2/agents/section_writer.py's _SYS prompts, the best writing prompts
+        # in this codebase, which share three traits this one lacked: a narrow role,
+        # an explicit statement of what NOT to do, and a named output shape.
+        # Guidance, not a template — a narrow question still gets a narrow answer.
+        parts.append(_ASK_ABOUT_INSTRUCTION)
     elif action == "explain_simply":
         if mechanism:
             parts.append(
