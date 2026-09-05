@@ -14,6 +14,8 @@ app_port: 7860
 
 Curivio curates structured intelligence briefs from live web sources, lets you explore each card through conversational AI at three levels of depth, and tracks your learning progression across sessions — so every day builds on the last.
 
+**Live:** https://devg-01-curivio.hf.space
+
 ---
 
 ## Table of Contents
@@ -75,11 +77,17 @@ Curivio curates structured intelligence briefs from live web sources, lets you e
 - **Global search** — `Ctrl+K` / `⌘K` overlay searches across feed cards, bookmarks, and chat sessions simultaneously
 - **Bookmarks** — save and manage cards in the Bookmarks tab
 
+### Appearance
+
+- **Three colour modes** — Light and Dark (warm paper / warm charcoal) plus Legacy, the original blue grading. Picked from Settings, stored per browser in `localStorage`, applied before first paint so a reload never flashes the wrong palette.
+- **One variable palette** — no component carries a hard-coded colour. `tailwind.config.js` routes every colour utility through a CSS variable with a stock fallback, so a mode repaints the whole app by redefining ~110 variables in `src/theme.css`.
+- **Contrast is checked, not guessed** — every text shade clears WCAG AA against both the card and the page it can sit on; body and headings clear AAA.
+
 ### Mobile
 
-- **Bottom navigation bar** — Feed / Chat / Dashboard / Bookmarks icons on small screens
-- **Mobile project strip** — horizontal scrollable project selector replaces the desktop sidebar
-- **Compact top bar** — search, queue, and settings icons on mobile; full labels on desktop
+- **Slide-in sidebar** — a floating trigger opens it; it overlays the content rather than reflowing the page
+- **Floating action menu** — the per-section actions collapse into a ⋮ menu on small screens
+- **Touch-friendly targets** — controls keep a comfortable hit area at phone widths
 
 ---
 
@@ -171,7 +179,7 @@ User
 | Database | SQLite with WAL mode (`python-jose`, custom migration system) |
 | Rate limiting | SlowAPI |
 | Scheduling | APScheduler (daily package generation) |
-| Frontend | React 18, Vite 5, TailwindCSS 3 |
+| Frontend | React 18, Vite 5, TailwindCSS 3 (variable-driven palette — see `src/theme.css`) |
 | Frontend build | Vite with automatic vendor chunk splitting |
 | Testing | pytest with integration and unit test markers |
 | Containerization | Docker + nginx reverse proxy |
@@ -272,7 +280,13 @@ ai-learning-agent/
 ├── frontend/
 │   └── src/
 │       ├── App.jsx                      # Root component: routing, auth gate,
-│       │                                # sidebar, mobile bottom bar, settings
+│       │                                # sidebar, settings panel
+│       ├── theme.css                     # Light / Dark / Legacy palettes, all
+│       │                                # colour variables + interaction motion
+│       ├── landing.css                   # Landing page styles (scoped to .lp)
+│       ├── lib/
+│       │   └── uiTheme.js                # Colour mode: read, set, persist,
+│       │                                # animated swap via View Transitions
 │       ├── contexts/
 │       │   └── AuthContext.jsx          # JWT session state, global 401 handler,
 │       │                                # multi-tab logout sync
@@ -297,6 +311,9 @@ ai-learning-agent/
 │           │   └── LandingPage.jsx      # Public landing page
 │           ├── auth/
 │           │   └── AuthPage.jsx         # Login / signup / password reset UI
+│           ├── shared/
+│           │   ├── LogoMark.jsx         # The Curivio mark, used app-wide
+│           │   └── Plate.jsx            # Wire-constellation background figure
 │           └── GlobalSearch.jsx         # Ctrl+K search overlay
 │
 ├── tests/                               # pytest suite (unit + integration markers)
@@ -765,6 +782,8 @@ BACKUP_HF_REPO_ID=your-username/curivio-backups
 ```
 
 Set `DB_PATH=/data/curivio.db` so the database is stored on the persistent `/data` volume. Without this, the database is recreated on every container restart.
+
+**Images must go through Git LFS.** The Space rejects binaries pushed as plain git objects. `.gitattributes` tracks `*.webp`, `*.png`, `*.jpg`, `*.gif`, `*.ico` and `*.woff2` — keep any new image type in that list before committing it, or the push is refused by a pre-receive hook.
 
 `HF_TOKEN` + `BACKUP_HF_REPO_ID` are optional but strongly recommended: without them, automatic snapshots still work but stay on the same `/data` volume as the live database, so a full loss of that volume takes every backup out with it. `HF_TOKEN` needs write access; `BACKUP_HF_REPO_ID` is created automatically as a private dataset repo on first push.
 
