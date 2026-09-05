@@ -766,6 +766,22 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 }
 .lp-logo-slot > svg, .lp-logo-slot > img { width: 100%; height: 100%; display: block; }
 
+/* Holding the real mark rather than the placeholder glyph: the artwork is an
+   opaque tile whose rounded corners live in its own alpha channel, so the slot
+   must stop painting a moss square behind it (it would show through those
+   corners) and stop clipping at a radius that is not the tile's. The shadow is
+   what sets a dark tile into warm paper instead of punching a hole in it. */
+.lp-logo-slot:has(img) {
+  background: none;
+  overflow: visible;
+  border-radius: 0;
+  box-shadow: none;
+}
+.lp-logo-slot > img { box-shadow: var(--shadow-sm); }
+.lp[data-theme="dark"] .lp-logo-slot > img {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
 /* ── nav ─────────────────────────────────────────────────────────────────── */
 /* Glass, not a painted bar: the page has to be visibly moving underneath it.
    The tint is thin enough to read through, and `saturate` is what stops

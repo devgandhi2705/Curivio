@@ -20,6 +20,7 @@ import { getToken } from './api/auth.js'
 import { checkIsAdmin } from './api/admin.js'
 import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 import { parseOnboardingStep, onboardingStepPath } from './utils/onboardingRoute.js'
+import LogoMark from './components/shared/LogoMark.jsx'
 import { UI_MODES, UI_MODE_LABELS, getUiTheme, setUiTheme, subscribeUiTheme } from './lib/uiTheme.js'
 
 // ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
@@ -907,19 +908,6 @@ function QueuePanel({ queue, onItemClick, positionClass = "absolute right-0 top-
 
 // ── Sidebar components ────────────────────────────────────────────────────────
 
-function LogoMark() {
-  return (
-    <img
-      src="/logo.webp"
-      alt=""
-      width="28"
-      height="28"
-      draggable="false"
-      className="u-logo w-7 h-7 flex-shrink-0 rounded-[9px] select-none"
-    />
-  )
-}
-
 function NavItem({ item, collapsed, onClick, badge }) {
   const Icon = item.icon
   return (
@@ -1044,7 +1032,7 @@ function Sidebar({
             onClick={() => { navigate('/'); setOpen(false) }}
             className="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
           >
-            <LogoMark />
+            <LogoMark size={28} className="flex-shrink-0" />
             <span className={`font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent truncate ${collapsed ? 'md:hidden' : ''}`}>
               Curivio
             </span>

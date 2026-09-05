@@ -302,25 +302,16 @@ function useMotionEngine(refs, setActive, motionOn) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LOGO SLOT  ▸▸  Dev: drop the finished mark in here.
-
-   Replace the <svg> below with the real logo (inline <svg>, or
-   <img src="/logo.svg" alt="" />). The child is stretched to 100% × 100%,
-   so the artwork only needs a correct viewBox. Nothing else changes.
+   LOGO SLOT — the real mark. The artwork is a fixed-colour tile with its
+   rounded corners baked into the asset's alpha, so the slot paints no
+   background of its own and never clips it; see .lp-logo-slot.
    Sizes in use:  nav = 30px  ·  footer = 24px
    ═════════════════════════════════════════════════════════════════════════ */
 function LogoSlot({ size = 30 }) {
   return (
     <span className="lp-logo-slot" style={{ width: size, height: size }} aria-hidden="true" data-logo-slot="">
-      {/* ▼▼ PLACEHOLDER — swap this <svg> for the real mark ▼▼ */}
-      <svg viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="10" r="4.4" fill="currentColor" fillOpacity=".95" />
-        <rect x="9.9" y="15.1" width="4.2" height="1.5" rx=".75" fill="currentColor" fillOpacity=".8" />
-        <rect x="10.5" y="17.1" width="3" height="1.35" rx=".67" fill="currentColor" fillOpacity=".6" />
-        <path d="M12 4.4V2.6M15.9 6.1l1.3-1.3M8.1 6.1 6.8 4.8M17.3 10h1.8M6.9 10H5.1"
-              stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeOpacity=".7" />
-      </svg>
-      {/* ▲▲ PLACEHOLDER END ▲▲ */}
+      <img src="/logo.webp" alt="" width={size} height={size} draggable="false"
+           style={{ borderRadius: Math.round(size * 0.232) }} />
     </span>
   )
 }

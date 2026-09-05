@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
+import LogoMark from "../components/shared/LogoMark.jsx"
 import { Link, useParams, useNavigate } from "react-router-dom"
 import { resolveShareLink, forkSharedChat } from "../api/share.js"
 import { getToken } from "../api/auth.js"
@@ -19,21 +20,7 @@ import {
 function Wordmark() {
   return (
     <Link to="/" className="inline-flex items-center gap-2.5 hover:opacity-80 transition-opacity">
-      <div className="relative w-7 h-7 flex-shrink-0">
-        <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 shadow-lg shadow-violet-950/50" />
-        <div className="absolute inset-0 rounded-xl flex items-center justify-center">
-          <svg style={{ width: '16px', height: '16px' }} viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
-            <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
-            <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
-            <path d="M10 4 L10 2.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-            <path d="M13.5 5.5 L14.6 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-            <path d="M6.5 5.5 L5.4 4.4" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-            <path d="M14.5 8 L16 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-            <path d="M5.5 8 L4 8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeOpacity="0.7" />
-          </svg>
-        </div>
-      </div>
+      <LogoMark size={28} className="flex-shrink-0" />
       <span className="font-bold text-[15px] tracking-tight select-none bg-gradient-to-r from-slate-100 to-slate-300 bg-clip-text text-transparent">
         Curivio
       </span>

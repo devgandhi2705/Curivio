@@ -19,6 +19,7 @@
  *   onOpenChat(sessionId)
  */
 import { useState, useEffect, useRef } from "react"
+import LogoMark from "../shared/LogoMark.jsx"
 import { useNavigate } from "react-router-dom"
 import InsightCard from "./InsightCard.jsx"
 import { articleKeyFromTitle } from "../../api/feed.js"
@@ -826,13 +827,8 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
     <div className="flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto">
       {/* Animated logo ring */}
       <div className="relative w-16 h-16 mb-6">
-        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-600 animate-pulse shadow-lg shadow-violet-950/60" />
-        <div className="absolute inset-0 rounded-2xl flex items-center justify-center">
-          <svg style={{ width: '26px', height: '26px' }} viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="8" r="4" fill="white" fillOpacity="0.95" />
-            <rect x="8.25" y="12" width="3.5" height="1.2" rx="0.6" fill="white" fillOpacity="0.8" />
-            <rect x="8.75" y="13.6" width="2.5" height="1.1" rx="0.55" fill="white" fillOpacity="0.6" />
-          </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <LogoMark size={44} className="animate-pulse" />
         </div>
         {/* Spinning ring */}
         <svg className="absolute inset-0 w-16 h-16 -rotate-90 animate-[spin_2s_linear_infinite]" viewBox="0 0 64 64">

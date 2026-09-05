@@ -4,6 +4,7 @@ import { useAuth } from "../../contexts/AuthContext"
 import { forgotPassword, verifyResetCode, resetPassword, sendVerifyEmail } from "../../api/auth"
 import { forkSharedChat } from "../../api/share"
 import Plate from "../shared/Plate.jsx"
+import LogoMark from "../shared/LogoMark.jsx"
 
 function EyeIcon({ open }) {
   return open ? (
@@ -285,15 +286,7 @@ export default function AuthPage() {
       <div className="relative z-10 w-full max-w-md">
         {/* Logo / brand */}
         <div className="text-center mb-8">
-          <img
-            src="/logo.webp"
-            alt="Curivio"
-            width="52"
-            height="52"
-            draggable="false"
-            className="u-logo w-13 h-13 mx-auto mb-4 rounded-[16px] select-none"
-            style={{ width: 52, height: 52 }}
-          />
+          <LogoMark size={52} className="mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-slate-100">Curivio</h1>
           <p className="text-gray-400 text-sm mt-1">Learn smarter, a few minutes every day.</p>
         </div>
