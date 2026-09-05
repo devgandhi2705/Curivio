@@ -565,35 +565,28 @@ pre code {
 
 
 /* ══ THE MARK ════════════════════════════════════════════════════════════
-   The logo is a fixed-colour tile — a deep blue-black square with the book
-   and star on it — so it cannot be tinted to match a theme. What changes per
-   theme is how it MEETS the ground it sits on.
+   The logo was a fixed-colour tile — a deep blue-black square carrying the
+   book and star — which could not be tinted, so all three themes had to work
+   around it instead: a shadow to sit it into paper, a hairline ring to stop it
+   dissolving into charcoal, a lighter ring again for legacy.
 
-   On paper it is the darkest thing on screen, so it needs a shadow to sit in
-   the page rather than punch a hole in it. On the warm charcoal it is nearly
-   the same value as its surroundings and would dissolve, so it takes a hairline
-   ring instead. Legacy shares the tile's own blue-black family and needs least.
+   It is now drawn geometry taking `currentColor` (components/shared/LogoMark),
+   so there is no ground to meet and no per-theme rule to keep — the mark is
+   simply set in the heading ink, which already flips across all three modes.
 
-   The tile's own corner radius is baked into the asset's alpha; the CSS radius
-   below only matches it so the ring and shadow follow the same curve.        */
+   The ink arrives through `--logo-ink`, not as a flat `color`, because the
+   landing runs its own themes off `data-theme` and this file's tokens do not
+   follow it. A plain `color` here beat the landing's slot (an element's own
+   rule always wins over an inherited value) and pinned the mark to the app's
+   LIGHT ink on a dark landing page. Read through a variable, the landing sets
+   `--logo-ink: var(--ink)` on the slot and the mark picks it up by inheritance
+   — while every app surface falls back to the app token. Leaving `color`
+   unset instead is not the answer either: `body` carries no colour of its own,
+   so the auth screen's mark came out pure black on near-black. */
 
 .u-logo {
-  object-fit: contain;
-  -webkit-user-drag: none;
-  transition: box-shadow 200ms ease, transform 200ms cubic-bezier(.2,.9,.3,1);
-}
-
-html:not([data-ui]) .u-logo,
-[data-ui="light"] .u-logo {
-  box-shadow: 0 1px 2px rgba(29,24,16,.16), 0 4px 12px -4px rgba(29,24,16,.30);
-}
-
-[data-ui="dark"] .u-logo {
-  box-shadow: 0 0 0 1px rgba(246,239,232,.13), 0 2px 10px -4px rgba(0,0,0,.7);
-}
-
-[data-ui="legacy"] .u-logo {
-  box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 2px 10px -4px rgba(0,0,0,.6);
+  color: var(--logo-ink, rgb(var(--u-slate-100)));
+  transition: transform 200ms cubic-bezier(.2,.9,.3,1);
 }
 
 /* the sidebar mark is a link to the landing page — it gets the same press

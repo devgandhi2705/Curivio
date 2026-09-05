@@ -125,6 +125,34 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   --weave:       .9;
 }
 
+/* ══ THE DRIVEN VARIABLES, DECLARED NON-INHERITING ════════════════════════
+   These are rewritten every frame the pointer moves or the page scrolls. As
+   ordinary custom properties they INHERIT, and inheritance is an invalidation:
+   writing --tx to a plate marked all thirty of its nodes and edges dirty for a
+   value not one of them reads — ~5ms of style recalc per pointer frame, for a
+   single plate. Registering them confines the recalc to the element that
+   actually uses the value.
+
+   This only holds while every consumer IS the element the engine writes to,
+   which is what `data-tilt-to` exists to guarantee. Today those are:
+     --tx/--ty  .lp-plate · .lp-armil-layer · .lp-corr-stage · .lp-stack svg
+     --mx/--my  .lp-l · .lp-lamp · .lp-ui-layer
+     --sp       .lp-stage-inner · .lp-l · .lp-photo · .lp-photo-light ·
+                .lp-ui-layer · .lp-hint · .lp-rail
+     --ap       .lp-corr · .lp-corr-stage
+   Add a fifth consumer and it needs its own write target, or it silently
+   reads the initial value and never moves.
+
+   `--p` is deliberately NOT here: the staging chain derives --in/--out/--near
+   from it and those ARE read by descendants — the bead inside the seam, the
+   rule inside a day row — so it has to inherit. */
+@property --tx { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --ty { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --mx { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --my { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --sp { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --ap { syntax: "<number>"; inherits: false; initial-value: 0; }
+
 /* ══ AMBIENT ══════════════════════════════════════════════════════════════
    Runs forever, with no user input at all. This is the layer that stops the
    page from ever being visually inert.                                     */
@@ -216,18 +244,32 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-plate {
   position: absolute; pointer-events: none; z-index: 0;
   color: var(--ink-soft);
+  /* Off-screen plates skip style, layout and paint entirely. Every placement
+     below sets an explicit width and height, so the size containment this
+     turns on changes no geometry. */
+  content-visibility: auto;
   animation: lp-plate-drift 24s ease-in-out infinite;
   /* The cursor moves every plate on `translate`, deliberately not `transform` —
      the drift keyframes above already own transform, and two things cannot own
      one property. A plate whose section carries no `data-tilt` just sits at 0. */
   translate: calc(var(--tx, 0) * 26px) calc(var(--ty, 0) * 18px);
-  transition: translate .14s ease-out;
+  /* .08s, not .14s: --tx is rewritten every frame, so this transition never
+     completes -- it just adds its own duration as lag behind the cursor. Short
+     enough now to only smooth the per-frame step, not to trail. */
+  transition: translate .08s linear;
 }
 @keyframes lp-plate-drift {
   0%, 100% { transform: translate3d(0, 0, 0); }
   33%      { transform: translate3d(-9px, 7px, 0); }
   66%      { transform: translate3d(6px, -5px, 0); }
 }
+/* `data-idle` is written by the shared observer in Plate.jsx. Ten plates carry
+   ~350 of this page's ~405 running animations — one per node, one per edge —
+   and Chrome ticks every one whether or not it is on screen (content-visibility
+   does not stop an SVG subtree's animations). Measured: 6.8ms of every frame
+   with the page sitting still. Paused, that goes to nothing. */
+.lp-plate[data-idle="true"],
+.lp-plate[data-idle="true"] * { animation-play-state: paused; }
 .lp-plate-node {
   fill: currentColor; opacity: .3;
   animation: lp-plate-twinkle calc(var(--t, 7s) * .55) ease-in-out infinite;
@@ -240,7 +282,13 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   stroke: currentColor; stroke-width: .7; opacity: .3;
   stroke-dasharray: 1; stroke-dashoffset: 1;
   animation: lp-plate-draw 8.5s ease-in-out infinite;
-  animation-delay: var(--d, 0s);
+  /* Negative, so an edge STARTS mid-cycle rather than at dashoffset 1. The
+     plates only run while near the viewport (see Plate.jsx), and an 8.5s draw
+     means one woken on arrival is still a bare scatter of dots when you get
+     there — which is the void it was drawn to fill. -4.2s lands inside the
+     38-62% plateau where the edge is fully drawn, so a plate is a figure the
+     moment it is on screen and carries on from there. */
+  animation-delay: calc(var(--d, 0s) - 4.2s);
 }
 @keyframes lp-plate-draw {
   0%, 8%    { stroke-dashoffset: 1; }
@@ -251,7 +299,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   stroke: currentColor; stroke-width: .6; opacity: .22;
   stroke-dasharray: 1; stroke-dashoffset: 1;
   animation: lp-plate-ring 15s ease-in-out infinite;
-  animation-delay: var(--d, 0s);
+  /* same reasoning as the edges; 46-66% is this one's drawn plateau */
+  animation-delay: calc(var(--d, 0s) - 8s);
 }
 @keyframes lp-plate-ring {
   0%, 6%   { stroke-dashoffset: 1; }
@@ -310,14 +359,14 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   z-index: 3; width: 112px;
   font-family: var(--sans); font-size: .6875rem; line-height: 1.2;
   opacity: clamp(0, calc(var(--sp, 0) * 2.2 - .5), 1);
-  transition: opacity .3s ease;
+  transition: opacity .24s ease;
 }
 .lp-rail ol { display: flex; flex-direction: column; gap: .55rem; }
 .lp-rail a {
   display: flex; align-items: baseline; justify-content: space-between; gap: .5rem;
   color: var(--ink-soft); opacity: .42; text-decoration: none;
   border-left: 1px solid transparent; padding-left: .6rem;
-  transition: opacity .3s ease, color .3s ease, border-color .3s ease, padding-left .3s ease;
+  transition: opacity .24s ease, color .24s ease, border-color .24s ease, padding-left .24s ease;
 }
 .lp-rail li[data-on="true"] a {
   opacity: 1; color: var(--ink);
@@ -375,9 +424,10 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
     rotateX(calc(-10deg + var(--ty, 0) * -34deg))
     rotateY(calc(var(--tx, 0) * 52deg))
     rotateZ(calc(var(--p, 0) * 12deg));
-  /* slower than the .13s the through-objects use: leaving a hover-only piece
-     should settle back, not snap */
-  transition: transform .3s cubic-bezier(.2, .8, .3, 1);
+  /* Still slower than the through-objects, because leaving a hover-only piece
+     should settle rather than snap — but .3s felt like sludge on the way in,
+     where the cursor is already on the object. */
+  transition: transform .18s cubic-bezier(.2, .8, .3, 1);
   will-change: transform;
 }
 /* An OSCILLATION, not a revolution. A full turn sends every ring through a
@@ -477,7 +527,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
     translate3d(calc(var(--tx, 0) * 44px), calc(var(--ty, 0) * 34px), calc(-60px + var(--ap, 0) * -3200px))
     rotateX(calc(6deg + var(--ty, 0) * -16deg))
     rotateY(calc(-10deg + var(--tx, 0) * 24deg));
-  transition: transform .13s ease-out;
+  /* same call as .lp-plate: frame-driven value, so keep the filter short */
+  transition: transform .08s linear;
   will-change: transform;
 }
 /* The slot holds the placement, the page does the floating. One element
@@ -560,11 +611,11 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   width: 100%; height: auto; overflow: visible;
   transform: translate3d(calc(var(--tx, 0) * 7px), calc(var(--ty, 0) * 5px), 0)
              rotateX(calc(var(--ty, 0) * -20deg)) rotateY(calc(var(--tx, 0) * 26deg));
-  transition: transform .3s cubic-bezier(.2, .8, .3, 1);
+  transition: transform .18s cubic-bezier(.2, .8, .3, 1);
 }
 .lp-stack-sheet {
   transform: translate(0, 0);
-  transition: transform .5s cubic-bezier(.2, .8, .3, 1), opacity .45s ease;
+  transition: transform .36s cubic-bezier(.2, .8, .3, 1), opacity .32s ease;
   opacity: .42;
 }
 /* the read move steps out of the stack, toward the reader and to the left —
@@ -573,7 +624,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-stack-face {
   fill: color-mix(in srgb, var(--card) 88%, transparent);
   stroke: var(--rule); stroke-width: 1.1;
-  transition: stroke .45s ease, fill .45s ease;
+  transition: stroke .32s ease, fill .32s ease;
 }
 .lp-stack-sheet[data-on="true"] .lp-stack-face {
   stroke: currentColor;
@@ -581,7 +632,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 }
 .lp-stack-rule {
   stroke: var(--ink-soft); stroke-width: 1; opacity: .3;
-  transition: opacity .45s ease;
+  transition: opacity .32s ease;
 }
 .lp-stack-sheet[data-on="true"] .lp-stack-rule { opacity: .6; }
 /* the rail collapses to static under 1024 and the column stops being a
@@ -689,7 +740,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   border-radius: .1em;
   padding: 0 .1em; margin: 0 -.1em;
   -webkit-box-decoration-break: clone; box-decoration-break: clone;
-  transition: background-size .42s cubic-bezier(.2, .7, .3, 1);
+  transition: background-size .3s cubic-bezier(.2, .7, .3, 1);
 }
 .lp-mark-blue { --mark: var(--mark-blue); }
 .lp-mark-pink { --mark: var(--mark-pink); }
@@ -759,28 +810,21 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-live::after { animation: lp-pulse 2.4s ease-in-out infinite; }
 
 /* ── LOGO SLOT ───────────────────────────────────────────────────────────── */
+/* The mark is drawn geometry taking `currentColor`, so the slot's whole job is
+   to hand it the page's ink and get out of the way. Everything that used to
+   live here — a moss square, a clip radius, a shadow on paper and a hairline
+   ring on charcoal — existed to seat an opaque dark TILE in the page. With no
+   tile there is nothing to seat: the mark is the same ink as the wordmark
+   beside it and follows the theme switch for free. */
 .lp-logo-slot {
   display: inline-flex; align-items: center; justify-content: center;
-  flex: none; border-radius: 6px; overflow: hidden;
-  background: var(--cta-bg); color: var(--cta-fg);
+  flex: none;
+  /* `--logo-ink`, not `color`: the mark reads the variable (see .u-logo in
+     theme.css), which is what lets the landing's own `data-theme` win over the
+     app tokens the mark otherwise falls back to. */
+  --logo-ink: var(--ink);
 }
-.lp-logo-slot > svg, .lp-logo-slot > img { width: 100%; height: 100%; display: block; }
-
-/* Holding the real mark rather than the placeholder glyph: the artwork is an
-   opaque tile whose rounded corners live in its own alpha channel, so the slot
-   must stop painting a moss square behind it (it would show through those
-   corners) and stop clipping at a radius that is not the tile's. The shadow is
-   what sets a dark tile into warm paper instead of punching a hole in it. */
-.lp-logo-slot:has(img) {
-  background: none;
-  overflow: visible;
-  border-radius: 0;
-  box-shadow: none;
-}
-.lp-logo-slot > img { box-shadow: var(--shadow-sm); }
-.lp[data-theme="dark"] .lp-logo-slot > img {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
-}
+.lp-logo-slot > svg { width: 100%; height: 100%; display: block; }
 
 /* ── nav ─────────────────────────────────────────────────────────────────── */
 /* Glass, not a painted bar: the page has to be visibly moving underneath it.
@@ -861,11 +905,18 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
    entirely. `--lamp` is therefore a per-mode strength, not one shared number,
    and on paper it reads as a soft shade following the cursor rather than a
    glow. Radius is a touch wider so the falloff stays soft at the new strength. */
+/* The gradient is FIXED and the plane is what moves — the same call already
+   made for .lp-photo-light below, for the same reason. `at calc(50% + --mx*28%)`
+   put the cursor inside the gradient's own stops, so a layer 1.5x the viewport
+   was re-rasterised on every pointer frame; translating a pre-rasterised layer
+   by the same 28% of its own box is the identical picture, on the compositor. */
 .lp-lamp {
   position: absolute; inset: -25%; pointer-events: none; z-index: 0;
   background: radial-gradient(
-    40% 40% at calc(50% + var(--mx) * 28%) calc(50% + var(--my) * 28%),
+    40% 40% at 50% 50%,
     color-mix(in srgb, var(--moss) var(--lamp), transparent) 0%, transparent 68%);
+  transform: translate3d(calc(var(--mx, 0) * 28%), calc(var(--my, 0) * 28%), 0);
+  will-change: transform;
 }
 
 /* floating source cards — ambient float + cursor depth + dock on grade */
@@ -890,7 +941,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
      beats a plain declaration, so `[data-rejected] { opacity: .28 }` would have
      stopped working the moment the badges got an entrance. */
   opacity: var(--src-o, 1);
-  transition: transform .9s cubic-bezier(.3,.8,.3,1), opacity .7s ease;
+  transition: transform .58s cubic-bezier(.3,.8,.3,1), opacity .46s ease;
   /* last of the three planes to arrive — photo, then interface, then details */
   animation: lp-src-in .75s cubic-bezier(.2,.8,.3,1) .95s both;
 }
@@ -1118,7 +1169,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-scrub {
   display: block; height: 2px; background: var(--moss);
   transform-origin: left center; transform: scaleX(var(--v, 0));
-  transition: transform .5s cubic-bezier(.3,.8,.3,1);
+  transition: transform .36s cubic-bezier(.3,.8,.3,1);
 }
 
 .lp-scenes { position: relative; height: 300px; }
@@ -1127,7 +1178,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   opacity: var(--on, 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * var(--dir, 30px)), 0);
   filter: blur(calc((1 - var(--on, 0)) * 2.5px));
-  transition: opacity .46s ease, transform .56s cubic-bezier(.2,.8,.3,1), filter .46s ease;
+  transition: opacity .33s ease, transform .4s cubic-bezier(.2,.8,.3,1), filter .33s ease;
   will-change: transform, opacity;
 }
 
@@ -1162,7 +1213,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   opacity: var(--on, 0);
   transform: translate3d(calc((1 - var(--on, 0)) * -10px), 0, 0)
              scale(calc(.96 + var(--on, 0) * .04));
-  transition: opacity .34s ease, transform .34s cubic-bezier(.2,.85,.3,1);
+  transition: opacity .27s ease, transform .27s cubic-bezier(.2,.85,.3,1);
 }
 .lp-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lp-attach-meta { color: var(--ink-soft); flex: none; font-variant-numeric: tabular-nums; }
@@ -1175,7 +1226,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   padding: .32rem .6rem; border-radius: 4px;
   border: 1px solid var(--rule); background: var(--sunk); color: var(--ink-soft);
   box-shadow: 0 2px 0 var(--rule);
-  transition: transform .14s ease, box-shadow .14s ease, background .22s ease, color .22s ease;
+  transition: transform .14s ease, box-shadow .14s ease, background .18s ease, color .18s ease;
 }
 .lp-key[data-on="true"] {
   transform: translateY(2px); box-shadow: 0 0 0 var(--rule);
@@ -1189,7 +1240,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   letter-spacing: .09em; text-transform: uppercase;
   color: var(--ink-soft); margin-bottom: .45rem;
   opacity: calc(var(--on, 1) * .68);
-  transition: opacity .3s ease;
+  transition: opacity .24s ease;
 }
 .lp-scene-head-2 { margin-top: .95rem; }
 .lp-row {
@@ -1197,7 +1248,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--sans); font-size: .75rem; font-variant-numeric: tabular-nums;
   opacity: var(--on, 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * 7px), 0);
-  transition: opacity .34s ease, transform .34s ease;
+  transition: opacity .27s ease, transform .27s ease;
 }
 .lp-row-name { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lp-row-meta { color: var(--ink-soft); flex: none; }
@@ -1221,7 +1272,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-scan::before {
   content: ""; position: absolute; inset: 0; background: currentColor;
   transform: scaleX(0); transform-origin: left center;
-  transition: transform .55s cubic-bezier(.2,.8,.3,1);
+  transition: transform .4s cubic-bezier(.2,.8,.3,1);
 }
 .lp-scan[data-done="true"]::before { transform: scaleX(1); }
 
@@ -1234,7 +1285,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-bar > i {
   display: block; height: 100%; border-radius: 2px; background: currentColor;
   transform-origin: left center; transform: scaleX(calc(var(--v, 0) * var(--on, 0)));
-  transition: transform .6s cubic-bezier(.2,.8,.3,1) .12s;
+  transition: transform .39s cubic-bezier(.2,.8,.3,1) .12s;
 }
 
 .lp-tally {
@@ -1242,7 +1293,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--sans); font-size: .6875rem; font-weight: 700; color: var(--moss);
   opacity: var(--on, 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
-  transition: opacity .4s ease, transform .4s ease;
+  transition: opacity .29s ease, transform .29s ease;
 }
 
 /* ── ③ OUTPUT ──────────────────────────────────────────────────────────────
@@ -1256,15 +1307,15 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   opacity: calc(.15 + var(--on, 0) * .85);
   clip-path: inset(0 calc((1 - var(--on, 0)) * 100%) 0 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
-  transition: opacity .4s ease, transform .5s cubic-bezier(.2,.8,.3,1),
-              clip-path .62s cubic-bezier(.3,.75,.35,1);
+  transition: opacity .29s ease, transform .36s cubic-bezier(.2,.8,.3,1),
+              clip-path .4s cubic-bezier(.3,.75,.35,1);
 }
 .lp-lesson-p {
   font-family: var(--serif); font-size: clamp(.8125rem, .95vw, .9375rem);
   line-height: 1.58; color: var(--ink-soft); margin-bottom: .55rem; max-width: 34em;
   opacity: calc(.08 + var(--on, 0) * .92);
   clip-path: inset(0 0 calc((1 - var(--on, 0)) * 100%) 0);
-  transition: opacity .45s ease, clip-path .6s cubic-bezier(.3,.75,.35,1);
+  transition: opacity .32s ease, clip-path .39s cubic-bezier(.3,.75,.35,1);
 }
 
 /* the two card actions the app ships — this is where the demo stops being a
@@ -1277,7 +1328,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-lesson-foot::after {
   content: ""; display: block; order: 2; height: 1px; background: var(--rule);
   transform: scaleX(var(--on, 0)); transform-origin: left center;
-  transition: transform .5s cubic-bezier(.3,.8,.3,1);
+  transition: transform .36s cubic-bezier(.3,.8,.3,1);
 }
 .lp-lesson-foot { display: flex; flex-direction: column; }
 .lp-actions { order: 1; }
@@ -1291,8 +1342,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   opacity: var(--on, 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * 8px), 0)
              scale(calc(.94 + var(--on, 0) * .06));
-  transition: opacity .34s ease calc(var(--i, 0) * 90ms),
-              transform .38s cubic-bezier(.2, 1.3, .4, 1) calc(var(--i, 0) * 90ms);
+  transition: opacity .27s ease calc(var(--i, 0) * 55ms),
+              transform .27s cubic-bezier(.2, 1.3, .4, 1) calc(var(--i, 0) * 55ms);
 }
 /* the citation is the payoff of the whole demo: the claim, then the receipt */
 .lp-cite, .lp-cites b {
@@ -1303,7 +1354,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-cite {
   display: inline-block; margin-left: .3em; vertical-align: super;
   opacity: var(--on, 0); transform: scale(calc(.5 + var(--on, 0) * .5));
-  transition: opacity .3s ease, transform .34s cubic-bezier(.2, 1.35, .4, 1);
+  transition: opacity .24s ease, transform .27s cubic-bezier(.2, 1.35, .4, 1);
 }
 .lp-cites { display: flex; flex-direction: column; gap: .3rem; padding-top: .7rem; }
 .lp-cites > span {
@@ -1312,7 +1363,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   opacity: var(--on, 0);
   transform: translate3d(calc((1 - var(--on, 0)) * -8px), 0, 0);
-  transition: opacity .36s ease, transform .36s ease;
+  transition: opacity .26s ease, transform .26s ease;
 }
 .lp-cites b { flex: none; }
 
@@ -1337,10 +1388,10 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-word > span {
   display: inline-block; transform: translateY(102%);
   animation: lp-set .82s cubic-bezier(.16, .84, .3, 1) forwards;
-  animation-delay: calc(var(--i) * 75ms);
+  animation-delay: calc(var(--i) * 50ms);
 }
 @keyframes lp-set { to { transform: translateY(0); } }
-.lp-fade-up { opacity: 0; animation: lp-fade .7s ease forwards; animation-delay: calc(var(--i) * 75ms + .4s); }
+.lp-fade-up { opacity: 0; animation: lp-fade .7s ease forwards; animation-delay: calc(var(--i) * 50ms + .4s); }
 @keyframes lp-fade { to { opacity: 1; } }
 
 /* Tablet: the scene survives, scaled back. The photograph pulls in and loses
@@ -1456,7 +1507,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   display: flex; align-items: center; gap: .55rem;
   border-left: 2px solid var(--rule);
   padding-left: 1rem;
-  transition: border-color .4s ease, opacity .4s ease;
+  transition: border-color .29s ease, opacity .29s ease;
   opacity: .34;
 }
 .lp-step[data-active="true"] { opacity: 1; border-left-color: currentColor; }
@@ -1466,7 +1517,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   width: 5px; height: 5px; border-radius: 50%; flex: none;
   background: var(--rule);
   transform: scale(1);
-  transition: background .35s ease, transform .35s cubic-bezier(.3,.8,.3,1.3), box-shadow .35s ease;
+  transition: background .25s ease, transform .25s cubic-bezier(.3,.8,.3,1.3), box-shadow .25s ease;
 }
 .lp-step[data-active="true"] .lp-step-dot {
   background: currentColor; transform: scale(1.7);
@@ -1485,7 +1536,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   padding-left: 1.25rem;
   opacity: .62;
   transform: translate3d(0, 0, 0);
-  transition: opacity .45s ease, border-color .45s ease, transform .45s cubic-bezier(.2,.8,.3,1);
+  transition: opacity .32s ease, border-color .32s ease, transform .32s cubic-bezier(.2,.8,.3,1);
 }
 .lp-blockrow[data-active="true"] { opacity: 1; border-left-color: currentColor; transform: translate3d(5px, 0, 0); }
 
@@ -1495,7 +1546,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-an-icon-wrap {
   animation: lp-breathe 5s ease-in-out infinite;
   opacity: .55;
-  transition: opacity .4s ease;
+  transition: opacity .29s ease;
 }
 .lp-blockrow[data-active="true"] .lp-an-icon-wrap { opacity: 1; animation-play-state: paused; }
 .lp-an-icon { width: 30px; height: 30px; color: currentColor; }
@@ -1504,7 +1555,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-an-bar {
   transform-origin: bottom center;
   transform: scaleY(.22);
-  transition: transform .55s cubic-bezier(.2,.8,.3,1) var(--bd, 0s);
+  transition: transform .4s cubic-bezier(.2,.8,.3,1) var(--bd, 0s);
 }
 .lp-blockrow[data-active="true"] .lp-an-bar { transform: scaleY(1); }
 
@@ -1514,8 +1565,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
    typed line — the ink resolves it, rather than a plain fade. */
 .lp-an-draw {
   stroke-dasharray: 1; stroke-dashoffset: 1; opacity: .4;
-  transition: stroke-dashoffset .75s cubic-bezier(.2,.8,.3,1) var(--dd, 0s),
-              opacity .4s ease var(--dd, 0s);
+  transition: stroke-dashoffset .49s cubic-bezier(.2,.8,.3,1) var(--dd, 0s),
+              opacity .29s ease var(--dd, 0s);
 }
 .lp-blockrow[data-active="true"] .lp-an-draw { stroke-dashoffset: 0; opacity: 1; }
 
@@ -1523,7 +1574,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-an-beam {
   transform-origin: 16px 11px;
   transform: rotate(0deg);
-  transition: transform .6s cubic-bezier(.3,.6,.3,1.35);
+  transition: transform .39s cubic-bezier(.3,.6,.3,1.35);
 }
 .lp-blockrow[data-active="true"] .lp-an-beam { transform: rotate(-7deg); }
 
@@ -1594,14 +1645,14 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   background: currentColor;
   opacity: clamp(.25, calc(.25 + var(--near, 0) * .75), 1);
   transform: translateY(calc((1 - clamp(0, var(--near, 0), 1)) * -7px));
-  transition: opacity .4s ease calc(var(--i) * 60ms),
-              transform .45s cubic-bezier(.2, 1.2, .4, 1) calc(var(--i) * 60ms);
+  transition: opacity .29s ease calc(var(--i) * 40ms),
+              transform .32s cubic-bezier(.2, 1.2, .4, 1) calc(var(--i) * 40ms);
 }
 @media (max-width: 767px) { .lp-seam { display: none; } }
 
 .lp-day { position: relative; }
 .lp-day + .lp-day { margin-top: clamp(3.5rem, 9vh, 7rem); }
-.lp-day-rule { height: 1px; background: var(--rule); transform-origin: left center; transform: scaleX(var(--near, 1)); transition: transform .5s ease; }
+.lp-day-rule { height: 1px; background: var(--rule); transform-origin: left center; transform: scaleX(var(--near, 1)); transition: transform .36s ease; }
 .lp-day-n {
   font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums;
   font-size: .75rem; letter-spacing: .02em;
@@ -1628,7 +1679,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-loop-num {
   color: var(--ink); font-weight: 700;
   opacity: clamp(.5, calc(.5 + var(--near, 0) * .45), .95);
-  transition: opacity .4s ease;
+  transition: opacity .29s ease;
 }
 .lp-loop-body { max-width: 34rem; }
 
@@ -1651,7 +1702,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--sans); font-weight: 700; font-variant-numeric: tabular-nums;
   font-size: 1.75rem; line-height: 1; color: var(--ink);
   opacity: clamp(.14, calc(.14 + var(--near, 0) * .5), .64);
-  transition: opacity .4s ease;
+  transition: opacity .29s ease;
 }
 .lp-feat-list { display: flex; flex-direction: column; gap: .7rem; }
 .lp-feat-list li { display: flex; gap: .65rem; align-items: baseline; }
@@ -1692,8 +1743,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-fx {
   opacity: var(--on, 0);
   transform: translate3d(0, calc((1 - var(--on, 0)) * 6px), 0);
-  transition: opacity .34s ease calc(var(--i, 0) * 80ms),
-              transform .38s cubic-bezier(.2, .8, .3, 1) calc(var(--i, 0) * 80ms);
+  transition: opacity .27s ease calc(var(--i, 0) * 50ms),
+              transform .27s cubic-bezier(.2, .8, .3, 1) calc(var(--i, 0) * 50ms);
 }
 /* Same beat, but the element never leaves — it waits at .24 and lights up.
    For a fixed list whose members arrive one per beat (the offline stores, the
@@ -1730,7 +1781,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--sans); font-size: .75rem; font-weight: 500;
   padding: .3rem .5rem; border-radius: 4px; color: var(--ink);
   background: color-mix(in srgb, var(--card) 70%, transparent);
-  transition: background .2s ease, color .2s ease, transform .2s cubic-bezier(.2,.8,.3,1);
+  transition: background .16s ease, color .16s ease, transform .16s cubic-bezier(.2,.8,.3,1);
 }
 /* the action about to be taken — reads as the cursor resting on it */
 .lp-pop-btn[data-armed="true"] {
@@ -1756,7 +1807,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--sans); font-size: .6875rem;
   padding: .22rem .45rem; border-radius: 4px;
   border: 1px solid var(--rule); color: var(--ink-soft);
-  animation: lp-fade .3s ease both; animation-delay: calc(var(--i) * 60ms);
+  animation: lp-fade .3s ease both; animation-delay: calc(var(--i) * 40ms);
 }
 .lp-langc[data-armed="true"] { background: var(--cta-bg); color: var(--cta-fg); border-color: transparent; }
 .lp-tr { font-family: var(--serif); font-size: 1.0625rem; color: var(--ink); line-height: 1.4; }
@@ -1855,14 +1906,14 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-notetxt {
   font-family: var(--serif); font-size: .75rem; line-height: 1.4; color: var(--ink);
   clip-path: inset(0 100% 0 0);
-  transition: clip-path .9s cubic-bezier(.3,.75,.35,1);
+  transition: clip-path .58s cubic-bezier(.3,.75,.35,1);
 }
 .lp-notetxt[data-on="true"] { clip-path: inset(0 0 0 0); }
 .lp-sbars { display: flex; align-items: flex-end; gap: 3px; height: 16px; margin-top: auto; }
 .lp-sbars i {
   flex: 1 1 auto; border-radius: 1px; background: var(--rule);
   height: 100%; transform-origin: bottom center; transform: scaleY(.35);
-  transition: transform .45s cubic-bezier(.2,.8,.3,1) var(--bd, 0s), background .3s ease var(--bd, 0s);
+  transition: transform .32s cubic-bezier(.2,.8,.3,1) var(--bd, 0s), background .24s ease var(--bd, 0s);
 }
 .lp-sbars i[data-on="true"] { transform: scaleY(1); background: currentColor; }
 
@@ -1875,7 +1926,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 }
 .lp-off[data-offline="true"] .lp-off-top { color: var(--pink-ink); }
 .lp-sig { width: 22px; height: 22px; flex: none; }
-.lp-sig-arc { opacity: 1; transition: opacity .35s ease var(--ad, 0s); }
+.lp-sig-arc { opacity: 1; transition: opacity .25s ease var(--ad, 0s); }
 /* .5, not .22: at 22px three faint arcs under a full-strength slash left only
    the slash legible — the glyph read as a pen, not as a signal that was cut */
 .lp-sig[data-off="true"] .lp-sig-arc { opacity: .5; }
@@ -1883,7 +1934,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 /* the slash DRAWS across when the signal goes, rather than appearing */
 .lp-sig-slash {
   stroke-dasharray: 1; stroke-dashoffset: 1;
-  transition: stroke-dashoffset .45s cubic-bezier(.2,.8,.3,1);
+  transition: stroke-dashoffset .32s cubic-bezier(.2,.8,.3,1);
 }
 .lp-sig[data-off="true"] .lp-sig-slash { stroke-dashoffset: 0; }
 .lp-off-state {
@@ -1904,7 +1955,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-odot {
   width: 6px; height: 6px; border-radius: 50%; flex: none;
   background: var(--rule); transform: scale(1);
-  transition: background .35s ease, transform .35s cubic-bezier(.3,.8,.3,1.4);
+  transition: background .25s ease, transform .25s cubic-bezier(.3,.8,.3,1.4);
 }
 .lp-odot[data-on="true"] { background: var(--moss); transform: scale(1.25); }
 /* the payoff: with the signal gone, a lesson is still sitting there open */
@@ -1976,6 +2027,17 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   height: 500px;
   perspective: 1250px;
   perspective-origin: 50% 46%;
+}
+/* The 500px box was sized by eye; the artwork inside it measures 268px tall
+   (cards run 116px-384px), so 232px of the box was empty slack — 116px above
+   the stack and 116px below. At lg that slack is what put a ~200px hole above
+   the headline and a ~340px one below the index row, because the grid centres
+   the 293px copy column against whatever this box claims to be. Sizing the box
+   to its own art removes both holes at once and lets the copy stay centred
+   against it, which is the composition this section was built around.
+   Only at lg: below that the grid is a single column and the box is on its own. */
+@media (min-width: 1024px) {
+  .lp-pkg { height: 340px; }
 }
 /* [data-stage] already writes this element's own opacity and entrance
    translate; --near inherits from it into everything below. */
@@ -2127,8 +2189,8 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   /* one overshoot and done — the same physical read as the pointer spring,
      expressed as a curve because this one is a state change, not a signal */
   transition:
-    transform .48s cubic-bezier(.22, 1.28, .36, 1),
-    box-shadow .3s ease, opacity .3s ease, border-color .3s ease;
+    transform .35s cubic-bezier(.22, 1.28, .36, 1),
+    box-shadow .24s ease, opacity .24s ease, border-color .24s ease;
 }
 /* driven by the hit layer's pointer/focus state, since the card itself no
    longer receives events */
@@ -2196,7 +2258,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
 .lp-pkg-art {
   display: block;
   color: currentColor;
-  transition: transform .48s cubic-bezier(.22, 1.28, .36, 1);
+  transition: transform .35s cubic-bezier(.22, 1.28, .36, 1);
 }
 .lp-pkg-art svg { width: 92px; height: auto; display: block; }
 .lp-pkg-card[data-on="true"] .lp-pkg-art { transform: scale(1.14); transform-origin: left top; }
@@ -2210,7 +2272,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   font-family: var(--serif); font-size: .8125rem; line-height: 1.35;
   color: var(--ink-soft);
   opacity: 0; transform: translateY(6px);
-  transition: opacity .3s ease .1s, transform .38s cubic-bezier(.22, 1.28, .36, 1) .1s;
+  transition: opacity .24s ease .1s, transform .27s cubic-bezier(.22, 1.28, .36, 1) .1s;
 }
 .lp-pkg-card[data-on="true"] .lp-pkg-reveal { opacity: 1; transform: none; }
 /* The front card reads its line from the start, so the object says what it is
@@ -2460,7 +2522,7 @@ html:has(.lp[data-theme="dark"]) { background: #211D17; }
   content: ""; position: absolute; top: 1px; left: 1px;
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--ink-soft);
-  transition: transform .2s cubic-bezier(.2,.8,.3,1), background .2s ease;
+  transition: transform .16s cubic-bezier(.2,.8,.3,1), background .16s ease;
 }
 .lp[data-motion="on"] .lp-motion-track { border-color: var(--moss); }
 .lp[data-motion="on"] .lp-motion-track::after { transform: translateX(12px); background: var(--moss); }

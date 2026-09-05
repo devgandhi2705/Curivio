@@ -349,7 +349,9 @@ export default function AuthPage() {
               ) : (
                 <>
                   <p className="text-xs text-gray-400 leading-relaxed">
-                    Code sent to <span className="text-slate-100 font-medium">{forgotEmail}</span>
+                    If an account exists for <span className="text-slate-100 font-medium">{forgotEmail}</span>, a
+                    6-digit code is on its way — check your spam folder too. No email after a minute means there is
+                    no account for that address.
                   </p>
 
                   <div>

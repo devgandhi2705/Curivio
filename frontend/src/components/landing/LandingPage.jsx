@@ -1,5 +1,6 @@
-import { useRef, useEffect, useLayoutEffect, useState } from "react"
+import { memo, useRef, useEffect, useLayoutEffect, useState } from "react"
 import Plate from "../shared/Plate.jsx"
+import LogoMark from "../shared/LogoMark.jsx"
 import "../../landing.css"
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -76,6 +77,59 @@ function useMotionEngine(refs, setActive, motionOn) {
     if (!motionOn) return
 
     const pointer = { x: 0, y: 0, tx: 0, ty: 0 }
+
+    /* ── WHY THE WRITES ARE SCOPED AND DEDUPED ─────────────────────────────
+       Setting a custom property is a style INVALIDATION, not an assignment:
+       every element inheriting it is dirtied and recalculated. Measured on
+       this page, one setProperty on the `.lp` root cost 48ms of recalc — all
+       1235 elements inherit from it and 400 of them carry a running animation
+       whose computed style then has to be re-resolved. Six root writes a frame
+       was the whole of the jank; the rects and the maths cost 0.21ms combined.
+
+       Two rules fix it:
+         · write to the NARROWEST element that actually reads the variable,
+         · never write a value the element already holds.
+       `put` enforces the second, and makes visibility culling mostly free: an
+       element off the bottom of the page has `--p` clamped to exactly -1 every
+       frame, so the write is dropped with no viewport test at all. */
+    const written = new WeakMap()
+    const put = (el, prop, v) => {
+      if (!el) return
+      let m = written.get(el)
+      if (!m) { m = new Map(); written.set(el, m) }
+      if (m.get(prop) === v) return
+      m.set(prop, v)
+      el.style.setProperty(prop, v)
+    }
+
+    /* fixed furniture — resolved once, never remounts */
+    const rail = root.querySelector(".lp-rail")
+    const progress = root.querySelector(".lp-progress")
+
+    /* The hero's variables are non-inheriting (see the @property block in
+       landing.css), so they go to the elements that read them rather than to
+       the section. Re-queried each frame: the floating source cards remount on
+       every beat of the demo timer, so a cached list goes stale. Keep these in
+       step with that @property block. */
+    const HERO_POINTER = ".lp-l, .lp-lamp, .lp-ui-layer"
+    const HERO_SCROLL  = ".lp-stage-inner, .lp-l, .lp-photo, .lp-photo-light, .lp-ui-layer, .lp-hint"
+
+    /* A section carries `data-tilt` so the pointer's reach is measured across
+       the whole section — but only its plate reads `--tx`. Writing to the
+       section dirties its ~400 descendants for one <svg>. `data-tilt-to` names
+       the real consumers: measure wide, write narrow. Targets are measured
+       here in the read pass so the write pass can skip off-screen ones without
+       forcing a second layout — the day corridor alone measured 13ms of recalc
+       per pointer frame while three screens above the viewport. */
+    const targetsOf = (el, attr) => {
+      const sel = el.dataset[attr]
+      const nodes = sel ? el.querySelectorAll(sel) : [el]
+      const out = []
+      for (const n of nodes) out.push([n, n.getBoundingClientRect()])
+      return out
+    }
+    const onScreen = (r, vh) => r.bottom > -120 && r.top < vh + 120
+
     let raf = 0
     let running = true
 
@@ -98,6 +152,8 @@ function useMotionEngine(refs, setActive, motionOn) {
       for (const el of staged) stagedRects.push(el.getBoundingClientRect())
 
       const heroRect = refs.hero.current?.getBoundingClientRect()
+      const heroPointer = refs.hero.current?.querySelectorAll(HERO_POINTER) ?? []
+      const heroScroll  = refs.hero.current?.querySelectorAll(HERO_SCROLL) ?? []
       const bandRect = refs.band.current?.getBoundingClientRect()
       const blockEls = root.querySelectorAll("[data-block]")
       const blockRects = []
@@ -119,33 +175,44 @@ function useMotionEngine(refs, setActive, motionOn) {
       /* objects that tilt toward the pointer, measured from their OWN centre */
       const tiltEls = root.querySelectorAll("[data-tilt]")
       const tiltRects = []
-      for (const el of tiltEls) tiltRects.push(el.getBoundingClientRect())
+      const tiltTargets = []
+      for (const el of tiltEls) {
+        tiltRects.push(el.getBoundingClientRect())
+        tiltTargets.push(targetsOf(el, "tiltTo"))
+      }
 
       /* how far a section has been scrolled through, 0 → 1 */
       const progEls = root.querySelectorAll("[data-prog]")
       const progRects = []
-      for (const el of progEls) progRects.push(el.getBoundingClientRect())
+      const progTargets = []
+      for (const el of progEls) {
+        progRects.push(el.getBoundingClientRect())
+        progTargets.push(targetsOf(el, "progTo"))
+      }
 
       /* objects running a real spring toward the pointer */
       const springEls = root.querySelectorAll("[data-spring]")
       const springRects = []
       for (const el of springEls) springRects.push(el.getBoundingClientRect())
 
-      /* ── WRITE PASS ────────────────────────────────────────────────────── */
-      const set = (k, v) => root.style.setProperty(k, v)
-
+      /* ── WRITE PASS — everything goes through `put`, see the note above ── */
       staged.forEach((el, i) => {
-        el.style.setProperty("--p", stageOf(stagedRects[i], vh).toFixed(4))
+        put(el, "--p", stageOf(stagedRects[i], vh).toFixed(4))
       })
 
       if (heroRect) {
         const total = heroRect.height - vh
-        set("--sp", clamp01(total > 0 ? -heroRect.top / total : 0).toFixed(4))
+        const sp = clamp01(total > 0 ? -heroRect.top / total : 0).toFixed(4)
+        for (const el of heroScroll) put(el, "--sp", sp)
+        /* the rail is the one `--sp` consumer outside the hero: it arrives as
+           the hero leaves, which is the whole reason it reads the value */
+        put(rail, "--sp", sp)
       }
 
       if (bandRect) {
-        set("--bp", clamp01((vh - bandRect.top) / (vh + bandRect.height)).toFixed(4))
-        set("--band-shift", `${-Math.max(marqueeW - bandW, 0)}px`)
+        put(refs.marquee.current, "--bp",
+            clamp01((vh - bandRect.top) / (vh + bandRect.height)).toFixed(4))
+        put(refs.marquee.current, "--band-shift", `${-Math.max(marqueeW - bandW, 0)}px`)
       }
 
       /* Active block = whichever is nearest the viewport centre. Derived from
@@ -171,14 +238,24 @@ function useMotionEngine(refs, setActive, motionOn) {
         setActive.section(cur)
       }
 
-      /* Pointer eased toward its target so depth never snaps. .13 rather than
-         .075 — at the slower rate the layers lagged far enough behind the
-         cursor that the hero read as drifting on its own rather than
-         responding to you. Still eased, so it never feels glued to the mouse. */
-      pointer.x += (pointer.tx - pointer.x) * 0.13
-      pointer.y += (pointer.ty - pointer.y) * 0.13
-      set("--mx", pointer.x.toFixed(4))
-      set("--my", pointer.y.toFixed(4))
+      /* Pointer eased toward its target so depth never snaps — but eased
+         against TIME, not against frames. `x += (tx - x) * 0.13` is a per-frame
+         step, so the same code converged 2.4x faster on this 144Hz panel than
+         on a 60Hz one: the hero's weight changed with the monitor. An
+         exponential on dt gives one feel everywhere.
+
+         tau ~= 60ms (k = 16): tighter than the old 128ms-at-60Hz, so the
+         layers sit closer to the cursor and read as responding to you, still
+         damped enough never to feel glued to the mouse. */
+      const follow = 1 - Math.exp(-16 * dt)
+      pointer.x += (pointer.tx - pointer.x) * follow
+      pointer.y += (pointer.ty - pointer.y) * follow
+      /* Once the hero has scrolled away there is nothing here to move, so five
+         screens down a mouse wiggle costs nothing at all. */
+      if (heroRect && onScreen(heroRect, vh)) {
+        const mx = pointer.x.toFixed(4), my = pointer.y.toFixed(4)
+        for (const el of heroPointer) { put(el, "--mx", mx); put(el, "--my", my) }
+      }
 
       proxEls.forEach((el, i) => {
         const r = proxRects[i]
@@ -187,8 +264,9 @@ function useMotionEngine(refs, setActive, motionOn) {
         if (Number.isNaN(dx)) return
         const near = Math.max(0, 1 - Math.hypot(dx, dy) / 300)
         /* clamped to ±9px so a card never leaves its own hit box */
-        el.style.setProperty("--pxo", `${((dx / 300) * near * 9).toFixed(2)}px`)
-        el.style.setProperty("--pyo", `${((dy / 300) * near * 9).toFixed(2)}px`)
+        if (!onScreen(r, vh)) return
+        put(el, "--pxo", `${((dx / 300) * near * 9).toFixed(2)}px`)
+        put(el, "--pyo", `${((dy / 300) * near * 9).toFixed(2)}px`)
       })
 
       /* LOCAL pointer, per object. --mx/--my are normalised across the whole
@@ -213,15 +291,15 @@ function useMotionEngine(refs, setActive, motionOn) {
         const hoverOnly = el.hasAttribute("data-tilt-hover")
         const over = pointer.rawX >= r.left && pointer.rawX <= r.right &&
                      pointer.rawY >= r.top  && pointer.rawY <= r.bottom
-        if (hoverOnly && !over) {
-          /* back to rest — the CSS transition eases it home */
-          el.style.setProperty("--tx", "0")
-          el.style.setProperty("--ty", "0")
-          return
-        }
+        const rest = hoverOnly && !over
+        /* at rest the CSS transition eases it home, so "0" is still a write */
         const reach = Number(el.dataset.tilt) || 520
-        el.style.setProperty("--tx", clamp11((pointer.rawX - (r.left + r.width / 2)) / reach).toFixed(4))
-        el.style.setProperty("--ty", clamp11((pointer.rawY - (r.top + r.height / 2)) / reach).toFixed(4))
+        const tx = rest ? "0" : clamp11((pointer.rawX - (r.left + r.width / 2)) / reach).toFixed(4)
+        const ty = rest ? "0" : clamp11((pointer.rawY - (r.top + r.height / 2)) / reach).toFixed(4)
+        for (const [t, tr] of tiltTargets[i]) {
+          if (!onScreen(tr, vh)) continue
+          put(t, "--tx", tx); put(t, "--ty", ty)
+        }
       })
 
       /* SPRING-DRIVEN objects. `data-tilt` writes the pointer straight into a
@@ -260,9 +338,13 @@ function useMotionEngine(refs, setActive, motionOn) {
         s.vsep += (K * .55 * (turn - s.sep) - D * 1.15 * s.vsep) * dt
         s.sep  += s.vsep * dt
 
-        el.style.setProperty("--sx", s.x.toFixed(4))
-        el.style.setProperty("--sy", s.y.toFixed(4))
-        el.style.setProperty("--sep", Math.max(0, s.sep).toFixed(4))
+        /* the spring keeps integrating off-screen — it is arithmetic, and
+           freezing it mid-flight would make the object jump on re-entry — but
+           nothing is written until there is something to see */
+        if (!onScreen(r, vh)) return
+        put(el, "--sx", s.x.toFixed(4))
+        put(el, "--sy", s.y.toFixed(4))
+        put(el, "--sep", Math.max(0, s.sep).toFixed(4))
       })
 
       /* Section progress, same shape as the hero's --sp: 0 at the moment its
@@ -276,10 +358,14 @@ function useMotionEngine(refs, setActive, motionOn) {
          height it retreats across the whole run of days, which is the point. */
       progEls.forEach((el, i) => {
         const r = progRects[i]
-        el.style.setProperty("--ap", clamp01(r.height > 0 ? -r.top / r.height : 0).toFixed(4))
+        const ap = clamp01(r.height > 0 ? -r.top / r.height : 0).toFixed(4)
+        for (const [t, tr] of progTargets[i]) if (onScreen(tr, vh)) put(t, "--ap", ap)
       })
 
-      set("--read", `${clamp01(window.scrollY / Math.max(docH - vh, 1)) * 100}%`)
+      /* straight onto the bar's own `--w`, so reading progress no longer
+         invalidates the page to move a 2px rule in the nav */
+      put(progress, "--w",
+          `${(clamp01(window.scrollY / Math.max(docH - vh, 1)) * 100).toFixed(2)}%`)
 
       if (running) raf = requestAnimationFrame(loop)
     }
@@ -302,16 +388,17 @@ function useMotionEngine(refs, setActive, motionOn) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LOGO SLOT — the real mark. The artwork is a fixed-colour tile with its
-   rounded corners baked into the asset's alpha, so the slot paints no
-   background of its own and never clips it; see .lp-logo-slot.
+   LOGO SLOT — the shared mark, drawn in the page's own ink.
+   The mark is geometry taking `currentColor` (see components/shared/LogoMark),
+   so the slot only has to hand it a colour: `--ink` follows the theme switch,
+   which is how the mark now goes dark-on-paper and cream-on-charcoal without
+   a second asset. No background, no tile, nothing to clip.
    Sizes in use:  nav = 30px  ·  footer = 24px
    ═════════════════════════════════════════════════════════════════════════ */
 function LogoSlot({ size = 30 }) {
   return (
     <span className="lp-logo-slot" style={{ width: size, height: size }} aria-hidden="true" data-logo-slot="">
-      <img src="/logo.webp" alt="" width={size} height={size} draggable="false"
-           style={{ borderRadius: Math.round(size * 0.232) }} />
+      <LogoMark size={size} />
     </span>
   )
 }
@@ -451,7 +538,7 @@ const ARMIL_NOTES = [
 
 function Armillary() {
   return (
-    <div className="lp-armil" data-stage data-tilt="235" data-tilt-hover aria-hidden="true">
+    <div className="lp-armil" data-stage data-tilt="235" data-tilt-hover data-tilt-to=".lp-armil-layer" aria-hidden="true">
       <div className="lp-armil-3d">
         {/* ambient turn on its own layer, so it never fights the pointer tilt
             for the transform property */}
@@ -515,9 +602,11 @@ const CORRIDOR = ["01", "02", "03", "05", "07", "09", "12", "15", "18", "21", "3
     ry: +(-8 - i * 1.2).toFixed(1),
   }))
 
-function DayCorridor() {
+/* twelve preserve-3d sheets, no props at all — nothing a re-render can
+   change, and the page setState()s on every section the scroll crosses */
+const DayCorridor = memo(function DayCorridor() {
   return (
-    <div className="lp-corr" data-tilt="620" aria-hidden="true">
+    <div className="lp-corr" data-tilt="620" data-tilt-to=".lp-corr-stage" aria-hidden="true">
       <div className="lp-corr-stage">
         {CORRIDOR.map(p => (
           <div key={p.label} className="lp-corr-slot"
@@ -547,7 +636,7 @@ function DayCorridor() {
       </div>
     </div>
   )
-}
+})
 
 /* ── THE PACKAGE ─────────────────────────────────────────────────────────
    This section's eyebrow is "The complete package", so the object is one.
@@ -616,10 +705,12 @@ function ArtOffline() {
     </svg>
   )
 }
-const PKG_ART = [ArtUnpack, ArtChat, ArtKeep, ArtOffline]
+/* Indexed by the same `i` as FEATURES — these three lists are one table split
+   three ways, so an order change has to land in all of them together. */
+const PKG_ART = [ArtChat, ArtUnpack, ArtKeep, ArtOffline]
 /* "Bookmarks · Read Later · Notes" is the honest name in the list below, but
    it will not sit on a card tab. */
-const PKG_SHORT = ["Unpack", "Chat", "Keep", "Offline"]
+const PKG_SHORT = ["Chat", "Unpack", "Keep", "Offline"]
 
 /* ── THE PACKAGE OBJECT ───────────────────────────────────────────────────
    Four feature cards held in one shallow open volume — a card index, not a
@@ -834,7 +925,7 @@ function LessonStack({ active }) {
   const W = 244, D = 42, STEP = 33, BASE = 214
   const plane = cy => `M8 ${cy} L${8 + W / 2} ${cy - D} L${8 + W} ${cy} L${8 + W / 2} ${cy + D} Z`
   return (
-    <div className="lp-stack" data-tilt="300" data-tilt-hover aria-hidden="true">
+    <div className="lp-stack" data-tilt="300" data-tilt-hover data-tilt-to="svg" aria-hidden="true">
       <svg viewBox="0 0 260 250" fill="none" focusable="false">
         {/* drawn bottom-first so upper planes overlap lower ones, which is
             what makes five flat rhombuses read as a stack */}
@@ -1274,7 +1365,7 @@ const ARC = [
    ═════════════════════════════════════════════════════════════════════════ */
 const FEAT_TICK_MS = 900
 
-/* ── 01 · Unpack ─────────────────────────────────────────────────────────── */
+/* ── 02 · Unpack ─────────────────────────────────────────────────────────── */
 const UNPACK = {
   before: "Capacity fades because lithium locks into a growing surface film — the ",
   term:   "solid-electrolyte interphase",
@@ -1361,7 +1452,7 @@ function DemoUnpack({ p }) {
   )
 }
 
-/* ── 02 · Chat ───────────────────────────────────────────────────────────── */
+/* ── 01 · Chat ───────────────────────────────────────────────────────────── */
 function DemoChat({ p }) {
   const on = n => (p >= n ? 1 : 0)
   return (
@@ -1520,22 +1611,22 @@ function DemoOffline({ p }) {
 }
 
 const FEATURES = [
-  { n: "01", tag: "Unpack", ink: "lp-i-blue", period: 14, still: 6, Demo: DemoUnpack,
-    title: "Any word, unpacked where you are",
-    body: "Select anything in a lesson and a popover opens on the spot — no new tab, no losing your place.",
-    list: [
-      ["Explain", " — the plain definition, then what the term means in this exact sentence."],
-      ["Translate", " — Hindi, Gujarati, French or German."],
-      ["Read Aloud", " — for the words you can read but not say."],
-    ] },
-
-  { n: "02", tag: "Chat", ink: "lp-i-moss", period: 10, still: 5, Demo: DemoChat,
+  { n: "01", tag: "Chat", ink: "lp-i-moss", period: 10, still: 5, Demo: DemoChat,
     title: "Ask past the lesson",
     body: "Every card opens into a conversation that already knows what you just read.",
     list: [
       ["Ask About", " or ", "Explain Simply", " — the same card, at whichever depth you need."],
       ["Attach a PDF or an image", " and ask about that instead."],
       ["Live web search", " when a question outruns your files, with the sources it used shown."],
+    ] },
+
+  { n: "02", tag: "Unpack", ink: "lp-i-blue", period: 14, still: 6, Demo: DemoUnpack,
+    title: "Any word, unpacked where you are",
+    body: "Select anything in a lesson and a popover opens on the spot — no new tab, no losing your place.",
+    list: [
+      ["Explain", " — the plain definition, then what the term means in this exact sentence."],
+      ["Translate", " — Hindi, Gujarati, French or German."],
+      ["Read Aloud", " — for the words you can read but not say."],
     ] },
 
   { n: "03", tag: "Bookmarks · Read Later · Notes", ink: "lp-i-yellow", period: 8, still: 5, Demo: DemoKeep,
@@ -1713,7 +1804,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
             </button>
           </div>
         </div>
-        <span className="lp-progress" style={{ "--w": "var(--read)" }} aria-hidden />
+        <span className="lp-progress" aria-hidden />
       </nav>
 
       {/* ══ § 1 HERO — five depth layers ══ */}
@@ -1849,7 +1940,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
          payoff. Runs the depth-of-field staging throughout.
          Carries id="how" because it now leads: the nav's "How it works"
          should land on the loop, which is the thing that answers it. ══ */}
-      <section id="how" data-sec data-prog data-tilt="900" className="lp-above lp-sec py-24 md:py-32">
+      <section id="how" data-sec data-prog data-prog-to=".lp-corr, .lp-corr-stage" data-tilt="900" data-tilt-to=".lp-plate" className="lp-above lp-sec py-24 md:py-32">
         <DayCorridor />
         {/* the left gutter runs the whole height of this section empty — the
             corridor and the armillary both live on the right */}
@@ -1902,7 +1993,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       {/* ══ § 4 ANATOMY — sticky rail, runway derived from content.
          Second now: the arc shows the loop across three weeks, then this
          zooms into what a single lesson in that arc is made of. ══ */}
-      <section id="anatomy" data-sec data-tilt="820" className="lp-anatomy lp-above lp-sec lp-rule-t">
+      <section id="anatomy" data-sec data-tilt-to=".lp-plate" data-tilt="820" className="lp-anatomy lp-above lp-sec lp-rule-t">
         <Plate seed={19} count={16} className="lp-plate-an-l" />
         <Plate seed={73} count={15} className="lp-plate-an-r" />
         <div className="max-w-6xl mx-auto px-5 sm:px-6 pt-20 md:pt-28 pb-20">
@@ -1967,7 +2058,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
          stops being "a daily lesson" and becomes something you live in. Each
          row alternates side so the eye crosses the page rather than running
          down one gutter, and each panel demonstrates its own feature. ══ */}
-      <section id="features" data-sec data-tilt="900" className="lp-above lp-sec lp-rule-t py-24 md:py-32">
+      <section id="features" data-sec data-tilt-to=".lp-plate" data-tilt="900" className="lp-above lp-sec lp-rule-t py-24 md:py-32 lg:pt-12">
         {/* the wires take the left flank and the bottom right, which the
             alternating feature rows leave open */}
         <Plate seed={43} count={16} className="lp-plate-feat-l" />
@@ -1979,16 +2070,19 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
               counterweight to the headline instead of decoration parked in
               the margin, which is what it was when it floated absolutely at
               `right: -30px` behind the text. */}
-          <div className="lp-feat-head grid lg:grid-cols-[minmax(0,1fr)_minmax(0,.88fr)] gap-12 lg:gap-16 items-center mb-20 md:mb-28">
+          <div className="lp-feat-head grid lg:grid-cols-[minmax(0,1fr)_minmax(0,.88fr)] gap-12 lg:gap-16 items-center mb-20 md:mb-28 lg:mb-12">
             <div>
               <p className="lp-eyebrow mb-3" data-stage>The complete package</p>
               <h2 className="lp-h2 mb-6 max-w-xl" data-stage style={{ "--i": 1 }}>
                 A lesson is where<br />it starts, not ends.
               </h2>
               <p className="lp-lead max-w-2xl" data-stage style={{ "--i": 2, fontSize: "1.0625rem" }}>
-                Reading it is one step. Understanding every line of it, asking past
-                it, keeping what mattered, and having all of it on a train with no
-                signal — that is the rest of the way.
+                {/* the four clauses are the four features in order, and the
+                    index row sits directly under this sentence — so when the
+                    order changes up there, it changes here too */}
+                Reading it is one step. Asking past it, understanding every line
+                of it, keeping what mattered, and having all of it on a train with
+                no signal — that is the rest of the way.
               </p>
               <p className="lp-featindex mt-5" data-stage style={{ "--i": 3 }}>
                 {FEATURES.map((f, i) => (
@@ -2042,7 +2136,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </section>
 
       {/* ══ § 6 CTA ══ */}
-      <section id="start" data-sec data-tilt="760" className="lp-above lp-sec lp-rule-t py-24 md:py-32">
+      <section id="start" data-sec data-tilt-to=".lp-plate" data-tilt="760" className="lp-above lp-sec lp-rule-t py-24 md:py-32">
         {/* thinnest section on the page at 0.13 coverage — the CTA is a single
             centred button by design, so the plates go either side of it rather
             than behind, and the button keeps its clear field. */}
@@ -2064,7 +2158,7 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
       </section>
 
       {/* ══ FOOTER ══ */}
-      <footer className="lp-above lp-sec lp-rule-t py-12" data-tilt="620">
+      <footer className="lp-above lp-sec lp-rule-t py-12" data-tilt="620" data-tilt-to=".lp-plate">
         <Plate seed={91} count={16} className="lp-plate-foot" />
         <div className="max-w-6xl mx-auto px-5 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-7">
@@ -2072,11 +2166,14 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
               <LogoSlot size={24} />
               <span className="lp-ui" style={{ fontWeight: 700 }}>Curivio</span>
             </div>
-            <div className="flex items-center gap-6">
+            {/* wraps as whole items, and each item holds its own line: at 320px
+                four labels in a nowrap row broke mid-phrase into "How it /
+                works" and "Get / started" */}
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
               <button
                 type="button"
                 onClick={toggleMotion}
-                className="lp-motion-toggle"
+                className="lp-motion-toggle whitespace-nowrap"
                 aria-pressed={motionOn}
                 title={motionOn
                   ? "Turn off animation on this page"
@@ -2085,8 +2182,14 @@ export default function LandingPage({ onShowAuth, isAuthenticated = false, onEnt
                 <span className="lp-motion-track" aria-hidden />
                 Motion {motionOn ? "on" : "off"}
               </button>
-              <a href="#how" className="lp-link" style={{ fontSize: "13px" }}>How it works</a>
-              <button onClick={ctaAction} className="lp-link" style={{ fontSize: "13px" }}>
+              <a href="#how" className="lp-link whitespace-nowrap" style={{ fontSize: "13px" }}>How it works</a>
+              {/* "GitHub", not "Source": this page uses the word source about
+                  thirty times to mean a cited document, so a footer link
+                  labelled Source reads as the wrong thing entirely. */}
+              <a href="https://github.com/devgandhi2705/Curivio"
+                 target="_blank" rel="noreferrer"
+                 className="lp-link whitespace-nowrap" style={{ fontSize: "13px" }}>GitHub</a>
+              <button onClick={ctaAction} className="lp-link whitespace-nowrap" style={{ fontSize: "13px" }}>
                 {isAuthenticated ? "Open app" : "Get started"}
               </button>
             </div>

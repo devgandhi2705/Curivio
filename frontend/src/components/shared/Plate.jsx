@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 
 /* ═════════════════════════════════════════════════════════════════════════
    THE WIRE PLATE — a seeded constellation of nodes wired to their nearest
@@ -62,12 +62,52 @@ function buildPlate(seed, count) {
   return { pts, edges }
 }
 
+/* ── OFF-SCREEN PLATES HOLD STILL ─────────────────────────────────────────
+   One animation per node and one per edge means the landing page's ten plates
+   carry ~350 of its ~415 running animations, and Chrome charges for every one
+   of them on every frame whether or not it is showing — `content-visibility`
+   does not stop an SVG subtree's animations. Measured on the landing page
+   that was 6.8ms of every frame with nothing on screen and nobody touching
+   anything: 20.8ms a frame sitting still, 13.9ms with the plate animations
+   off, on a display asking for 6.9ms.
+
+   So a plate ticks only while it is near the viewport. One observer for all
+   of them, and `paused` rather than removing the animation, so a plate picks
+   up its drift where it left off instead of restarting as it arrives. */
+let watcher = null
+function plateWatcher() {
+  if (watcher) return watcher
+  watcher = new IntersectionObserver(
+    entries => entries.forEach(e => { e.target.dataset.idle = e.isIntersecting ? "false" : "true" }),
+    /* A screen and a half of lead time, not a hair's breadth: the edges take
+       8.5s to draw, so a plate woken at the viewport edge is still a bare
+       scatter of dots when you reach it — which is the void it was drawn to
+       fill. Woken this early it is mid-cycle on arrival, and three or four
+       plates run at a time instead of all ten. */
+    { rootMargin: "1500px" },
+  )
+  return watcher
+}
+
 /* `rings` adds two slow concentric arcs — reserved for the largest plate, so
    the biggest void reads as a deliberate figure rather than more of the same */
-export default function Plate({ seed = 1, count = 26, rings = false, className = "" }) {
+function Plate({ seed = 1, count = 26, rings = false, className = "" }) {
   const { pts, edges } = useMemo(() => buildPlate(seed, count), [seed, count])
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === "undefined") { if (el) el.dataset.idle = "false"; return }
+    const w = plateWatcher()
+    w.observe(el)
+    return () => w.unobserve(el)
+  }, [])
+
   return (
-    <svg className={`lp-plate ${className}`} viewBox={`0 0 ${PLATE_W} ${PLATE_H}`}
+    /* starts idle: a plate that mounts off-screen should never have run at all,
+       and the observer reports on the first frame either way */
+    <svg ref={ref} data-idle="true"
+         className={`lp-plate ${className}`} viewBox={`0 0 ${PLATE_W} ${PLATE_H}`}
          fill="none" aria-hidden="true" focusable="false">
       {rings && (
         <g className="lp-plate-rings">
@@ -88,3 +128,9 @@ export default function Plate({ seed = 1, count = 26, rings = false, className =
     </svg>
   )
 }
+
+/* Ten of these on the landing page, ~35 SVG children each. Every prop is a
+   primitive and none of them change after mount, so there is nothing for a
+   re-render to do — but the landing page setState()s on every section the
+   scroll crosses, and without this that rebuilt ~350 elements each time. */
+export default memo(Plate)
