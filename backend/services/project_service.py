@@ -524,6 +524,7 @@ def generate_project_insight(
             ).fetchone()
         day_number = (_row["max_day"] if _row else 0) + 1
     display_label, _ = _compute_next_display_label(project_id)
+    _set_insight_stage(_stub_id, "planning")
     keywords                 = project.get("keywords") or []
     difficulty               = project.get("difficulty", "intermediate")
     daily_core_article_count = project.get("daily_core_article_count") or 4
@@ -673,6 +674,8 @@ def generate_project_insight(
         _queries_generated,
     )
 
+    _first_query = (retrieval_plan.get("core_queries") or [None])[0] if retrieval_plan else None
+    _set_insight_stage(_stub_id, "searching", _first_query)
     core_articles = _fetch_core_articles(
         project["name"], keywords, suggested_next_topics, retrieval_plan, trace_id=trace_id,
     )
@@ -720,6 +723,10 @@ def generate_project_insight(
     )
 
     # ── Validate articles — drop off-topic retrievals before prompt ──────────
+    _set_insight_stage(
+        _stub_id, "selecting",
+        f"{len(core_articles) + len(curiosity_articles)} sources found",
+    )
     _retrieved_core      = len(core_articles)       # captured before validation for metrics
     _retrieved_curiosity = len(curiosity_articles)
     try:
@@ -1002,6 +1009,10 @@ def generate_project_insight(
         logger.warning("[project_service] article_plan_service failed for %s (non-fatal)", project_id)
 
     # ── Build prompt — active budget control via ModelAwareAssembler ─────────
+    _set_insight_stage(
+        _stub_id, "writing",
+        f"{len(core_articles)} of {_retrieved_core} sources kept",
+    )
     from ..prompts.project_insight_prompt import make_daily_package_composer
     from ..prompts.model_aware_assembler import ModelAwareAssembler
     from ..config import GROQ_MODEL as _ACTIVE_MODEL
@@ -1568,6 +1579,27 @@ def _save_generating_stub(project_id: str, day_number: int) -> tuple[int, str]:
             (now, project_id),
         )
     return cursor.lastrowid, now
+
+
+def _set_insight_stage(insight_id: int | None, stage: str, detail: str | None = None) -> None:
+    """Record which pipeline phase a generating package is in, for the waiting UI.
+
+    `detail` is one short line of real progress the waiting screen can show
+    (the query being searched, how many sources survived ranking).
+
+    Never fatal: a failed stage write must not abort a running generation.
+    """
+    if insight_id is None:
+        return
+    from ..utils.db import get_connection
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE project_insights SET stage = ?, stage_detail = ? WHERE id = ?",
+                (stage, detail, insight_id),
+            )
+    except Exception:
+        logger.debug("[project_service] stage write failed (non-fatal) stub=%s stage=%s", insight_id, stage)
 
 
 def _set_insight_status(insight_id: int, status: str) -> None:

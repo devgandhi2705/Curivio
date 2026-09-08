@@ -17,7 +17,6 @@ import {
   createProject,
   updateProject,
   deleteProject,
-  confirmIntent,
   updateIntentProfile,
   generateProjectInsight,
   getInsightStatus,
@@ -37,6 +36,7 @@ import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
 import IntentConfirmModal from "./IntentConfirmModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
+import { stageShortLabel } from "./DailyPackageView.jsx"
 import NotesOnlyFeed from "./NotesOnlyFeed.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
@@ -89,13 +89,54 @@ function SidebarSkeleton() {
   )
 }
 
+// Traces the real shape of a daily brief — headline, summary, day progress,
+// then the first cards — so the page settles instead of jumping when it lands.
+function SkeletonCard() {
+  return (
+    <div className="px-4 py-4 rounded-2xl border border-slate-800/60 bg-slate-900/25 space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="h-4 w-14 rounded-md bg-slate-800/60" />
+        <div className="h-3 w-28 rounded-md bg-slate-800/35" />
+      </div>
+      <div className="h-4 w-3/4 rounded-md bg-slate-800/55" />
+      <div className="space-y-2">
+        <div className="h-3 w-full rounded-md bg-slate-800/35" />
+        <div className="h-3 w-11/12 rounded-md bg-slate-800/35" />
+      </div>
+      <div className="h-9 rounded-xl bg-slate-800/20" />
+    </div>
+  )
+}
+
 function WorkspaceSkeleton() {
   return (
-    <div className="space-y-4 animate-pulse">
-      <div className="h-24 rounded-2xl bg-slate-800/40" />
-      <div className="h-12 rounded-xl bg-slate-800/30" />
-      <div className="h-8 w-48 rounded-lg bg-slate-800/40" />
-      <div className="h-40 rounded-2xl bg-slate-800/30" />
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Loading your brief"
+      className="animate-pulse motion-reduce:animate-none"
+    >
+      <div className="space-y-2.5">
+        <div className="h-6 w-11/12 rounded-lg bg-slate-800/55" />
+        <div className="h-6 w-2/5 rounded-lg bg-slate-800/45" />
+      </div>
+      <div className="mt-4 space-y-2">
+        <div className="h-3 w-full rounded-md bg-slate-800/30" />
+        <div className="h-3 w-full rounded-md bg-slate-800/30" />
+        <div className="h-3 w-3/5 rounded-md bg-slate-800/30" />
+      </div>
+
+      <div className="mt-5 h-10 rounded-xl bg-slate-800/25" />
+
+      <div className="mt-7 mb-3 flex items-center gap-3">
+        <div className="h-px flex-1 bg-slate-800/50" />
+        <div className="h-3 w-24 rounded-md bg-slate-800/40" />
+        <div className="h-px flex-1 bg-slate-800/50" />
+      </div>
+      <div className="space-y-3">
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
     </div>
   )
 }
@@ -250,6 +291,10 @@ export default function ProjectsPage({
 
   // Generation
   const [generating,     setGenerating]     = useState(false)
+  const [genStage,       setGenStage]       = useState(null) // backend pipeline phase, polled
+  const [genDetail,      setGenDetail]      = useState(null) // one line of live progress from that phase
+  const [genDismissed,   setGenDismissed]   = useState(false) // user left the progress screen; run continues
+  const [genReady,       setGenReady]       = useState(null)  // label of a package that landed while dismissed
   const [genError,       setGenError]       = useState(null)
   const [pendingStub,    setPendingStub]    = useState(null) // {id, day_number, generated_at, projectId}
 
@@ -273,12 +318,12 @@ export default function ProjectsPage({
 
   // Modals
   const [showCreate,           setShowCreate]           = useState(false)
+  const [createSeed,           setCreateSeed]           = useState("") // topic the create form opens with
   const [creating,             setCreating]             = useState(false)
   const [showEdit,             setShowEdit]             = useState(false)
   const [pendingDelete,        setPendingDelete]        = useState(null)
   const [showRenameProject,    setShowRenameProject]    = useState(false)
   const [renameProjectDraft,   setRenameProjectDraft]   = useState('')
-  const [pendingConfirmProject, setPendingConfirmProject] = useState(null)
   const [confirming,           setConfirming]           = useState(false)
   const [showPersonaEditor,    setShowPersonaEditor]    = useState(false)
   const [personaSaved,         setPersonaSaved]         = useState(false)
@@ -348,6 +393,9 @@ export default function ProjectsPage({
   useEffect(() => {
     const activeProject = projects.find(p => p.project_id === activeId) ?? null
     if (!activeProject) { clearViewActions('feed'); return }
+    // While the progress screen owns the whole view there is no package to edit,
+    // share or export. A run alongside an existing day keeps its actions.
+    if (generating && !genDismissed && insights.length === 0) { clearViewActions('feed'); return }
     setViewActions('feed', [
       ...(exportCallbacks.share ? [
         { label: 'Share page', share: exportCallbacks.share },
@@ -366,7 +414,7 @@ export default function ProjectsPage({
       { label: 'Delete project', variant: 'danger', onClick: () => setPendingDelete(activeProject) },
     ])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, projects, exportCallbacks])
+  }, [activeId, projects, exportCallbacks, generating, genDismissed, insights.length])
 
   // ── Auto-select project when navigated from global search ─────────────────
   useEffect(() => {
@@ -448,6 +496,22 @@ export default function ProjectsPage({
     if (_generatingNow.has(activeId)) setGenerating(true)
   }, [activeId])
 
+  // Each new run starts from an unknown stage, on the progress screen.
+  useEffect(() => {
+    if (generating) { setGenStage(null); setGenDetail(null); setGenDismissed(false) }
+  }, [generating])
+
+  // Read inside the poll interval, which closes over its first render.
+  const genDismissedRef = useRef(false)
+  useEffect(() => { genDismissedRef.current = genDismissed }, [genDismissed])
+
+  // The "it's ready" note is a nudge, not a task — it clears itself.
+  useEffect(() => {
+    if (!genReady) return
+    const id = setTimeout(() => setGenReady(null), 12000)
+    return () => clearTimeout(id)
+  }, [genReady])
+
   // When generation finishes in background, refresh insights
   useEffect(() => {
     if (!activeId) return
@@ -465,7 +529,7 @@ export default function ProjectsPage({
   // Poll for background generation completion
   useEffect(() => {
     if (!pendingStub) return
-    const POLL_MS     = 8000
+    const POLL_MS     = 5000   // stage changes should surface promptly; 12 req/min sits under the 30/min cap
     const GIVE_UP_MS  = 8 * 60 * 1000
     const startedAt   = Date.now()
     const { id: stubId, projectId: pid } = pendingStub
@@ -480,7 +544,8 @@ export default function ProjectsPage({
         return
       }
       try {
-        const { status } = await getInsightStatus(pid, stubId)
+        const { status, stage, stage_detail } = await getInsightStatus(pid, stubId)
+        if (stage) { setGenStage(stage); setGenDetail(stage_detail || null) }
         if (status === 'done') {
           clearInterval(timerId)
           const freshInsights = await listProjectInsights(pid)
@@ -501,6 +566,7 @@ export default function ProjectsPage({
           _generatingNow.delete(pid)
           setGenerating(false)
           setPendingStub(null)
+          if (genDismissedRef.current) setGenReady(`Day ${pkg?.day_number ?? ''}`.trim())
           window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
         } else if (status === 'failed') {
           clearInterval(timerId)
@@ -567,32 +633,20 @@ export default function ProjectsPage({
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
       setShowCreate(false)
-      setPendingConfirmProject(project) // show intent confirmation before first generate
-    } catch (_) {}
-    finally { setCreating(false) }
-  }, [])
-
-  const handleConfirmIntent = useCallback(async (editedProfile) => {
-    if (!pendingConfirmProject) return
-    setConfirming(true)
-    try {
-      await updateIntentProfile(pendingConfirmProject.project_id, editedProfile)
-      const updated = await confirmIntent(pendingConfirmProject.project_id)
-      if (updated) {
-        setProjects(prev => prev.map(p =>
-          p.project_id === updated.project_id ? { ...p, ...updated } : p
-        ))
+      const pid = project.project_id
+      _generatingNow.add(pid)
+      setGenerating(true)
+      setGenError(null)
+      try {
+        const stub = await generateProjectInsight(pid)
+        setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
+      } catch (e) {
+        setGenError(e.message || "Generation failed. Please try again.")
+        _generatingNow.delete(pid)
+        setGenerating(false)
       }
     } catch (_) {}
-    finally {
-      setConfirming(false)
-      setPendingConfirmProject(null)
-    }
-  }, [pendingConfirmProject])
-
-  const handleEditFromConfirm = useCallback(() => {
-    setPendingConfirmProject(null)
-    setShowEdit(true)
+    finally { setCreating(false) }
   }, [])
 
   const handleSavePersona = useCallback(async (editedProfile) => {
@@ -735,13 +789,50 @@ export default function ProjectsPage({
       {/* Workspace */}
       {showNotesOnly ? (
         <NotesOnlyFeed />
+      /* Projects still arriving: never offer "create your first project" to someone
+         who already has one — show the brief's shape until we know. */
+      ) : loadingList || (projects.length > 0 && !activeProject) ? (
+        <WorkspaceSkeleton />
       ) : !activeProject ? (
-        <EmptyWorkspace onNew={() => setShowCreate(true)} />
+        <EmptyWorkspace onNew={(topic) => { setCreateSeed(typeof topic === "string" ? topic : "" ); setShowCreate(true) }} />
       ) : (
         <>
           {genError && (
             <div className="mb-5 px-4 py-3 bg-red-950/30 border border-red-900/40 rounded-xl text-xs text-red-400">
               {genError}
+            </div>
+          )}
+
+          {generating && genDismissed && (
+            <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
+              <span
+                aria-hidden
+                className="h-2 w-2 rounded-full animate-pulse motion-reduce:animate-none"
+                style={{ background: "var(--u-accent)" }}
+              />
+              <span className="text-[13px] text-slate-300">Still building your next lesson</span>
+              <span className="text-[12px] text-slate-500">{stageShortLabel(genStage)}</span>
+              <button
+                type="button"
+                onClick={() => setGenDismissed(false)}
+                className="ml-auto text-[12px] text-slate-400 hover:text-slate-100 underline underline-offset-2 transition-colors"
+              >
+                Show progress
+              </button>
+            </div>
+          )}
+
+          {genReady && (
+            <div className="mb-5 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
+              <span className="text-[13px] text-slate-200">{genReady} is ready to read.</span>
+              <button
+                type="button"
+                onClick={() => setGenReady(null)}
+                aria-label="Dismiss"
+                className="ml-auto text-[12px] text-slate-500 hover:text-slate-200 transition-colors"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 
@@ -754,6 +845,10 @@ export default function ProjectsPage({
               onGenerate={handleGenerate}
               onRegenerate={handleRegenerate}
               generating={generating}
+              genStage={genStage}
+              genStageDetail={genDetail}
+              genDismissed={genDismissed}
+              onDismissGenerating={() => setGenDismissed(true)}
               targetInsightId={targetInsightId}
               targetArticleKey={targetArticleKey}
               onClearQueueTarget={onClearQueueTarget}
@@ -795,7 +890,8 @@ export default function ProjectsPage({
 
       {showCreate && (
         <CreateProjectModal
-          onClose={() => setShowCreate(false)}
+          initialName={createSeed}
+          onClose={() => { setShowCreate(false); setCreateSeed("") }}
           onCreate={handleCreate}
           loading={creating}
         />
@@ -807,16 +903,6 @@ export default function ProjectsPage({
           initialValue={renameProjectDraft}
           onConfirm={handleRenameProject}
           onClose={() => setShowRenameProject(false)}
-        />
-      )}
-
-      {pendingConfirmProject && (
-        <IntentConfirmModal
-          project={pendingConfirmProject}
-          mode="confirm"
-          onSave={handleConfirmIntent}
-          onCancel={handleEditFromConfirm}
-          saving={confirming}
         />
       )}
 
@@ -937,32 +1023,68 @@ function EmptySidebar({ onNew }) {
   )
 }
 
+// Starters exist to kill the blank page: each one opens the form with the topic
+// already filled in, so the first move costs a click instead of a decision.
+const TOPIC_STARTERS = [
+  "Antibiotic resistance",
+  "Semiconductor supply chains",
+  "The EU AI Act",
+  "Quantum computing",
+  "Indian pharma",
+  "Ocean carbon removal",
+]
+
+const WHAT_A_DAY_HOLDS = [
+  ["What changed", "the news on your topic from the last day, not a summary of the internet"],
+  ["What it rests on", "the mechanism underneath, at the depth you set"],
+  ["Where it came from", "every claim traced to the page it was taken from"],
+]
+
 function EmptyWorkspace({ onNew }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-8">
-      <div className="relative w-16 h-16 mb-6">
-        <div className="absolute inset-0 rounded-2xl bg-slate-800/80 border border-slate-700/60" />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <svg className="w-7 h-7 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 0 0 2 4.25v2.5A2.25 2.25 0 0 0 4.25 9h2.5A2.25 2.25 0 0 0 9 6.75v-2.5A2.25 2.25 0 0 0 6.75 2h-2.5Zm0 9A2.25 2.25 0 0 0 2 13.25v2.5A2.25 2.25 0 0 0 4.25 18h2.5A2.25 2.25 0 0 0 9 15.75v-2.5A2.25 2.25 0 0 0 6.75 11h-2.5Zm9-9A2.25 2.25 0 0 0 11 4.25v2.5A2.25 2.25 0 0 0 13.25 9h2.5A2.25 2.25 0 0 0 18 6.75v-2.5A2.25 2.25 0 0 0 15.75 2h-2.5Zm0 9A2.25 2.25 0 0 0 11 13.25v2.5A2.25 2.25 0 0 0 13.25 18h2.5A2.25 2.25 0 0 0 18 15.75v-2.5A2.25 2.25 0 0 0 15.75 11h-2.5Z" clipRule="evenodd" />
-          </svg>
+    <div className="max-w-xl mx-auto py-12 md:py-20">
+      <h2 className="text-[22px] md:text-[27px] font-semibold leading-[1.22] tracking-[-0.01em] text-slate-100 max-w-[20ch]">
+        What do you want to learn properly?
+      </h2>
+      <p className="mt-3 text-[13px] leading-relaxed text-slate-500 max-w-[52ch]">
+        Name one topic. Every day after that, Curivio reads the web for it, grades what it
+        finds, and writes you a lesson from the sources that hold up.
+      </p>
+
+      <button
+        onClick={() => onNew()}
+        className="mt-7 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+      >
+        <PlusIcon className="w-4 h-4" />
+        Start a project
+      </button>
+
+      <div className="mt-6">
+        <p className="text-[12px] text-slate-500 mb-2.5">Or pick one up from here</p>
+        <div className="flex flex-wrap gap-2">
+          {TOPIC_STARTERS.map(topic => (
+            <button
+              key={topic}
+              type="button"
+              onClick={() => onNew(topic)}
+              className="px-3 py-1.5 rounded-xl text-[13px] text-slate-400 hover:text-slate-100 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] hover:border-white/[0.13] transition-colors"
+            >
+              {topic}
+            </button>
+          ))}
         </div>
       </div>
 
-      <h2 className="text-lg font-bold text-slate-200 mb-2">Your Intelligence Workspace</h2>
-      <p className="text-sm text-slate-500 max-w-sm mb-6 leading-relaxed">
-        Create focused learning projects — each one generates a structured daily brief with current events and deep-dive concepts tailored to your level.
-      </p>
-
-      <div className="flex flex-col gap-2.5 items-center">
-        <button
-          onClick={onNew}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors shadow-md"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Create Your First Project
-        </button>
-        <p className="text-[11px] text-slate-600">AI in Manufacturing · Quant Finance · Supply Chain · and more</p>
+      <div className="mt-11 pt-6 border-t border-slate-800/70">
+        <p className="text-[12px] text-slate-500 mb-3">What a day looks like</p>
+        <dl className="space-y-2.5">
+          {WHAT_A_DAY_HOLDS.map(([term, detail]) => (
+            <div key={term} className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
+              <dt className="text-[13px] text-slate-300 sm:w-40 sm:flex-shrink-0">{term}</dt>
+              <dd className="text-[13px] text-slate-500 leading-snug">{detail}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
     </div>
   )

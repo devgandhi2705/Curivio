@@ -1,8 +1,11 @@
 /**
- * CreateProjectModal — AI-assisted project creation.
+ * CreateProjectModal — AI-assisted project creation, in two steps.
+ *
+ * Step 0 — Project: name, description, keywords
+ * Step 1 — Setup:   level, daily intensity, accent color
  *
  * Keyword flow:
- *   1. User fills Name, Description, Level
+ *   1. User fills Name, Description
  *   2. User clicks "Generate Keywords" → POST /projects/suggest-keywords (name+description+level)
  *   3. Chips populate with {keyword, source:"generated"}
  *   4. User can add (source:"user"), delete, or drag-to-reorder any chip
@@ -28,11 +31,15 @@ const DIFFICULTY_OPTIONS = [
   { id: "advanced",     label: "Advanced",     desc: "Deep domain expertise"     },
 ]
 
-const INTENSITY_OPTIONS = [
-  { count: 2, label: "Light",     desc: "2 articles · focused depth"    },
-  { count: 4, label: "Standard",  desc: "4 articles · balanced breadth" },
-  { count: 6, label: "Intensive", desc: "6 articles · wide coverage"    },
-]
+const INTENSITY_MIN = 3
+const INTENSITY_MAX = 10
+
+function intensityDesc(count) {
+  if (count <= 4) return "Light · focused depth"
+  if (count <= 6) return "Standard · balanced breadth"
+  if (count <= 8) return "Broad · expanded coverage"
+  return "Intensive · wide coverage"
+}
 
 // Keep all user-added keywords; replace the full AI-generated set with the new suggestions.
 function mergeKeywords(existing, suggested) {
@@ -82,8 +89,9 @@ function KeywordChip({ kw, index, onRemove, dragRef }) {
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
-export default function CreateProjectModal({ onClose, onCreate, loading }) {
-  const [name,                  setName]                  = useState("")
+export default function CreateProjectModal({ onClose, onCreate, loading, initialName = "" }) {
+  const [step,                  setStep]                  = useState(0)
+  const [name,                  setName]                  = useState(initialName)
   const [description,           setDescription]           = useState("")
   const [keywords,              setKeywords]              = useState([])
   const [kwInput,               setKwInput]               = useState("")
@@ -93,10 +101,14 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
   const [error,                 setError]                 = useState(null)
   const [suggestLoading,        setSuggestLoading]        = useState(false)
   const [suggestError,          setSuggestError]          = useState(null)
+  // Manual keyword entry only opens once the AI call has run — a failed call
+  // still counts, since its error message points the user at that field.
+  const [hasGenerated,          setHasGenerated]          = useState(false)
 
   const dragIdx = useRef(null)
 
   const canGenerate = name.trim().length > 0 && description.trim().length >= 10
+  const canContinue = name.trim().length > 0 && description.trim().length > 0
 
   async function runSuggestions() {
     setSuggestLoading(true)
@@ -109,6 +121,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
       setSuggestError("AI keyword generation is unavailable right now (API connection issue). Type your own keywords in the field below and press Enter to add them.")
     } finally {
       setSuggestLoading(false)
+      setHasGenerated(true)
     }
   }
 
@@ -139,6 +152,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
     if (!name.trim()) { setError("Project name is required."); return }
     if (!description.trim()) { setError("Description is required."); return }
     setError(null)
+    if (step === 0) { setStep(1); return }
     await onCreate({
       name: name.trim(),
       description,
@@ -155,6 +169,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
 
   return (
     <div
+      data-no-unpack
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
       onClick={handleBackdrop}
     >
@@ -162,7 +177,22 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
-          <h2 className="font-semibold text-slate-100">New Learning Project</h2>
+          <div>
+            <h2 className="font-semibold text-slate-100">New Learning Project</h2>
+            <div className="flex items-center gap-2 mt-1.5">
+              {["Project", "Setup"].map((label, i) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold transition-colors ${
+                    i <= step ? "bg-blue-500 text-white" : "bg-slate-800 text-slate-600"
+                  }`}>
+                    {i + 1}
+                  </span>
+                  <span className={`text-[10px] font-medium ${i === step ? "text-slate-300" : "text-slate-600"}`}>{label}</span>
+                  {i === 0 && <span className={`w-4 h-px ml-1 ${step > 0 ? "bg-blue-500" : "bg-slate-800"}`} />}
+                </div>
+              ))}
+            </div>
+          </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
@@ -175,6 +205,8 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
 
         <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[80vh]">
           <div className="px-6 py-5 space-y-5">
+
+            {step === 0 && (<>
 
             {/* 1 — Project Name */}
             <div>
@@ -201,29 +233,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
               />
             </div>
 
-            {/* 3 — Your Level */}
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Your Level</label>
-              <div className="grid grid-cols-3 gap-2">
-                {DIFFICULTY_OPTIONS.map(d => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => setDifficulty(d.id)}
-                    className={`px-3 py-2 rounded-xl text-left border transition-all ${
-                      difficulty === d.id
-                        ? "bg-slate-700 border-slate-500 text-slate-100"
-                        : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-600"
-                    }`}
-                  >
-                    <div className="text-xs font-medium">{d.label}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">{d.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 4 — Generate Keywords button */}
+            {/* 3 — Generate Keywords button */}
             <div>
               <button
                 type="button"
@@ -262,7 +272,8 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
               )}
             </div>
 
-            {/* 5 — Keywords */}
+            {/* 4 — Keywords — only after the AI call has run */}
+            {hasGenerated && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-medium text-slate-400">Keywords</label>
@@ -273,7 +284,21 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
                 )}
               </div>
 
-              <div className="flex gap-2 mb-2">
+              {keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {keywords.map((kw, i) => (
+                    <KeywordChip
+                      key={`${kw.keyword}-${i}`}
+                      kw={kw}
+                      index={i}
+                      onRemove={handleChipAction}
+                      dragRef={dragIdx}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
                 <input
                   value={kwInput}
                   onChange={e => setKwInput(e.target.value)}
@@ -289,41 +314,56 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
                   Add
                 </button>
               </div>
-
-              {keywords.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {keywords.map((kw, i) => (
-                    <KeywordChip
-                      key={`${kw.keyword}-${i}`}
-                      kw={kw}
-                      index={i}
-                      onRemove={handleChipAction}
-                      dragRef={dragIdx}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
+            )}
 
-            {/* 6 — Daily Intensity */}
+            </>)}
+
+            {step === 1 && (<>
+
+            {/* 5 — Your Level */}
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5">Daily Learning Intensity</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Your Level</label>
               <div className="grid grid-cols-3 gap-2">
-                {INTENSITY_OPTIONS.map(opt => (
+                {DIFFICULTY_OPTIONS.map(d => (
                   <button
-                    key={opt.count}
+                    key={d.id}
                     type="button"
-                    onClick={() => setDailyCoreArticleCount(opt.count)}
+                    onClick={() => setDifficulty(d.id)}
                     className={`px-3 py-2 rounded-xl text-left border transition-all ${
-                      dailyCoreArticleCount === opt.count
+                      difficulty === d.id
                         ? "bg-slate-700 border-slate-500 text-slate-100"
                         : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-600"
                     }`}
                   >
-                    <div className="text-xs font-medium">{opt.label}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</div>
+                    <div className="text-xs font-medium">{d.label}</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{d.desc}</div>
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* 6 — Daily Intensity */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-slate-400">Daily Learning Intensity</label>
+                <span className="text-xs font-medium text-slate-100">
+                  {dailyCoreArticleCount} article{dailyCoreArticleCount === 1 ? "" : "s"}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={INTENSITY_MIN}
+                max={INTENSITY_MAX}
+                step={1}
+                value={dailyCoreArticleCount}
+                onChange={e => setDailyCoreArticleCount(Number(e.target.value))}
+                className="w-full h-1.5 rounded-full appearance-none bg-slate-700 accent-blue-500 cursor-pointer"
+              />
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[10px] text-slate-600">{INTENSITY_MIN}</span>
+                <span className="text-[10px] text-slate-500">{intensityDesc(dailyCoreArticleCount)}</span>
+                <span className="text-[10px] text-slate-600">{INTENSITY_MAX}</span>
               </div>
             </div>
 
@@ -345,6 +385,8 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
               </div>
             </div>
 
+            </>)}
+
             {error && (
               <p className="text-xs text-red-400 bg-red-950/30 border border-red-900/40 px-3 py-2 rounded-xl">
                 {error}
@@ -356,17 +398,18 @@ export default function CreateProjectModal({ onClose, onCreate, loading }) {
           <div className="px-6 pb-5 flex gap-3">
             <button
               type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors"
+              onClick={step === 0 ? onClose : () => setStep(0)}
+              disabled={loading}
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors disabled:opacity-40"
             >
-              Cancel
+              {step === 0 ? "Cancel" : "← Back"}
             </button>
             <button
               type="submit"
-              disabled={loading || !name.trim() || !description.trim()}
+              disabled={loading || !canContinue}
               className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? "Creating…" : "Create Project"}
+              {step === 0 ? "Continue →" : loading ? "Creating…" : "Create Project"}
             </button>
           </div>
         </form>

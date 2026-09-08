@@ -2294,12 +2294,12 @@ async def get_insight_status_endpoint(
     from .utils.db import get_connection as _gc
     with _gc() as _conn:
         row = _conn.execute(
-            "SELECT status FROM project_insights WHERE id = ? AND project_id = ?",
+            "SELECT status, stage, stage_detail FROM project_insights WHERE id = ? AND project_id = ?",
             (insight_id, project_id),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Insight not found")
-    return {"status": row["status"]}
+    return {"status": row["status"], "stage": row["stage"], "stage_detail": row["stage_detail"]}
 
 
 @app.delete("/projects/{project_id}/insights/{insight_id}")

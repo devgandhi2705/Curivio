@@ -41,8 +41,9 @@ export function useTextSelection() {
     if (!anchorNode) { setSelection(null); return }
     const anchorEl = anchorNode.nodeType === 1 ? anchorNode : anchorNode.parentElement
     // [data-unpack-popover] excludes selecting the popover's own explanation text
-    // from re-triggering a new lookup on itself.
-    if (anchorEl?.closest?.("input, textarea, [contenteditable='true'], [data-unpack-popover]")) {
+    // from re-triggering a new lookup on itself; [data-no-unpack] lets a surface
+    // that isn't a reading surface (project modals) opt out entirely.
+    if (anchorEl?.closest?.("input, textarea, [contenteditable='true'], [data-unpack-popover], [data-no-unpack]")) {
       setSelection(null)
       return
     }

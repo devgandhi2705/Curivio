@@ -10,6 +10,10 @@ export default function ProjectInsightView({
   onGenerate,
   onRegenerate,
   generating,
+  genStage,
+  genStageDetail,
+  genDismissed,
+  onDismissGenerating,
   onOpenInChat,
   readKeys,
   onMarkRead,
@@ -31,6 +35,10 @@ export default function ProjectInsightView({
       onGenerate={onGenerate}
       onRegenerate={onRegenerate}
       generating={generating}
+      genStage={genStage}
+      genStageDetail={genStageDetail}
+      genDismissed={genDismissed}
+      onDismissGenerating={onDismissGenerating}
       onOpenInChat={onOpenInChat}
       readKeys={readKeys}
       onMarkRead={onMarkRead}

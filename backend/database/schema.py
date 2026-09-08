@@ -323,7 +323,9 @@ CREATE TABLE IF NOT EXISTS project_insights (
     insight_json TEXT      NOT NULL DEFAULT '{}',
     generated_at TEXT      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status       TEXT      NOT NULL DEFAULT 'done'
-                           CHECK(status IN ('generating', 'done', 'failed'))
+                           CHECK(status IN ('generating', 'done', 'failed')),
+    stage        TEXT      DEFAULT NULL,
+    stage_detail TEXT      DEFAULT NULL
 );
 """
 
@@ -861,6 +863,14 @@ MIGRATE_ADD_INSIGHT_STATUS = (
     "ALTER TABLE project_insights ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"
 )
 
+MIGRATE_ADD_INSIGHT_STAGE = (
+    "ALTER TABLE project_insights ADD COLUMN stage TEXT DEFAULT NULL"
+)
+
+MIGRATE_ADD_INSIGHT_STAGE_DETAIL = (
+    "ALTER TABLE project_insights ADD COLUMN stage_detail TEXT DEFAULT NULL"
+)
+
 CREATE_SHARE_LINKS = """
 CREATE TABLE IF NOT EXISTS share_links (
     id          TEXT      PRIMARY KEY,
@@ -1181,6 +1191,8 @@ MIGRATIONS = [
     MIGRATE_ADD_JOURNEY_SHAPE,
     MIGRATE_ADD_TOP_GAPS_JSON,
     MIGRATE_ADD_INSIGHT_STATUS,
+    MIGRATE_ADD_INSIGHT_STAGE,
+    MIGRATE_ADD_INSIGHT_STAGE_DETAIL,
     MIGRATE_ADD_CHAT_SESSIONS_FORKED_FROM,
     MIGRATE_ADD_CHAT_SESSIONS_CRISIS_EXPIRES,
     MIGRATE_SHARE_LINKS_ADD_DASHBOARD_TYPE,

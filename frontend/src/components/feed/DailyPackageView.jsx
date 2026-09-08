@@ -19,7 +19,6 @@
  *   onOpenChat(sessionId)
  */
 import { useState, useEffect, useRef } from "react"
-import LogoMark from "../shared/LogoMark.jsx"
 import { useNavigate } from "react-router-dom"
 import InsightCard from "./InsightCard.jsx"
 import { articleKeyFromTitle } from "../../api/feed.js"
@@ -272,7 +271,7 @@ function DayProgressBar({ readCount, totalCount }) {
 
 // ─── Generate button ──────────────────────────────────────────────────────────
 
-function GenerateButton({ generating, onGenerate, locked, offline = false, nextLabel = "Next Day", generatedTodayCount }) {
+function GenerateButton({ generating, genStage, onGenerate, locked, offline = false, nextLabel = "Next Day", generatedTodayCount }) {
   const [confirming, setConfirming] = useState(false)
   const isExtraToday = generatedTodayCount > 0
 
@@ -324,7 +323,7 @@ function GenerateButton({ generating, onGenerate, locked, offline = false, nextL
           {generating ? (
             <>
               <SpinnerIcon className="w-3.5 h-3.5 animate-spin text-blue-400" />
-              Generating {nextLabel}…
+              Generating {nextLabel} · {stageShortLabel(genStage)}…
             </>
           ) : locked ? (
             <>
@@ -371,10 +370,13 @@ function PackageContent({
   pkg,
   project,
   generating,
+  genStage,
   onGenerate,
   onRegenerate,
   onOpenInChat,
   isLatestPackage,
+  nextPackage,
+  onSelectPackage,
   dayLabel,
   generatedTodayCount,
   nextLabel,
@@ -525,16 +527,27 @@ function PackageContent({
         </div>
       )}
 
-      {/* Generate next package */}
+      {/* Generating belongs to the newest day; older days offer the way forward instead. */}
       <div className="mt-3 md:mt-6 pt-3 md:pt-5 border-t border-slate-800">
-        <GenerateButton
-          generating={generating}
-          onGenerate={onGenerate}
-          locked={generationLocked}
-          offline={!isOnline}
-          nextLabel={nextLabel}
-          generatedTodayCount={generatedTodayCount}
-        />
+        {isLatestPackage ? (
+          <GenerateButton
+            generating={generating}
+            genStage={genStage}
+            onGenerate={onGenerate}
+            locked={generationLocked}
+            offline={!isOnline}
+            nextLabel={nextLabel}
+            generatedTodayCount={generatedTodayCount}
+          />
+        ) : nextPackage ? (
+          <button
+            type="button"
+            onClick={() => onSelectPackage?.(nextPackage.id)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] hover:border-white/[0.12] text-sm text-slate-400 hover:text-slate-100 transition-all"
+          >
+            Read {nextPackage.label}
+          </button>
+        ) : null}
       </div>
     </div>
   )
@@ -601,6 +614,10 @@ export default function DailyPackageView({
   onGenerate,
   onRegenerate,
   generating,
+  genStage,
+  genStageDetail,
+  genDismissed,
+  onDismissGenerating,
   onOpenInChat,
   readKeys,
   onMarkRead,
@@ -625,6 +642,13 @@ export default function DailyPackageView({
   const selected = packages.find(p => p.id === selectedId) ?? packages[0] ?? null
   const latestId = packages[0]?.id ?? null
   const isLatest = selected?.id === latestId
+  // packages run newest-first, so the day after the selected one sits before it.
+  const nextPkg  = packages[packages.findIndex(p => p.id === selected?.id) - 1] ?? null
+
+  const selectPackage = (id) => {
+    setSelectedId(id)
+    navigate(`/feed/${project?.project_id || ''}/${id}`)
+  }
 
   // Keep queuedKeys in sync with localStorage changes from other components
   useEffect(() => {
@@ -638,8 +662,17 @@ export default function DailyPackageView({
   // Auto-select the newest package whenever packages[0] changes (new generation).
   // This keeps the view, greeting, and sidebar all on the same day label.
   useEffect(() => {
-    if (packages[0]?.id) setSelectedId(packages[0].id)
-  }, [packages[0]?.id])
+    const newest = packages[0]?.id
+    if (!newest) return
+    setSelectedId(newest)
+    // A day picked from the dropdown is pinned in the URL, and the deep-link
+    // effect below re-applies that pin on every packages change — so the pin has
+    // to move too, or a finished generation snaps straight back to the old day.
+    const pid = project?.project_id
+    if (pid && targetInsightId && targetInsightId !== newest) {
+      navigate(`/feed/${encodeURIComponent(pid)}/${newest}`, { replace: true })
+    }
+  }, [packages[0]?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When navigating from queue: select the target package
   useEffect(() => {
@@ -749,8 +782,19 @@ export default function DailyPackageView({
   }, [selected?.id, project?.project_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (packages.length === 0) {
+    // Dismissed with nothing to read yet: the progress strip carries the run,
+    // so give the page the planned path to read instead of an empty column.
+    if (generating && genDismissed) return <JourneyPreviewPanel projectId={project?.project_id} />
     if (generating) {
-      return <GeneratingPackageState project={project} nextLabel={nextLabel} />
+      return (
+        <GeneratingPackageState
+          project={project}
+          nextLabel={nextLabel}
+          stage={genStage}
+          stageDetail={genStageDetail}
+          onDismiss={onDismissGenerating}
+        />
+      )
     }
     return <EmptyPackageState project={project} onGenerate={onGenerate} isOnline={isOnline} />
   }
@@ -762,17 +806,20 @@ export default function DailyPackageView({
           packages={packages}
           displayLabels={displayLabels}
           selectedId={selectedId}
-          onSelect={(id) => { setSelectedId(id); navigate(`/feed/${project?.project_id || ''}/${id}`) }}
+          onSelect={selectPackage}
         />
       </div>
       <PackageContent
         pkg={selected}
         project={project}
         generating={generating}
+        genStage={genStage}
         onGenerate={onGenerate}
         onRegenerate={onRegenerate}
         onOpenInChat={onOpenInChat}
         isLatestPackage={isLatest}
+        nextPackage={nextPkg ? { id: nextPkg.id, label: displayLabels.get(nextPkg.id) ?? `Day ${nextPkg.day_number}` } : null}
+        onSelectPackage={selectPackage}
         dayLabel={displayLabels.get(selected.id)}
         generatedTodayCount={isLatest ? generatedTodayCount : 0}
         nextLabel={isLatest ? nextLabel : undefined}
@@ -795,16 +842,30 @@ export default function DailyPackageView({
   ) : null
 }
 
-const GENERATION_STEPS = [
-  { label: "Scanning today's news & research",  doneAfter: 4  },
-  { label: "Selecting the most relevant articles", doneAfter: 10 },
-  { label: "Generating educational insights",   doneAfter: 18 },
-  { label: "Personalising to your level",        doneAfter: 26 },
+// Keys match the stage values project_service writes to project_insights.stage.
+const GENERATION_STAGES = [
+  { key: "planning",  label: "Planning today's focus",             short: "planning"          },
+  { key: "searching", label: "Scanning today's news & research",   short: "scanning sources"  },
+  { key: "selecting", label: "Selecting the most relevant articles", short: "selecting articles" },
+  { key: "writing",   label: "Writing and personalising your lesson", short: "writing"         },
 ]
 
-function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
+function stageIndex(stage) {
+  const i = GENERATION_STAGES.findIndex(s => s.key === stage)
+  return i === -1 ? 0 : i   // stage not reported yet — the run always starts in planning
+}
+
+export function stageShortLabel(stage) {
+  return GENERATION_STAGES[stageIndex(stage)].short
+}
+
+function formatElapsed(seconds) {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+}
+
+function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDetail, onDismiss }) {
   const [elapsed, setElapsed] = useState(0)
-  const [focusTitle, setFocusTitle] = useState(null)
+  const [preview, setPreview] = useState(null)
 
   useEffect(() => {
     const id = setInterval(() => setElapsed(s => s + 1), 1000)
@@ -813,84 +874,91 @@ function GeneratingPackageState({ project, nextLabel = "Day 1" }) {
 
   useEffect(() => {
     if (!project?.project_id) return
-    getJourneyPreview(project.project_id)
-      .then(data => { if (data?.today?.display_title) setFocusTitle(data.today.display_title) })
-      .catch(() => {})
+    getJourneyPreview(project.project_id).then(setPreview).catch(() => {})
   }, [project?.project_id])
 
-  // Progress 0→100 over ~32s, then stays at 95 until done
-  const progress = Math.min(95, Math.round((elapsed / 32) * 100))
-  // Loop step animation so the screen never appears frozen on long generations
-  const loopElapsed = elapsed % GENERATION_STEPS[GENERATION_STEPS.length - 1].doneAfter
+  const current    = stageIndex(stage)
+  const focusTitle = preview?.today?.display_title
+  const upcoming   = preview?.upcoming?.slice(0, 4) || []
 
   return (
-    <div className="flex flex-col items-center justify-center py-14 text-center max-w-sm mx-auto">
-      {/* Animated logo ring */}
-      <div className="relative w-16 h-16 mb-6">
-        <div className="absolute inset-0 flex items-center justify-center">
-          <LogoMark size={44} className="animate-pulse" />
-        </div>
-        {/* Spinning ring */}
-        <svg className="absolute inset-0 w-16 h-16 -rotate-90 animate-[spin_2s_linear_infinite]" viewBox="0 0 64 64">
-          <circle cx="32" cy="32" r="28" fill="none" style={{ stroke: "var(--u-track)" }} strokeOpacity="0.55" strokeWidth="3" />
-          <circle cx="32" cy="32" r="28" fill="none" stroke="url(#gen-ring)" strokeWidth="3"
-            strokeDasharray="60 116" strokeLinecap="round" />
-          <defs>
-            <linearGradient id="gen-ring" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" style={{ stopColor: "var(--u-accent)" }} />
-              <stop offset="100%" style={{ stopColor: "var(--u-secondary)" }} />
-            </linearGradient>
-          </defs>
-        </svg>
-      </div>
-
-      <h3 className="text-base font-semibold text-slate-100 mb-1">
-        {focusTitle ? `Building ${nextLabel}: ${focusTitle}` : `Building your ${nextLabel} package`}
-      </h3>
-      <p className="text-[13px] text-slate-500 mb-6">
-        Curating <span className="text-slate-400">{project.name}</span> insights from today's web
+    <div data-no-unpack className="max-w-xl mx-auto py-10 md:py-16">
+      <p className="text-[12px] text-slate-500 mb-2.5">{nextLabel} of {project.name}</p>
+      <h2 className="text-[22px] md:text-[27px] font-semibold leading-[1.22] tracking-[-0.01em] text-slate-100 max-w-[24ch]">
+        {focusTitle || `Building your ${nextLabel} lesson`}
+      </h2>
+      <p className="mt-2.5 mb-9 text-[13px] leading-relaxed text-slate-500 max-w-[52ch]">
+        Reading today's web, grading each source it finds, then writing the lesson from the ones that hold up.
       </p>
 
-      {/* Step list */}
-      <div className="w-full space-y-2.5 mb-6 text-left">
-        {GENERATION_STEPS.map((step, i) => {
-          const done    = loopElapsed >= step.doneAfter
-          const active  = !done && loopElapsed >= (GENERATION_STEPS[i - 1]?.doneAfter ?? 0)
+      <ol className="ml-[3px]">
+        {GENERATION_STAGES.map((step, i) => {
+          const done   = i < current
+          const active = i === current
+          const isLast = i === GENERATION_STAGES.length - 1
           return (
-            <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-500 ${
-              done   ? "bg-emerald-950/30 border border-emerald-900/30" :
-              active ? "bg-blue-950/40 border border-blue-900/30" :
-                       "bg-slate-900/40 border border-slate-800/30"
-            }`}>
-              <div className={`w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center transition-all duration-300 ${
-                done ? "bg-emerald-500/20" : active ? "bg-blue-500/20" : "bg-slate-800"
+            <li
+              key={step.key}
+              className={`relative pl-7 ${isLast ? "" : "pb-7"}`}
+              style={{ borderLeft: `1px solid ${
+                isLast ? "transparent"
+                       : done ? "var(--u-accent)"
+                              : "color-mix(in srgb, var(--u-axis) 32%, transparent)"
+              }` }}
+            >
+              {active && (
+                <span
+                  aria-hidden
+                  className="absolute -left-[9px] top-[1px] h-[19px] w-[19px] rounded-full animate-ping motion-reduce:hidden"
+                  style={{ background: "var(--u-accent)", opacity: 0.18, animationDuration: "2.4s" }}
+                />
+              )}
+              <span
+                aria-hidden
+                className="absolute -left-[5px] top-[6px] h-[9px] w-[9px] rounded-full transition-colors duration-500"
+                style={{ background: done || active ? "var(--u-accent)" : "color-mix(in srgb, var(--u-axis) 38%, transparent)" }}
+              />
+              <p className={`text-[14px] leading-snug transition-colors duration-500 ${
+                active ? "text-slate-100 font-medium" : done ? "text-slate-500" : "text-slate-600"
               }`}>
-                {done ? (
-                  <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 12 12" fill="currentColor">
-                    <path d="M10.28 2.28a.75.75 0 0 0-1.06 0L4.5 6.99 2.78 5.27a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.06 0l5.25-5.25a.75.75 0 0 0 0-1.05Z" />
-                  </svg>
-                ) : active ? (
-                  <SpinnerIcon className="w-3 h-3 text-blue-400 animate-spin" />
-                ) : (
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
-                )}
-              </div>
-              <span className={`text-[13px] transition-colors duration-300 ${
-                done ? "text-emerald-400" : active ? "text-slate-200" : "text-slate-600"
-              }`}>{step.label}</span>
-            </div>
+                {step.label}
+              </p>
+              {active && stageDetail && (
+                <p className="mt-1 text-[12.5px] text-slate-500 leading-snug">{stageDetail}</p>
+              )}
+            </li>
           )
         })}
+      </ol>
+
+      {/* Never wraps: a row that flips between one and two lines as the timer ticks
+          grows and shrinks the page, which flickers the scrollbar on narrow screens. */}
+      <div className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="px-4 py-2 rounded-xl text-[13px] font-medium text-slate-300 hover:text-slate-100 bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.08] hover:border-white/[0.14] transition-colors"
+        >
+          Continue in background
+        </button>
+        <span className="text-[12px] text-slate-500 tabular-nums">
+          {formatElapsed(elapsed)} elapsed, usually a minute or two
+        </span>
       </div>
 
-      {/* Progress bar */}
-      <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden mb-3">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500 transition-all duration-1000 ease-out"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-      <p className="text-[11px] text-slate-600">This usually takes a minute or two.</p>
+      {upcoming.length > 0 && (
+        <div className="mt-11 pt-6 border-t border-slate-800/70">
+          <p className="text-[12px] text-slate-500 mb-3">Coming up after today</p>
+          <ul className="space-y-2.5">
+            {upcoming.map(day => (
+              <li key={day.day_number} className="flex gap-4 text-[13px]">
+                <span className="text-slate-600 w-11 flex-shrink-0">Day {day.day_number}</span>
+                <span className="text-slate-400 leading-snug">{day.display_title}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
