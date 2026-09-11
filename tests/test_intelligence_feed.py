@@ -92,7 +92,7 @@ def mock_pipeline(monkeypatch):
     """Patch the full intelligence_service pipeline — no live calls."""
     import backend.services.intelligence_service as intl
     import backend.services.recommendation_service as rec
-    import backend.services.tavily_service as tav
+    import backend.services.tinyfish_service as tf
     import backend.services.grok_service as gs
     import backend.services.feed_cache_service as fcs
     import backend.services.source_ranker as sr
@@ -108,7 +108,7 @@ def mock_pipeline(monkeypatch):
     monkeypatch.setattr(rec, "get_suppressed_topics",            lambda limit=5: [])
     monkeypatch.setattr(rec, "get_overall_difficulty_preference", lambda: "intermediate")
     monkeypatch.setattr(rec, "get_learning_stage",               lambda: "developing")
-    monkeypatch.setattr(tav, "search_articles",                  lambda q: list(MOCK_ARTICLES))
+    monkeypatch.setattr(tf, "search",                  lambda q: list(MOCK_ARTICLES))
     monkeypatch.setattr(gs,  "ask_grok",                         lambda p: json.dumps(MOCK_FEED_RESPONSE))
     monkeypatch.setattr(fcs, "get_cached_feed",                  lambda k: None)
     monkeypatch.setattr(fcs, "cache_feed",                       lambda *a: None)
@@ -302,42 +302,48 @@ class TestBuildIntelligenceContext:
 class TestMultiSearch:
     def test_deduplicates_by_url(self, monkeypatch):
         import backend.services.intelligence_service as intl
-        import backend.services.tavily_service as tav
+        import backend.services.tinyfish_service as tf
         shared = [{"title": "Shared", "url": "https://shared.com", "content": "content"}]
         call_count = [0]
-        def fake_search(q):
+        def fake_search(q, **kwargs):
             call_count[0] += 1
             return shared  # same URL from both queries
-        monkeypatch.setattr(tav, "search_articles", fake_search)
+        monkeypatch.setattr(tf, "search", fake_search)
+        monkeypatch.setattr(tf, "fetch_as_articles", lambda urls, **kw: [])
         result = intl._multi_search("python", "AI / Machine Learning")
-        # Should have only 1 article despite 2 searches returning the same URL
+        # Should have only 1 article despite every query returning the same URL
         assert len(result) == 1
-        assert call_count[0] == 2  # both queries ran
+        assert call_count[0] >= 1  # the router expands its own query set
 
     def test_combines_unique_articles(self, monkeypatch):
         import backend.services.intelligence_service as intl
-        import backend.services.tavily_service as tav
-        articles_by_query = {
-            "python": [{"title": "A1", "url": "https://a1.com", "content": "c1"}],
-            "AI / Machine Learning industry news trends 2025": [
-                {"title": "A2", "url": "https://a2.com", "content": "c2"}
-            ],
-        }
-        monkeypatch.setattr(tav, "search_articles", lambda q: articles_by_query.get(q, []))
+        import backend.services.tinyfish_service as tf
+        # How many queries the router issues is its own call (domain budget), so
+        # assert the merge contract instead: distinct URLs all survive, deduplicated.
+        monkeypatch.setattr(tf, "search", lambda q, **kw: [
+            {"title": "A1", "url": "https://a1.com", "content": "c1"},
+            {"title": "A2", "url": "https://a2.com", "content": "c2"},
+        ])
+        monkeypatch.setattr(tf, "fetch_as_articles", lambda urls, **kw: [])
         result = intl._multi_search("python", "AI / Machine Learning")
+        assert {a["url"] for a in result} == {"https://a1.com", "https://a2.com"}
         assert len(result) == 2
 
     def test_handles_search_exception_gracefully(self, monkeypatch):
         import backend.services.intelligence_service as intl
-        import backend.services.tavily_service as tav
-        monkeypatch.setattr(tav, "search_articles", lambda q: (_ for _ in ()).throw(RuntimeError("Tavily down")))
+        import backend.services.tinyfish_service as tf
+        monkeypatch.setattr(
+            tf, "search", lambda q, **kw: (_ for _ in ()).throw(RuntimeError("search down")))
+        monkeypatch.setattr(tf, "fetch_as_articles", lambda urls, **kw: [])
         result = intl._multi_search("python", "AI / ML")
         assert result == []
 
     def test_skips_articles_without_url(self, monkeypatch):
         import backend.services.intelligence_service as intl
-        import backend.services.tavily_service as tav
-        monkeypatch.setattr(tav, "search_articles", lambda q: [{"title": "No URL", "url": "", "content": "c"}])
+        import backend.services.tinyfish_service as tf
+        monkeypatch.setattr(
+            tf, "search", lambda q, **kw: [{"title": "No URL", "url": "", "content": "c"}])
+        monkeypatch.setattr(tf, "fetch_as_articles", lambda urls, **kw: [])
         result = intl._multi_search("python", "AI / ML")
         assert result == []
 
@@ -445,9 +451,9 @@ class TestGenerateIntelligenceFeed:
         assert result.get("_from_cache") is True
 
     def test_raises_on_no_articles(self, mock_pipeline, monkeypatch):
-        import backend.services.tavily_service as tav
+        import backend.services.tinyfish_service as tf
         import backend.services.source_ranker as sr
-        monkeypatch.setattr(tav, "search_articles", lambda q: [])
+        monkeypatch.setattr(tf, "search", lambda q: [])
         monkeypatch.setattr(sr,  "rank_articles",   lambda arts, **kw: [])
         from backend.services.intelligence_service import generate_intelligence_feed
         with pytest.raises(ValueError, match="No articles found"):

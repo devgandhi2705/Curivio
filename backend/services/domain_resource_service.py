@@ -216,7 +216,7 @@ def discover_resources(
         query = group.query_template.format(topic=topic)
         items: list[dict] = []
 
-        # Repos group: try GitHub first, fall back to Tavily articles
+        # Repos group: try GitHub first, fall back to TinyFish articles
         if group.include_repos:
             try:
                 from .github_service import get_topic_repos
@@ -232,14 +232,14 @@ def discover_resources(
                 ]
             except Exception:
                 logger.warning(
-                    "[domain_resource] GitHub fetch failed for %r, falling back to Tavily", topic
+                    "[domain_resource] GitHub fetch failed for %r, falling back to TinyFish", topic
                 )
 
-        # All groups also run Tavily if repos didn't fill the quota
+        # All groups also run TinyFish if repos didn't fill the quota
         if len(items) < max_per_group:
             try:
-                from .tavily_service import search_articles
-                results = search_articles(query)
+                from .tinyfish_service import search
+                results = search(query)
                 for r in results[: max_per_group - len(items)]:
                     items.append({
                         "title":   r.get("title",   ""),
@@ -248,7 +248,7 @@ def discover_resources(
                     })
             except Exception:
                 logger.warning(
-                    "[domain_resource] Tavily fetch failed for query %r", query
+                    "[domain_resource] TinyFish fetch failed for query %r", query
                 )
 
         if not items:

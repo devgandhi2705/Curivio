@@ -52,11 +52,11 @@ class TestDiscoverResources:
         github_repos   = github_repos   if github_repos   is not None else _make_github_repos()
 
         with (
-            patch("backend.services.domain_resource_service.search_articles",
+            patch("backend.services.domain_resource_service.search",
                   return_value=tavily_results, create=True),
             patch("backend.services.domain_resource_service.get_topic_repos",
                   return_value=github_repos, create=True),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=tavily_results),
             patch("backend.services.github_service.get_topic_repos",
                   return_value=github_repos),
@@ -158,7 +158,7 @@ class TestDiscoverResources:
     def test_empty_tavily_results_produce_no_group(self):
         # A group with no items should be dropped
         with (
-            patch("backend.services.tavily_service.search_articles", return_value=[]),
+            patch("backend.services.tinyfish_service.search", return_value=[]),
             patch("backend.services.github_service.get_topic_repos",  return_value=[]),
         ):
             result = discover_resources("some obscure topic", domain="Finance")
@@ -166,7 +166,7 @@ class TestDiscoverResources:
 
     def test_tavily_failure_logged_not_raised(self):
         with (
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   side_effect=RuntimeError("Tavily down")),
             patch("backend.services.github_service.get_topic_repos",
                   return_value=[]),
@@ -178,7 +178,7 @@ class TestDiscoverResources:
     def test_github_failure_falls_back_to_tavily(self):
         tavily = _make_tavily_results(3)
         with (
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=tavily),
             patch("backend.services.github_service.get_topic_repos",
                   side_effect=RuntimeError("GitHub API rate limited")),
@@ -301,7 +301,7 @@ class TestActionRouterDomainIntegration:
         context = {"domain_context": {"domain": domain}}
 
         with (
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=tavily_results),
             patch("backend.services.github_service.get_topic_repos",
                   return_value=github_repos),
@@ -412,7 +412,7 @@ class TestActionRouterDomainIntegration:
 
     def test_route_returns_none_without_topic(self):
         with (
-            patch("backend.services.tavily_service.search_articles", return_value=[]),
+            patch("backend.services.tinyfish_service.search", return_value=[]),
             patch("backend.services.github_service.get_topic_repos", return_value=[]),
         ):
             from backend.services.action_router_service import route

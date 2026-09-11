@@ -1,9 +1,9 @@
 """
-TinyFish retrieval layer — Feed's live search/fetch backend, replacing Tavily.
+TinyFish retrieval layer — Feed's only live search/fetch backend.
 
 Two TinyFish endpoints:
-    search(query)              -> list[dict]  Search API, normalised to the same
-                                   shape tavily_service._to_article() produced:
+    search(query)              -> list[dict]  Search API, normalised to the
+                                   article shape every consumer reads:
                                    {title, url, content, source_op}. Response field
                                    is "snippet", mapped here to "content".
     fetch(urls, image_links)   -> dict[url, dict]  Fetch API — full clean content
@@ -12,13 +12,11 @@ Two TinyFish endpoints:
                                    for the live-pipeline path, which truncates).
     fetch_as_articles(urls)    -> list[dict]  Fetch, normalised + truncated to the
                                    same 2000-char article shape as search() — used
-                                   by retrieval_router in place of Tavily's
-                                   extract_strategy() for the 6 curated-domain
+                                   by retrieval_router for the 6 curated-domain
                                    extract_targets (these feed the live pipeline).
 
 TinyFish Search has no result-count parameter — sliced to _MAX_SEARCH_RESULTS
-client-side to match Tavily's max_results=5 default. Neither endpoint consumes
-credits (per TinyFish docs).
+client-side. Neither endpoint consumes credits (per TinyFish docs).
 """
 
 from __future__ import annotations
@@ -47,7 +45,7 @@ if not _MOCK and not _API_KEY:
 _SEARCH_URL = "https://api.search.tinyfish.ai"
 _FETCH_URL  = "https://api.fetch.tinyfish.ai"
 
-_MAX_SEARCH_RESULTS = 5    # matches Tavily's max_results=5 default (no server-side param exists)
+_MAX_SEARCH_RESULTS = 5    # TinyFish Search has no server-side result-count param
 _MAX_FETCH_URLS     = 10   # TinyFish Fetch's per-request limit
 _SEARCH_TIMEOUT_S   = 30
 _FETCH_TIMEOUT_S    = 60   # Fetch renders real JS pages, up to 10 in one request — needs more headroom
@@ -109,17 +107,47 @@ def _mock_articles(query: str, count: int = 3) -> list[dict]:
     ]
 
 
+def _cache_get(key: str) -> list[dict] | None:
+    """Cached results for `key`, or None on a miss.
+
+    Deferred import + swallowed errors on purpose: retrieval is a live user path
+    and must not fail because the cache table is missing or unreadable (a fresh
+    DB, a test with no search_cache table). A cache problem degrades to a live
+    call, never to a failed search.
+    """
+    try:
+        from .search_cache_service import get_cached_search
+        return get_cached_search(key)
+    except Exception:
+        logger.debug("[tinyfish] cache read failed — falling through to live search", exc_info=True)
+        return None
+
+
+def _cache_put(key: str, articles: list[dict]) -> None:
+    """Store results for `key`. Same non-fatal contract as _cache_get."""
+    try:
+        from .search_cache_service import cache_search
+        cache_search(key, articles)
+    except Exception:
+        logger.debug("[tinyfish] cache write failed — result not cached", exc_info=True)
+
+
 def search(query: str, include_domains: list[str] | None = None, meta: dict | None = None) -> list[dict]:
     """
     TinyFish Search — normalised article dicts (title, url, content, source_op).
     Never raises for empty results; raises RuntimeError on a request-level failure
-    (network/auth) — same contract tavily_service._search_raw() had.
+    (network/auth).
+
+    Cached in search_cache (SEARCH_CACHE_TTL_HOURS, default 6) keyed on the
+    effective query, so repeating a query inside the window costs no API call.
+    A cache hit skips the llm_call_log raw-capture row below — the row records a
+    real outbound request, and a hit makes none.
 
     `include_domains`, when given, scopes results to those domains using
     TinyFish's documented in-query search-operator support (there is no
-    separate include_domains request param) — replaces Tavily's
-    include_domains for the one live call site that used it (project_service's
-    rotating_theme trusted-domain supplementary search).
+    separate include_domains request param) — used by the one live call site
+    that needs it (project_service's rotating_theme trusted-domain
+    supplementary search).
 
     `meta`, when given, carries trace_id/user_id/project_id/day_ref/surface/
     is_test for the raw-response llm_call_log row Phase B1 writes here — the
@@ -133,6 +161,15 @@ def search(query: str, include_domains: list[str] | None = None, meta: dict | No
     if include_domains:
         site_ops = " OR ".join(f"site:{d}" for d in include_domains)
         q = f"{query} ({site_ops})"
+
+    # Cache on the EFFECTIVE query (site: operators included), so a domain-scoped
+    # search never collides with the same bare query. The prefix keeps these rows
+    # from colliding with anything else sharing the search_cache table.
+    cache_key = f"tinyfish_search:{q}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        logger.info("[tinyfish] search CACHE HIT | %.60s", q)
+        return cached
 
     t0 = time.monotonic()
     try:
@@ -151,7 +188,7 @@ def search(query: str, include_domains: list[str] | None = None, meta: dict | No
     _log_raw("tinyfish_search", q, t0, output=json.dumps(raw_results), success=True, error=None, meta=meta)
 
     results = raw_results[:_MAX_SEARCH_RESULTS]
-    return [
+    articles = [
         {
             "title":     r.get("title", ""),
             "url":       r.get("url", ""),
@@ -160,6 +197,11 @@ def search(query: str, include_domains: list[str] | None = None, meta: dict | No
         }
         for r in results
     ]
+    # Only cache a non-empty result: a transient empty response shouldn't pin an
+    # empty answer for the whole TTL window.
+    if articles:
+        _cache_put(cache_key, articles)
+    return articles
 
 
 def fetch(urls: list[str], image_links: bool = False, meta: dict | None = None) -> dict[str, dict]:
@@ -203,7 +245,7 @@ def fetch(urls: list[str], image_links: bool = False, meta: dict | None = None) 
 def fetch_as_articles(urls: list[str], meta: dict | None = None) -> list[dict]:
     """
     Fetch full content for known URLs, truncated to the same 2000-char article
-    shape tavily_service._to_article() used for extract() results. For the live
+    shape search() emits. For the live
     retrieval path only (retrieval_router's extract op) — feeds directly into
     retrieval_validator/source_ranker, so truncation must match today's behavior.
     Not for the ranked-pool full_content capture, which wants untruncated text —

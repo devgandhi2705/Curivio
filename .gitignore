@@ -72,7 +72,6 @@ frontend/.vite/
 *.pid.lock
 .eslintcache
 .stylelintcache
-tools/
 
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
@@ -80,3 +79,6 @@ tools/
 # Added by graphify
 graphify-out/
 .playwright-mcp/
+
+# ── Interview prep study docs (local only) ────────────────────────────────────
+docs/interview-prep/

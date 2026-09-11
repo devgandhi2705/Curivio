@@ -29,7 +29,7 @@ from .services.intelligence_service import (
     get_recent_intelligence_feeds,
 )
 from .services.topic_cluster import assign_category
-from .services.tavily_service import search_articles
+from .services.tinyfish_service import search as tinyfish_search
 from .services.feedback_service import process_feedback
 from .services.api_usage_service import (
     get_usage_stats,
@@ -113,7 +113,7 @@ AUTH_LOOSE_RATE_LIMIT    = cfg.AUTH_LOOSE_RATE_LIMIT
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Warn about missing API keys but don't block startup
-    _missing = [k for k in ("GROQ_API_KEY", "TAVILY_API_KEY") if not os.getenv(k)]
+    _missing = [k for k in ("GROQ_API_KEY", "TINYFISH_API_KEY") if not os.getenv(k)]
     if _missing:
         logger.warning("[startup] Missing env vars: %s — some features will not work", _missing)
 
@@ -122,7 +122,7 @@ async def lifespan(_app: FastAPI):
     # the secret is absent or empty/whitespace in this container, regardless of
     # what the HF settings panel shows.
     _secret_names = (
-        "GEMINI_API_KEYS", "GEMINI_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY",
+        "GEMINI_API_KEYS", "GEMINI_API_KEY", "GROQ_API_KEY", "TINYFISH_API_KEY",
         "DEEPL_TRANSLATE_API_KEY", "DEEPGRAM_TTS_API_KEY", "GEMINI_WRITER_API_KEY",
         "HF_TOKEN",
     )
@@ -741,7 +741,7 @@ async def feedback(
 @app.post("/search", response_model=SearchResponse)
 @limiter.limit(SEARCH_RATE_LIMIT)
 async def search(request: Request, data: SearchRequest):
-    raw = search_articles(data.query)
+    raw = tinyfish_search(data.query)
     return SearchResponse(results=[SearchResult(**r) for r in raw])
 
 
@@ -3032,7 +3032,7 @@ async def health_check():
 
     # API keys present (not validated, just present)
     checks["groq"]   = "configured" if os.getenv("GROQ_API_KEY")   else "missing"
-    checks["tavily"] = "configured" if os.getenv("TAVILY_API_KEY") else "missing"
+    checks["tinyfish"] = "configured" if os.getenv("TINYFISH_API_KEY") else "missing"
 
     healthy = checks["db"] == "ok"
     checks["status"] = "ok" if healthy else "degraded"

@@ -280,8 +280,8 @@ def format_reasoning_search_note(reasoning: dict) -> str:
     # Supporting results
     #
     # Web-search fix: content is already truncate_at_sentence()-capped at 2000
-    # chars upstream (tavily_service._to_article / tinyfish_service.
-    # fetch_as_articles, the shared per-result ingestion cap every consumer of
+    # chars upstream (tinyfish_service.search / fetch_as_articles, the shared
+    # per-result ingestion cap every consumer of
     # these results — Feed, deep_research, chat — reads). The [:280] cut here
     # predates that upstream cap by ~7 weeks (git blame: this line landed
     # 2026-05-24, the 2000-char cap 2026-07-11) and was never revisited once it

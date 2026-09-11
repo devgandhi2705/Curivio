@@ -314,7 +314,7 @@ def _fetch_articles(
     if not raw:
         raise ValueError(
             f"No articles retrieved for industry {cfg.display_name!r}. "
-            "Check Tavily API key and network connectivity."
+            "Check TINYFISH_API_KEY and network connectivity."
         )
 
     domain = _INDUSTRY_DOMAIN_MAP.get(industry_key, "default")

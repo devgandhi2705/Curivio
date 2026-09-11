@@ -1,7 +1,7 @@
 """
 API usage logging and monitoring service.
 
-Tracks every Groq and Tavily API call — recording service, operation, timing,
+Tracks every Groq API call — recording service, operation, timing,
 token counts, cache hit/miss, and a simple cost estimate.  All data is
 persisted to the api_usage_log table in SQLite.
 
@@ -11,8 +11,8 @@ Groq  llama-3.1-8b-instant:
   Input:  $0.05 / 1M tokens  →  5e-8 USD per token
   Output: $0.08 / 1M tokens  →  8e-8 USD per token
 
-Tavily Basic plan:
-  ~$0.001 per live search;  cache hits cost $0.00
+Retrieval (TinyFish) is not logged here — tinyfish_service writes its own raw
+request/response rows to llm_call_log instead, so api_usage_log is Groq-only.
 
 Public API
 ----------
@@ -21,7 +21,6 @@ get_usage_stats(days)                      → dict  totals + cache hit rate + b
 get_daily_summary(days)                    → list[dict]  per-calendar-day rows
 get_recent_calls(limit)                    → list[dict]  most-recent log entries
 estimate_groq_cost(input_tokens, output)   → float
-estimate_tavily_cost(cache_hit)            → float
 """
 
 import logging
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 _GROQ_INPUT_COST_PER_TOKEN:  float = 5e-8   # $0.05 / 1M tokens
 _GROQ_OUTPUT_COST_PER_TOKEN: float = 8e-8   # $0.08 / 1M tokens
-_TAVILY_COST_PER_SEARCH:     float = 0.001  # ~$0.001 / live search
 
 
 # ── Cost helpers ───────────────────────────────────────────────────────────────
@@ -47,11 +45,6 @@ def estimate_groq_cost(input_tokens: int, output_tokens: int) -> float:
         output_tokens * _GROQ_OUTPUT_COST_PER_TOKEN,
         8,
     )
-
-
-def estimate_tavily_cost(cache_hit: bool = False) -> float:
-    """Return estimated USD cost for one Tavily search (0.0 on cache hit)."""
-    return 0.0 if cache_hit else _TAVILY_COST_PER_SEARCH
 
 
 # ── Write ──────────────────────────────────────────────────────────────────────

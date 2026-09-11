@@ -100,7 +100,7 @@ def _run_analyze(industry_key, grok_json=None, articles=None, cached=None):
         patch("backend.services.feed_cache_service.get_cached_feed",
               return_value=cached),
         patch("backend.services.feed_cache_service.cache_feed"),
-        patch("backend.services.tavily_service.search_articles",
+        patch("backend.services.tinyfish_service.search",
               return_value=articles),
         patch("backend.services.source_ranker.rank_articles",
               side_effect=lambda arts, **kw: arts),
@@ -236,12 +236,12 @@ class TestAnalyzeIndustryCacheHit:
             analyze_industry("pharma")
         mock_grok.assert_not_called()
 
-    def test_cache_hit_does_not_call_tavily(self):
+    def test_cache_hit_does_not_call_search(self):
         cached_brief = {**_mock_brief(), "industry_key": "manufacturing", "cached": True}
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=cached_brief),
-            patch("backend.services.tavily_service.search_articles") as mock_tav,
+            patch("backend.services.tinyfish_service.search") as mock_tav,
         ):
             analyze_industry("manufacturing")
         mock_tav.assert_not_called()
@@ -316,7 +316,7 @@ class TestAnalyzeIndustryGeneration:
         result = _run_analyze(key)
         assert "trend_summary" in result
 
-    def test_tavily_called_with_industry_queries(self):
+    def test_search_called_with_industry_queries(self):
         from backend.services.industry_intelligence_service import _INDUSTRY_CONFIG
         cfg = _INDUSTRY_CONFIG["finance"]
 
@@ -324,7 +324,7 @@ class TestAnalyzeIndustryGeneration:
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
             patch("backend.services.feed_cache_service.cache_feed"),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=_make_articles()) as mock_tav,
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),
@@ -333,15 +333,19 @@ class TestAnalyzeIndustryGeneration:
         ):
             analyze_industry("finance")
 
-        # Each of the 3 configured queries should trigger a search_articles call
-        assert mock_tav.call_count == len(cfg.search_queries)
+        # retrieval_router truncates override_queries to the classified domain's
+        # search_queries_per_package budget, so the configured list is a ceiling,
+        # not a target. What matters: real searches ran, all drawn from the config.
+        assert 1 <= mock_tav.call_count <= len(cfg.search_queries)
+        issued = [c.args[0] for c in mock_tav.call_args_list]
+        assert set(issued) <= set(cfg.search_queries)
 
     def test_brief_is_written_to_cache(self):
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
             patch("backend.services.feed_cache_service.cache_feed") as mock_cache,
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=_make_articles()),
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),
@@ -365,17 +369,19 @@ class TestAnalyzeIndustryErrors:
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
-            patch("backend.services.tavily_service.search_articles", return_value=[]),
+            patch("backend.services.tinyfish_service.search", return_value=[]),
+            patch("backend.services.tinyfish_service.fetch_as_articles", return_value=[]),
         ):
             with pytest.raises(ValueError, match="No articles retrieved"):
                 analyze_industry("finance")
 
-    def test_all_tavily_queries_failing_raises(self):
+    def test_all_search_queries_failing_raises(self):
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
-            patch("backend.services.tavily_service.search_articles",
-                  side_effect=RuntimeError("Tavily down")),
+            patch("backend.services.tinyfish_service.search",
+                  side_effect=RuntimeError("search down")),
+            patch("backend.services.tinyfish_service.fetch_as_articles", return_value=[]),
         ):
             with pytest.raises(ValueError):
                 analyze_industry("exports")
@@ -384,7 +390,7 @@ class TestAnalyzeIndustryErrors:
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=_make_articles()),
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),
@@ -399,7 +405,7 @@ class TestAnalyzeIndustryErrors:
         with (
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=_make_articles()),
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),
@@ -416,7 +422,7 @@ class TestAnalyzeIndustryErrors:
                   return_value=None),
             patch("backend.services.feed_cache_service.cache_feed",
                   side_effect=Exception("disk full")),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   return_value=_make_articles()),
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),
@@ -426,7 +432,7 @@ class TestAnalyzeIndustryErrors:
             result = analyze_industry("ai_business")   # must not raise
         assert "trend_summary" in result
 
-    def test_partial_tavily_failure_continues_with_remaining_articles(self):
+    def test_partial_search_failure_continues_with_remaining_articles(self):
         """One failing query should not abort the workflow."""
         good_articles = _make_articles(4)
         call_count = {"n": 0}
@@ -441,7 +447,7 @@ class TestAnalyzeIndustryErrors:
             patch("backend.services.feed_cache_service.get_cached_feed",
                   return_value=None),
             patch("backend.services.feed_cache_service.cache_feed"),
-            patch("backend.services.tavily_service.search_articles",
+            patch("backend.services.tinyfish_service.search",
                   side_effect=flaky_search),
             patch("backend.services.source_ranker.rank_articles",
                   side_effect=lambda arts, **kw: arts),

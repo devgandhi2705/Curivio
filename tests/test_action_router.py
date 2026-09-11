@@ -258,15 +258,15 @@ class TestDispatchAction:
 
     def test_find_tutorials_with_results(self):
         # domain_resource_service.discover_resources() is the real primary path
-        # now (domain-aware GitHub/docs discovery); tavily_service is only the
-        # fallback when discovery fails — force that here to exercise it.
+        # now (domain-aware GitHub/docs discovery); the TinyFish search is only
+        # the fallback when discovery fails — force that here to exercise it.
         search_results = [
             {"title": "FAISS Tutorial", "url": "https://example.com/faiss", "content": "..."},
             {"title": "Pinecone Guide",  "url": "https://example.com/pinecone", "content": "..."},
         ]
         with patch("backend.services.domain_resource_service.discover_resources",
                    side_effect=RuntimeError("discovery down")), \
-             patch("backend.services.tavily_service.search_articles", return_value=search_results):
+             patch("backend.services.tinyfish_service.search", return_value=search_results):
             result = self._dispatch("find_tutorials")
         assert result["found"] is True
         assert len(result["data"]["results"]) == 2
@@ -275,7 +275,7 @@ class TestDispatchAction:
     def test_find_tutorials_search_fails_gracefully(self):
         with patch("backend.services.domain_resource_service.discover_resources",
                    side_effect=RuntimeError("discovery down")), \
-             patch("backend.services.tavily_service.search_articles", side_effect=RuntimeError("down")):
+             patch("backend.services.tinyfish_service.search", side_effect=RuntimeError("down")):
             result = self._dispatch("find_tutorials")
         assert result["found"] is False
         assert result["instruction"]
@@ -283,7 +283,7 @@ class TestDispatchAction:
     def test_find_tutorials_empty_results(self):
         with patch("backend.services.domain_resource_service.discover_resources",
                    side_effect=RuntimeError("discovery down")), \
-             patch("backend.services.tavily_service.search_articles", return_value=[]):
+             patch("backend.services.tinyfish_service.search", return_value=[]):
             result = self._dispatch("find_tutorials")
         assert result["found"] is False
 
@@ -370,7 +370,7 @@ class TestDispatchAction:
              patch("backend.services.learning_path_service.get_stored_path", return_value=None), \
              patch("backend.services.learning_path_service.get_learning_path", return_value=None), \
              patch("backend.services.github_service.get_topic_repos", return_value=[]), \
-             patch("backend.services.tavily_service.search_articles", return_value=[]):
+             patch("backend.services.tinyfish_service.search", return_value=[]):
             from backend.services.action_router_service import dispatch_action
             for action in actions:
                 result = dispatch_action(action, "Test Topic", _ctx())

@@ -5,7 +5,7 @@ Replaces the pattern ``query → search_articles()`` with:
 
     query → classify → plan → execute
 
-The router selects the right Tavily operations (search / extract / crawl / map)
+The router selects the right TinyFish operations (search / extract)
 based on the query domain, retrieval mode, and domain config rules — never
 blindly calling search() for everything.
 
@@ -65,7 +65,7 @@ class RetrievalPlan:
     """
     Fully describes a retrieval job.
 
-    Building a plan is pure (no I/O).  Executing it makes Tavily calls.
+    Building a plan is pure (no I/O).  Executing it makes TinyFish calls.
     """
     mode:              str                   # "chat" | "feed"
     classification:    ClassificationResult
@@ -151,7 +151,7 @@ def build_plan(
     override_queries If provided, these queries are used for 'search' operations
                      instead of the templates in domain config.  Useful when a
                      caller has already expanded domain-specific queries and
-                     wants the router to handle only the Tavily dispatch and
+                     wants the router to handle only the TinyFish dispatch and
                      extract steps.
     """
     from ..config.retrieval_config import get_domain_config
@@ -230,7 +230,7 @@ def _select_operations(
     mode:          str,
 ) -> list[str]:
     """
-    Return an ordered list of Tavily operations to execute for this plan.
+    Return an ordered list of TinyFish operations to execute for this plan.
 
     Strategy mapping
     ----------------
@@ -302,16 +302,15 @@ def execute_plan(plan: RetrievalPlan, meta: dict | None = None) -> list[dict]:
                 logger.warning("[retrieval_router] extract failed: %s", exc)
 
         elif op == "crawl" and plan.crawl_url:
-            try:
-                from .tavily_service import crawl_strategy  # no mode sets use_crawl=True currently; kept for a future mode
-                query_hint = plan.search_queries[0] if plan.search_queries else None
-                _merge(crawl_strategy(
-                    plan.crawl_url,
-                    query  = query_hint,
-                    domain = plan.domain_key,
-                ))
-            except Exception as exc:
-                logger.warning("[retrieval_router] crawl failed: %s", exc)
+            # Crawl was Tavily-only and TinyFish has no equivalent endpoint, so this
+            # op is unsupported since the Tavily removal. It is also unreachable
+            # today — _build_plan hardcodes use_crawl=False on both branches, so
+            # crawl_url is always None. Logged loudly rather than dropped silently,
+            # in case a future mode turns crawl targets back on.
+            logger.warning(
+                "[retrieval_router] crawl op requested for %s but no crawl backend is "
+                "configured — skipping", plan.crawl_url,
+            )
 
     logger.info(
         "[retrieval_router] %s/%s: %d articles | ops=%s | queries=%d",

@@ -1,9 +1,9 @@
 """
 Search result cache — SHA-256-keyed, SQLite-backed, TTL-expiring cache for
-Tavily search results.
+retrieval results (TinyFish search).
 
 Separate from feed_cache_service, which caches complete LLM-generated feeds.
-This cache operates one level earlier: it stores raw Tavily results so that
+This cache operates one level earlier: it stores raw search results so that
 repeating the same query within the TTL window costs zero additional API calls.
 
 TTL

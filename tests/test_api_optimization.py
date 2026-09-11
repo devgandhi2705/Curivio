@@ -6,9 +6,8 @@ Test levels
 -----------
 1. SearchCacheService   — key building, get/set, TTL expiry, purge, upsert
 2. ApiUsageService      — log_api_call, get_usage_stats, daily summary, recent calls
-3. CostEstimation       — groq / tavily cost math and ordering invariants
+3. CostEstimation       — groq cost math and ordering invariants
 4. GrokServiceLogging   — timing, token extraction, log_api_call integration
-5. TavilyServiceCaching — cache hit/miss path, result caching, log integration
 6. ApiUsageEndpoint     — /api-usage HTTP route shape
 7. Integration          — live search cache round-trip (gated with -m integration)
 
@@ -33,9 +32,7 @@ from backend.database.schema import ALL_TABLES
 from backend.services.api_usage_service import (
     _GROQ_INPUT_COST_PER_TOKEN,
     _GROQ_OUTPUT_COST_PER_TOKEN,
-    _TAVILY_COST_PER_SEARCH,
     estimate_groq_cost,
-    estimate_tavily_cost,
     get_daily_summary,
     get_recent_calls,
     get_usage_stats,
@@ -404,15 +401,6 @@ class TestCostEstimation:
         c2 = estimate_groq_cost(300, 50)
         assert estimate_groq_cost(800, 150) == pytest.approx(c1 + c2, rel=1e-9)
 
-    def test_tavily_live_search_costs_nonzero(self):
-        assert estimate_tavily_cost(cache_hit=False) == pytest.approx(_TAVILY_COST_PER_SEARCH)
-
-    def test_tavily_cache_hit_is_free(self):
-        assert estimate_tavily_cost(cache_hit=True) == 0.0
-
-    def test_tavily_live_more_expensive_than_cached(self):
-        assert estimate_tavily_cost(False) > estimate_tavily_cost(True)
-
     def test_groq_cost_constants_match_documentation(self):
         assert _GROQ_INPUT_COST_PER_TOKEN  == pytest.approx(5e-8)
         assert _GROQ_OUTPUT_COST_PER_TOKEN == pytest.approx(8e-8)
@@ -520,72 +508,6 @@ class TestGrokServiceLogging:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. TavilyService — caching integration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestTavilyServiceCaching:
-    def _make_tavily_response(self, results):
-        return {"results": results}
-
-    def test_live_call_made_on_cache_miss(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        fake = [{"title": "T", "url": "https://x.com", "content": "c"}]
-        with patch("backend.services.tavily_service._client") as mock_client:
-            mock_client.search.return_value = {"results": fake}
-            result = search_articles("live query")
-        mock_client.search.assert_called_once()
-        assert result == fake
-
-    def test_no_live_call_on_cache_hit(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        results = _fake_results(2)
-        cache_search("cached query", results)
-        with patch("backend.services.tavily_service._client") as mock_client:
-            retrieved = search_articles("cached query")
-        mock_client.search.assert_not_called()
-        assert retrieved == results
-
-    def test_results_cached_after_live_call(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        fake = [{"title": "T", "url": "https://x.com", "content": "c"}]
-        with patch("backend.services.tavily_service._client") as mock_client:
-            mock_client.search.return_value = {"results": fake}
-            search_articles("new query")
-        # Second call should hit cache
-        with patch("backend.services.tavily_service._client") as mock_client2:
-            search_articles("new query")
-        mock_client2.search.assert_not_called()
-
-    def test_live_call_logs_cache_miss(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        with patch("backend.services.tavily_service._client") as mock_client, \
-             patch("backend.services.api_usage_service.log_api_call") as mock_log:
-            mock_client.search.return_value = {"results": []}
-            search_articles("log test query")
-        mock_log.assert_called_once()
-        kwargs = mock_log.call_args.kwargs
-        assert kwargs["service"]   == "tavily"
-        assert kwargs["cache_hit"] is False
-        assert kwargs["estimated_cost_usd"] == pytest.approx(0.001)
-
-    def test_cache_hit_logs_zero_cost(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        cache_search("cheap query", _fake_results(1))
-        with patch("backend.services.api_usage_service.log_api_call") as mock_log:
-            search_articles("cheap query")
-        kwargs = mock_log.call_args.kwargs
-        assert kwargs["cache_hit"]          is True
-        assert kwargs["estimated_cost_usd"] == 0.0
-
-    def test_tavily_api_error_propagates(self, mem_db):
-        from backend.services.tavily_service import search_articles
-        with patch("backend.services.tavily_service._client") as mock_client:
-            mock_client.search.side_effect = Exception("network error")
-            with pytest.raises(RuntimeError, match="Tavily search failed"):
-                search_articles("bad query")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # 7. /api-usage endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -645,28 +567,3 @@ class TestApiUsageEndpoint:
         body = resp.json()
         assert body["daily"]        == daily
         assert body["recent_calls"] == recent
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 8. Integration test — real search cache round-trip
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@pytest.mark.integration
-class TestSearchCacheIntegration:
-    def test_search_result_cached_and_reused(self, mem_db):
-        """
-        Store results in the search cache, confirm retrieval without calling
-        Tavily.  This exercises the full cache path on a real in-memory DB.
-        """
-        from backend.services.tavily_service import search_articles
-
-        results = [
-            {"title": "RAG paper", "url": "https://arxiv.org/1", "content": "about RAG"},
-            {"title": "Embeddings", "url": "https://arxiv.org/2", "content": "about embeddings"},
-        ]
-        cache_search("rag retrieval augmented generation", results)
-
-        with patch("backend.services.tavily_service._client") as mock_client:
-            returned = search_articles("rag retrieval augmented generation")
-        mock_client.search.assert_not_called()
-        assert returned == results

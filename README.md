@@ -51,7 +51,7 @@ without nagging; three colour modes, remembered per browser.
 ## Built with
 
 React and Vite on the front, FastAPI and SQLite behind it, Gemini for generation
-with Groq as fallback, Tavily for retrieval. Packaged as a Docker image and
+with Groq as fallback, TinyFish for retrieval. Packaged as a Docker image and
 running on Hugging Face Spaces.
 
 ---

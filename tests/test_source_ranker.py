@@ -430,7 +430,7 @@ def test_real_search_and_rank():
 
     Run with:  pytest tests/test_source_ranker.py -v -m integration
     """
-    from backend.services.tavily_service import search_articles
+    from backend.services.tinyfish_service import search as search_articles
 
     query    = "transformer architecture attention mechanism"
     articles = search_articles(query)

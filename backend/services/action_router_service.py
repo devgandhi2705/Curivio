@@ -8,7 +8,7 @@ Actions
 -------
   explain_simply     — surface deep-research summary at beginner depth
   compare            — show topic relationships via expansion data
-  find_tutorials     — search for practical tutorial resources (Tavily, cached)
+  find_tutorials     — search for practical tutorial resources (TinyFish)
   beginner_resources — extract beginner steps from stored learning path
   show_repos         — retrieve / fetch GitHub repositories (cache-first)
   learning_roadmap   — return full structured learning path (cache-first)
@@ -382,7 +382,7 @@ def _handle_find_tutorials(topic: str, context: dict) -> dict:
 
     For Technology/AI domains the first resource group (repos + docs) is
     surfaced; for other domains the tutorial group is used.  Falls back to
-    a generic Tavily query when domain discovery fails.
+    a generic TinyFish query when domain discovery fails.
     """
     domain_ctx = context.get("domain_context", {})
     domain     = domain_ctx.get("domain")
@@ -425,10 +425,10 @@ def _handle_find_tutorials(topic: str, context: dict) -> dict:
 
     # Generic fallback
     try:
-        from .tavily_service import search_articles
-        results = search_articles(f"{topic} practical tutorial hands-on guide")[:5]
+        from .tinyfish_service import search
+        results = search(f"{topic} practical tutorial hands-on guide")[:5]
     except Exception:
-        logger.exception("action_router: tavily fallback failed for %r", topic)
+        logger.exception("action_router: tinyfish fallback failed for %r", topic)
         results = []
 
     if results:
