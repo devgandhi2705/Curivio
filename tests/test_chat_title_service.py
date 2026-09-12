@@ -320,9 +320,9 @@ class TestAutoTitleIntegration:
         import json
         from backend.services.chat_service import chat_stream
 
-        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False):
-            for chunk in grok_chunks:
-                yield {"type": "text", "text": chunk}
+        def fake_ask_chat_stream(messages, *args, **kwargs):
+            for i, chunk in enumerate(grok_chunks):
+                yield {"type": "text", "text": chunk, "seq": i, "block_id": 0}
 
         with patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
              patch("backend.services.chat_service._load_history_messages", return_value=history), \
@@ -333,6 +333,7 @@ class TestAutoTitleIntegration:
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
              patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream), \
+             patch("backend.llm.chat_router.classify_message", return_value=None), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
                                  "next_topics": [], "prerequisites": [], "advanced_topics": []}), \

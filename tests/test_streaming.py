@@ -80,18 +80,30 @@ def patched_chat_stream(monkeypatch):
     import backend.services.memory_injection_service as mis
     import backend.services.action_router_service    as ars
     import backend.services.chat_prompt_service      as cps
-    import backend.services.grok_service             as gs
     import backend.services.follow_up_service        as fus
     import backend.services.chat_service             as cs
 
     monkeypatch.setattr(mis, "inject_memory",       lambda *a, **kw: dict(EMPTY_CONTEXT))
     monkeypatch.setattr(ars, "route",               lambda *a, **kw: None)
     monkeypatch.setattr(cps, "build_messages",      lambda *a, **kw: [{"role": "user", "content": "hi"}])
-    monkeypatch.setattr(gs,  "ask_grok_chat_stream", lambda *a, **kw: iter(["Hello", ", ", "world", "!"]))
     monkeypatch.setattr(fus, "get_recommendations", lambda *a, **kw: dict(EMPTY_RECOMMENDATIONS))
     monkeypatch.setattr(cs,  "_load_history_messages", lambda *a, **kw: [])
     monkeypatch.setattr(cs,  "_save_message",          lambda *a, **kw: 42)
     monkeypatch.setattr(cs,  "_detect_topic_hint",     lambda *a, **kw: None)
+
+    import backend.llm.chat_agent  as chat_agent
+    import backend.llm.chat_router as chat_router
+
+    monkeypatch.setattr(
+        chat_agent, "ask_chat_stream",
+        lambda *a, **kw: iter([
+            {"type": "text", "text": "Hello", "seq": 0, "block_id": 0},
+            {"type": "text", "text": ", ",    "seq": 1, "block_id": 0},
+            {"type": "text", "text": "world", "seq": 2, "block_id": 0},
+            {"type": "text", "text": "!",     "seq": 3, "block_id": 0},
+        ]),
+    )
+    monkeypatch.setattr(chat_router, "classify_message", lambda *a, **kw: None)
 
 
 @pytest.fixture
@@ -252,19 +264,19 @@ class TestChatStreamGenerator:
         assert len(events) == 1
 
     def test_error_on_ai_failure_after_no_chunks(self, monkeypatch, patched_chat_stream):
-        import backend.services.grok_service as gs
+        import backend.llm.chat_agent as chat_agent
         def boom(*a, **kw):
-            raise RuntimeError("Groq unavailable")
-        monkeypatch.setattr(gs, "ask_grok_chat_stream", boom)
+            raise RuntimeError("model unavailable")
+        monkeypatch.setattr(chat_agent, "ask_chat_stream", boom)
         events = self._collect("sess1", "Hello")
         assert events[-1]["t"] == "error"
 
     def test_partial_chunks_then_error(self, monkeypatch, patched_chat_stream):
-        import backend.services.grok_service as gs
+        import backend.llm.chat_agent as chat_agent
         def partial_stream(*a, **kw):
-            yield "Partial"
+            yield {"type": "text", "text": "Partial", "seq": 0, "block_id": 0}
             raise RuntimeError("Disconnected mid-stream")
-        monkeypatch.setattr(gs, "ask_grok_chat_stream", partial_stream)
+        monkeypatch.setattr(chat_agent, "ask_chat_stream", partial_stream)
         events = self._collect("sess1", "Hello")
         types = [e["t"] for e in events]
         assert "chunk" in types

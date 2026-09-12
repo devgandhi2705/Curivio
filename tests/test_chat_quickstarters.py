@@ -160,7 +160,9 @@ class TestAutoModeWithQuickStarters:
              patch("backend.services.action_router_service.route", return_value=None), \
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
-             patch("backend.services.grok_service.ask_grok_chat_stream", return_value=["ok"]), \
+             patch("backend.llm.chat_agent.ask_chat_stream",
+                   return_value=iter([{"type": "text", "text": "ok"}])), \
+             patch("backend.llm.chat_router.classify_message", return_value=None), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
                                  "next_topics": [], "prerequisites": [], "advanced_topics": []}):
