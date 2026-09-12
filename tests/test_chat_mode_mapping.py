@@ -11,10 +11,10 @@ backend behaviour stays consistent with the frontend contract:
 
 chat_stream() (the only chat path — sync /chat and its backend-orchestrated
 chat_modes_service.prepare_mode_context pre-fetch were both retired) drives
-this differently since Chat-4.1: chat_mode only gates tool availability and
-supplies an optional bias hint (chat_agent.resolve_tools_and_hint) — web_search
-is a real tool the model calls itself, not a pre-fetch — see
-TestResolveToolsAndHint / TestStreamReflectsActualToolUse below.
+this differently since Task 4: chat_mode only supplies the Web Search/Explain
+Simply toggles that plan_turn() merges with the classifier's own judgment —
+chat_service itself runs the search, not the model — see
+TestStreamReflectsThePlan below.
 
 Toggle rules (mirrors ChatInput.jsx logic):
   - Clicking Web Search when mode is "web_search" → "normal"
@@ -110,56 +110,26 @@ class TestChatRequestValidation:
         assert req.chat_mode == "normal"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Chat-4.1: resolve_tools_and_hint — pure chat_mode -> (tools_enabled, hint)
-# ─────────────────────────────────────────────────────────────────────────────
+class TestStreamReflectsThePlan:
+    """chat_mode/auto_mode/sources in the done event now report what the TURN
+    PLAN did: the search is run by chat_service, never by the model."""
 
-class TestResolveToolsAndHint:
-    """
-    chat_agent.resolve_tools_and_hint, the single place chat_mode gets
-    translated into tool availability + an optional bias.
-    """
+    @pytest.fixture(autouse=True)
+    def _reset_sticky_simple_mode(self):
+        # chat_title_service persists conversation mode against the real DB
+        # (no test-isolation layer for it) — every test here shares session_id
+        # "sess", so a "layman" run earlier in the file would otherwise leak
+        # sticky-simple state into a later "normal" run.
+        from backend.services.chat_title_service import set_session_conversation_mode
+        set_session_conversation_mode("sess", "normal")
+        yield
 
-    def test_layman_hard_gates_tools(self):
-        from backend.llm.chat_agent import resolve_tools_and_hint
-        tools_enabled, hint = resolve_tools_and_hint("layman")
-        assert tools_enabled is False
-        assert hint is None
-
-    def test_normal_has_tools_and_no_hint(self):
-        from backend.llm.chat_agent import resolve_tools_and_hint
-        tools_enabled, hint = resolve_tools_and_hint("normal")
-        assert tools_enabled is True
-        assert hint is None
-
-    def test_web_search_has_tools_and_a_hint(self):
-        from backend.llm.chat_agent import resolve_tools_and_hint
-        tools_enabled, hint = resolve_tools_and_hint("web_search")
-        assert tools_enabled is True
-        assert hint and "web_search" in hint
-
-    def test_unknown_mode_falls_back_to_tools_no_hint(self):
-        from backend.llm.chat_agent import resolve_tools_and_hint
-        tools_enabled, hint = resolve_tools_and_hint("turbo_mode")
-        assert tools_enabled is True
-        assert hint is None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Chat-4.1: chat_stream's chat_mode/auto_mode/sources reflect which tool the
-# model actually called, not which mode was pre-selected. The regex
-# auto-upgrade is retired — chat_agent.ask_chat_stream (the model's decision)
-# is mocked here so the test is fast/deterministic; whether the model
-# genuinely chooses to call a tool live is verified separately, not here.
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestStreamReflectsActualToolUse:
-
-    def _collect_done_event(self, message, chat_mode, agent_events):
+    def _run(self, message, chat_mode, decision, search=("note", [{"title": "T", "url": "https://example.com"}])):
+        from backend.llm.chat_router import RoutingDecision
         from backend.services.chat_service import chat_stream
 
-        def fake_ask_chat_stream(messages, metadata=None, tools_enabled=True, has_attachments=False, task_type=None):
-            yield from agent_events
+        def fake_ask_chat_stream(messages, *args, **kwargs):
+            yield {"type": "text", "text": "answer"}
 
         events = []
         with patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
@@ -167,52 +137,54 @@ class TestStreamReflectsActualToolUse:
              patch("backend.services.chat_service._save_message", return_value=1), \
              patch("backend.services.memory_injection_service.inject_memory", return_value={}), \
              patch("backend.services.domain_classifier_service.get_domain_context", return_value={}), \
-             patch("backend.services.action_router_service.route", return_value=None), \
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
+             patch("backend.llm.chat_router.classify_message",
+                   return_value=None if decision is None else RoutingDecision(**decision)), \
+             patch("backend.services.web_search_reasoning_service.run_chat_search",
+                   return_value=search), \
              patch("backend.services.follow_up_service.get_recommendations",
                    return_value={"based_on_topic": None, "source": "empty",
                                  "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
              patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream):
             for line in chat_stream("sess", message, chat_mode=chat_mode):
-                line = line.strip()
-                if line:
+                if line.strip():
                     events.append(json.loads(line))
         return events, next(e for e in events if e["t"] == "done")
 
-    def test_explicit_web_search_stays_web_search_when_no_tool_called(self):
-        # Explicit web_search mode, but the model answers without calling a
-        # tool this turn (already answerable) — chat_mode still reports
-        # "web_search" (what was requested), auto_mode False (not model-initiated).
-        _, done = self._collect_done_event(
-            "Research AI manufacturing", "web_search",
-            [{"type": "text", "text": "ok"}],
-        )
-        assert done["chat_mode"] == "web_search"
-        assert done["auto_mode"] is False
+    _NO_SEARCH = dict(needs_web_search=False, search_query="", complexity="simple",
+                      needs_code_execution=False, wants_simple_explanation=False, crisis=False)
 
-    def test_normal_mode_model_calls_web_search_marks_auto(self):
-        # chat_mode left on "normal", model decides on its own to call
-        # web_search — done event surfaces the tool actually used and flags
-        # auto_mode True, mirroring the old regex-auto-upgrade UX signal.
-        agent_events = [
-            {"type": "tool_start", "tool": "web_search"},
-            {"type": "tool_end", "tool": "web_search",
-             "sources": [{"title": "T", "url": "https://example.com"}]},
-            {"type": "text", "text": "Python vs JavaScript..."},
-        ]
-        events, done = self._collect_done_event("Compare Python vs JavaScript", "normal", agent_events)
+    def test_classifier_search_marks_the_turn_as_web_search(self):
+        events, done = self._run("who won yesterday", "normal",
+                                 {**self._NO_SEARCH, "needs_web_search": True, "search_query": "q"})
         assert done["chat_mode"] == "web_search"
         assert done["auto_mode"] is True
         assert done["sources"] == [{"title": "T", "url": "https://example.com"}]
         statuses = [e["v"] for e in events if e["t"] == "status"]
         assert "Searching the web…" in statuses
 
-    def test_normal_mode_no_tool_called_stays_normal(self):
-        _, done = self._collect_done_event(
-            "What is attention?", "normal",
-            [{"type": "text", "text": "Attention is..."}],
-        )
+    def test_toggle_searches_even_when_the_classifier_would_not(self):
+        _, done = self._run("explain attention", "web_search", self._NO_SEARCH)
+        assert done["chat_mode"] == "web_search"
+        assert done["auto_mode"] is False, "the user asked for it, so it is not automatic"
+
+    def test_plain_turn_runs_no_search(self):
+        events, done = self._run("what is attention?", "normal", self._NO_SEARCH)
+        assert done["chat_mode"] == "normal" and done["sources"] == []
+        assert not [e for e in events if e["t"] == "status" and e.get("tool")]
+
+    def test_simple_tone_turn_reports_layman(self):
+        _, done = self._run("eli5 attention", "layman", self._NO_SEARCH)
+        assert done["chat_mode"] == "layman"
+
+    def test_classifier_failure_still_answers(self):
+        _, done = self._run("hello", "normal", None)
         assert done["chat_mode"] == "normal"
-        assert done["auto_mode"] is False
-        assert done["sources"] == []
+
+    def test_search_block_and_text_do_not_share_a_block_id(self):
+        events, _ = self._run("who won yesterday", "normal",
+                              {**self._NO_SEARCH, "needs_web_search": True, "search_query": "q"})
+        search_ids = {e["block_id"] for e in events if e["t"] == "status" and e.get("tool")}
+        chunk_ids = {e["block_id"] for e in events if e["t"] == "chunk"}
+        assert len(search_ids) == 1 and search_ids.isdisjoint(chunk_ids)

@@ -329,7 +329,6 @@ class TestAutoTitleIntegration:
              patch("backend.services.chat_service._save_message", return_value=1), \
              patch("backend.services.memory_injection_service.inject_memory", return_value={}), \
              patch("backend.services.domain_classifier_service.get_domain_context", return_value={}), \
-             patch("backend.services.action_router_service.route", return_value=None), \
              patch("backend.services.chat_prompt_service.build_messages",
                    return_value=[{"role": "user", "content": message}]), \
              patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream), \

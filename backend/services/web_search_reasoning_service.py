@@ -16,6 +16,7 @@ Public API
 ----------
 build_search_queries(message, intent_profile, domain) -> dict
 fetch_reasoned_results(message, intent_profile, domain) -> dict
+run_chat_search(query, *, complexity, meta) -> (note, sources)   one chat turn's whole search step
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from __future__ import annotations
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +56,27 @@ _CONTRADICTION_MAX = 3   # max NEW articles from contradiction query (deduped vs
 # the largest target that costs ZERO extra retrieval: every one of these
 # articles is already fetched today and thrown away by the 3+3 slice.
 #
-# Under-fill is safe by construction and never silent-fails: a short list just
-# slices short. And because the worst real turn still had 6 obtainable, the
-# complex tier's floor equals today's fixed total — it can only match or beat it.
+# The tier now decides how many SEARCHES run, not just how many results survive.
+#   simple  = one query, 4 results. A simple turn ("capital of Japan", "who is
+#             the CEO of X") does not need a contradiction angle, and skipping
+#             that second search takes ~2s off the turn; 4 primary results keep
+#             the same source count the old 2+2 delivered.
+#   complex = both queries, run concurrently, 5 + 4 kept. 5 is the hard ceiling
+#             on primary (tinyfish_service slices each search to 5) and 4 sits
+#             just above the measured 3.71 mean of genuinely new complicating
+#             results, so it fills on most turns without asking for air.
+# Anything else (including None) keeps the old fixed 3+3, two searches.
 _TIER_CAPS: dict[str, tuple[int, int]] = {
-    "simple":  (2, 2),
+    "simple":  (4, 0),
     "complex": (5, 4),
 }
+
+
+def _recent_years() -> str:
+    """This year and last, from the clock. The old suffix hardcoded "2024 2025"
+    and silently aged into a stale recency filter."""
+    year = datetime.now().year
+    return f"{year - 1} {year}"
 
 
 def _caps_for(complexity: str | None) -> tuple[int, int]:
@@ -73,7 +90,7 @@ def _caps_for(complexity: str | None) -> tuple[int, int]:
 _INTENT_CONTRADICTION_SUFFIXES: dict[str, str] = {
     "causal":      "evidence against mechanism counterexample alternative explanation",
     "comparison":  "limitations weaknesses failure modes where it breaks",
-    "historical":  "reversal setback recent shift 2024 2025",
+    "historical":  "reversal setback recent shift {years}",
     "strategic":   "hidden risk vulnerability strategic weakness disruption",
     "research":    "contradicting evidence criticism controversy competing viewpoint",
     "prediction":  "risks uncertainty headwinds scenarios where this fails",
@@ -155,12 +172,11 @@ def build_search_queries(
         or _DEFAULT_CONTRADICTION_SUFFIX
     )
 
-    # For recency-flagged messages, force a recent-shift angle
-    _recency_re = re.compile(
-        r'\b(current|today|now|recent|latest|modern|2024|2025|this year)\b', re.I
-    )
-    if _recency_re.search(message):
-        suffix = f"latest news 2024 2025 problems challenges reversal"
+    suffix = suffix.replace("{years}", _recent_years())
+
+    # For recency-flagged messages, force a recent-shift angle.
+    if re.search(r"\b(current|today|now|recent|latest|modern|this year|(?:19|20)\d{2})\b", message, re.I):
+        suffix = f"latest news {_recent_years()} problems challenges reversal"
 
     contradiction_query = f"{base} {suffix}"
 
@@ -215,16 +231,25 @@ def fetch_reasoned_results(
     p_query  = queries["primary_query"]
     c_query  = queries["contradiction_query"]
 
+    primary_cap, contra_cap = _caps_for(complexity)
+
     t0 = time.monotonic()
-    raw_primary_articles = _safe_search(p_query, meta=meta)
-    raw_contra_articles  = _safe_search(c_query, meta=meta)
+    if contra_cap == 0:
+        # Simple turn: one query, no contradiction angle to pay for.
+        raw_primary_articles, raw_contra_articles = _safe_search(p_query, meta=meta), []
+        c_query = ""
+    else:
+        # Both queries at once: they are independent network calls, and running
+        # them back to back cost a measured 4.2-4.8s of the turn.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="chat-search") as pool:
+            primary_job = pool.submit(_safe_search, p_query, meta)
+            contra_job = pool.submit(_safe_search, c_query, meta)
+            raw_primary_articles, raw_contra_articles = primary_job.result(), contra_job.result()
 
     _log_raw_result_set(p_query, c_query, raw_primary_articles, raw_contra_articles, t0, meta)
 
-    primary_cap, contra_cap = _caps_for(complexity)
-
     primary_articles = raw_primary_articles[:primary_cap]
-    contra_articles  = raw_contra_articles
+    contra_articles = raw_contra_articles
 
     # Dedup: only keep contradiction results not already in primary.
     # Phase M note — dedup runs against the CAPPED primary list, which is the
@@ -251,6 +276,74 @@ def fetch_reasoned_results(
         "all_articles":        primary_articles + complicating,
         "has_complicating":    len(complicating) > 0,
     }
+
+
+def run_chat_search(query: str, *, complexity: str | None = None,
+                    meta: dict | None = None) -> tuple[str, list[dict]]:
+    """One chat turn's whole search step: fetch, build the note the model reads,
+    and return the [{title, url}] list the frontend resolves [N] citations
+    against. Moved here from the retired chat_tools.web_search tool — same
+    formatter, same log row, minus the extra LLM round-trip a tool call cost.
+
+    Filtering url-less articles ONCE, before the note and the source list are
+    built, is what keeps citation [N] pointing at sources[N-1]. Never raises: a
+    dead search degrades the turn, it does not fail it.
+    """
+    from .chat_modes_service import format_reasoning_search_note
+
+    t0 = time.monotonic()
+    try:
+        reasoning = fetch_reasoned_results(query, meta=meta, complexity=complexity)
+    except Exception as exc:
+        logger.warning("[web_search] chat search failed for %r", query[:60], exc_info=True)
+        _log_chat_search(query, "", t0, meta, success=False, error=exc)
+        return "", []
+
+    supporting = [a for a in reasoning.get("supporting", []) if a.get("url")]
+    complicating = [a for a in reasoning.get("complicating", []) if a.get("url")]
+    if not supporting and not complicating:
+        note = "[WEB SEARCH]: No results retrieved for this query."
+        _log_chat_search(query, note, t0, meta, success=True)
+        return note, []
+
+    note = format_reasoning_search_note(
+        {**reasoning, "supporting": supporting, "complicating": complicating})
+    sources = [{"title": (a.get("title") or "").strip(), "url": a.get("url", "")}
+               for a in supporting + complicating]
+    _log_chat_search(query, note, t0, meta, success=True)
+    return note, sources
+
+
+def _log_chat_search(query: str, output: str, t0: float, meta: dict | None,
+                     *, success: bool, error: Exception | None = None) -> None:
+    """One llm_call_log row per chat search — same shape chat_tools.web_search
+    wrote, so the admin panel's existing chat_web_search rows stay continuous.
+    provider="none": this is retrieval, not a model completion. Never raises."""
+    from datetime import timezone
+    from uuid import uuid4
+    from ..llm.call_logger import write_call_row
+
+    meta = meta or {}
+    now = datetime.now(timezone.utc).isoformat()
+    write_call_row(
+        run_id=uuid4().hex,
+        parent_run_id=None,
+        timestamp_start=now,
+        timestamp_end=now,
+        latency_ms=int((time.monotonic() - t0) * 1000),
+        provider="none",
+        call_type="chat_web_search",
+        user_id=meta.get("user_id"),
+        input_text=query,
+        output=output,
+        success=success,
+        error_type=type(error).__name__ if error else None,
+        error_message=str(error) if error else None,
+        trace_id=meta.get("trace_id"),
+        agent_name="web_search",
+        surface=meta.get("surface", "chat"),
+        is_test=bool(meta.get("is_test", False)),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

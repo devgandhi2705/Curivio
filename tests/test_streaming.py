@@ -227,21 +227,6 @@ class TestChatStreamGenerator:
         done = next(e for e in events if e["t"] == "done")
         assert done["message_id"] == 42  # fixture returns 42
 
-    def test_done_event_action_none_when_no_route(self, patched_chat_stream):
-        events = self._collect("sess1", "Hello")
-        done = next(e for e in events if e["t"] == "done")
-        assert done["action"] is None
-
-    def test_done_event_action_from_route(self, monkeypatch, patched_chat_stream):
-        import backend.services.action_router_service as ars
-        monkeypatch.setattr(ars, "route", lambda *a, **kw: {
-            "action": "show_repos", "topic": "Python",
-            "found": True, "data": {}, "instruction": "",
-        })
-        events = self._collect("sess1", "Show repos")
-        done = next(e for e in events if e["t"] == "done")
-        assert done["action"] == "show_repos"
-
     def test_error_on_empty_session_id(self, patched_chat_stream):
         events = self._collect("", "Hello")
         assert events[0]["t"] == "error"

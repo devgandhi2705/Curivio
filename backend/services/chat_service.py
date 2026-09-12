@@ -53,12 +53,6 @@ _CRISIS_WINDOW_TURNS = 5
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_FEED_ACTION_TO_MODE: dict[str, str] = {
-    "ask_about":         "normal",
-    "continue_research": "web_search",
-    "explain_simply":    "layman",
-}
-
 # Layman-fix pass: chat_mode=="normal" alone can't distinguish an explicit exit
 # (the frontend's mode toggle really does send "normal" when the user picks it)
 # from a stale default (frontend's local sticky state lost on reload, message
@@ -155,114 +149,81 @@ def chat_stream(
     auto_mode = False
 
     try:
-        # Feed context: enrich + override topic and mode before intent detection
+        # Feed context: enrich, and resolve the card this chat is anchored to
+        feed_action = None
         if feed_context:
             _enrich_feed_context(feed_context)
             if topic_hint is None:
                 topic_hint = feed_context.get("insight_title") or _detect_topic_hint(message)
-            if chat_mode == "normal":
-                chat_mode = _FEED_ACTION_TO_MODE.get(
-                    feed_context.get("action", "ask_about"), "normal"
-                )
+            feed_action = feed_context.get("action") or "ask_about"
         elif topic_hint is None:
             topic_hint = _detect_topic_hint(message)
 
-        # Admin-log tag (llm_call_log.agent_name): which Feed action opened this
-        # session, so Ask About / Explain Simply rows are distinguishable from
-        # ordinary chat in the admin log instead of all reading "chat_turn".
-        # feed_context carries it on turn 1 — the feed_chat_links row isn't
-        # written until that turn's response completes (ChatWorkspace's onDone);
-        # the link row carries it on every turn after. None for plain chat, which
-        # is what agent_name already is for those rows today.
-        feed_agent_name = None
-        if feed_context:
-            feed_agent_name = f"feed_{feed_context.get('action') or 'ask_about'}"
-        else:
+        # feed_context carries the card on turn 1; the feed_chat_links row (written
+        # only after that turn completes) carries it on every turn after. Together:
+        # no gap. Used for the admin-log tag and for the classifier's card title.
+        link_row = None
+        if not feed_context:
             try:
                 from .feed_chat_link_service import get_link_for_session
-                _link_row = get_link_for_session(session_id)
-                if _link_row:
-                    feed_agent_name = f"feed_{_link_row.get('interaction_type') or 'ask_about'}"
+                link_row = get_link_for_session(session_id)
             except Exception:
-                logger.debug("[chat_service] feed action tag lookup failed (non-fatal)")
+                logger.debug("[chat_service] feed link lookup failed (non-fatal)")
+        if feed_context:
+            feed_agent_name = f"feed_{feed_action}"
+        elif link_row:
+            feed_agent_name = f"feed_{link_row.get('interaction_type') or 'ask_about'}"
+        else:
+            feed_agent_name = None
+        card_title = ((feed_context or {}).get("insight_title")
+                      or (link_row or {}).get("article_title") or "")
 
-        # Layman mode: restore from session if request didn't override
-        if chat_mode == "normal":
-            try:
-                from .chat_title_service import get_session_conversation_mode, set_session_conversation_mode
-                if get_session_conversation_mode(session_id) == "layman":
-                    if _requests_layman_exit(message):
-                        # Real exit, not a stale default — clear the sticky flag so
-                        # later plain turns in this session don't fall back into it.
-                        set_session_conversation_mode(session_id, "normal")
-                    else:
-                        chat_mode = "layman"
-            except Exception:
-                pass
-        elif chat_mode == "web_search":
-            # An explicit tool-mode toggle is never ambiguous (unlike bare "normal")
-            # — clear any stale layman stickiness now so a later plain message
-            # doesn't silently fall back into it either.
-            try:
-                from .chat_title_service import set_session_conversation_mode
+        # Toggles are overrides, not modes: the request's chat_mode only says
+        # whether the user pressed Web Search or Explain Simply. Everything else
+        # about this turn is the classifier's call.
+        toggle_web_search = chat_mode == "web_search"
+        toggle_simple     = chat_mode == "layman"
+        sticky_simple     = False
+        try:
+            from .chat_title_service import get_session_conversation_mode, set_session_conversation_mode
+            if toggle_web_search:
+                # An explicit tool toggle is never ambiguous — clear stale simple-mode
+                # stickiness now, so a later plain turn cannot silently inherit it.
                 set_session_conversation_mode(session_id, "normal")
-            except Exception:
-                pass
+            elif not toggle_simple and get_session_conversation_mode(session_id) == "layman":
+                if _requests_layman_exit(message):
+                    set_session_conversation_mode(session_id, "normal")
+                else:
+                    sticky_simple = True
+        except Exception:
+            logger.debug("[chat_service] conversation-mode lookup failed (non-fatal)")
 
-        # History load moved ahead of the router submission below (Phase W,
-        # 2026-08-25 follow-up) — classify_message() now takes a slice of it
-        # (see that submit call). Still a plain SQLite read, not an LLM call,
-        # so this doesn't meaningfully cost the concurrency Chat-R4b set up
-        # (the router's own LLM latency still overlaps every LLM-dependent
-        # step below — detect_intent/inject_memory/domain_context/
-        # action_router/detect_depth/build_messages).
         history       = _load_history_messages(session_id, limit=50)
         history_turns = len(history) // 2
 
-        # Chat-R4b: submit the task-based router NOW — chat_mode is final as of
-        # the block above, so the exact same gate the old call site used
-        # ("normal" mode, no image attachment) can be evaluated here instead,
-        # letting classify_message() run on a background thread concurrently
-        # with the context-prep work below (detect_intent/inject_memory/
-        # domain_context/action_router/detect_depth/build_messages). Joined at
-        # the original call site further down. Still runs unconditionally for
-        # every qualifying turn — only WHEN it runs moved, not WHETHER.
-        router_future = None
-        if chat_mode == "normal" and not image_attachments:
-            from ..llm.chat_router import classify_message
-            from .chat_prompt_service import MAX_HISTORY_TURNS
-            _router_metadata = {
-                "trace_id": trace_id, "surface": "chat", "is_test": is_test,
-            }
-            if user_id:
-                _router_metadata["user_id"] = user_id
-            if feed_agent_name:
-                _router_metadata["agent_name"] = feed_agent_name
-            # Phase W (2026-08-25 follow-up): the same recent-turns window
-            # chat_turn itself is about to answer with (build_messages()
-            # applies the identical MAX_HISTORY_TURNS slice) — real,
-            # session-consistent context for the classifier's tool/query
-            # judgment, not a context-blind guess. Confirmed previously
-            # empty in both exactly_what_change_I_want.md and fuck_it.md.
-            _router_history = history[-(MAX_HISTORY_TURNS * 2):]
-            router_future = _ROUTER_EXECUTOR.submit(
-                classify_message, message, _router_metadata, _router_history,
-            )
+        # The classifier is a real 1-8s round trip whose only inputs are the
+        # message, the recent turns and the card title — start it here so it
+        # overlaps the context work below, and join it just before the prompt is
+        # built (its crisis field decides whether a prompt section goes in).
+        from ..llm.chat_router import classify_message, plan_turn
+        from .chat_prompt_service import MAX_HISTORY_TURNS
+        _router_metadata = {"trace_id": trace_id, "surface": "chat", "is_test": is_test}
+        if user_id:
+            _router_metadata["user_id"] = user_id
+        if feed_agent_name:
+            _router_metadata["agent_name"] = feed_agent_name
+        router_future = _ROUTER_EXECUTOR.submit(
+            classify_message, message,
+            history=history[-(MAX_HISTORY_TURNS * 2):],
+            card_title=card_title,
+            metadata=_router_metadata,
+        )
 
-        # Chat-4.1: regex mode auto-upgrade retired (the model decides via real
-        # tools now, see resolve_tools_and_hint below); detect_intent() still
-        # runs for format_intent/intent_profile, which drive response structure
-        # independently of mode/retrieval routing.
         from .chat_intent_service import detect_intent as _detect_intent
         intent = _detect_intent(message)
-        # format_intent drives response structure regardless of mode-switching
-        _format_intent = intent.get("format_intent", "default")
 
         from .memory_injection_service import inject_memory as _inject
         context = _inject(session_id, topic_hint, user_id=user_id)
-
-        # Inject format intent so system prompt can apply structural guidance
-        context["format_intent"]   = _format_intent
         context["intent_profile"]  = intent.get("intent_profile", {})
         context["current_message"] = message
         # Chat identity pass: threaded through for _build_persona_section's
@@ -307,26 +268,6 @@ def chat_stream(
             if feed_context else topic_hint or message
         )
 
-        from .action_router_service import route as route_action
-        action_result = route_action(message, topic_hint, context)
-        if action_result:
-            context["action_result"] = action_result
-
-        # Depth detection — calibrates response verbosity before prompt assembly
-        from .chat_prompt_service import detect_depth as _detect_depth
-        context["response_depth"] = _detect_depth(message)
-
-        # Phase 4.6: shared learning context (stream path)
-        _pid_slc = (feed_context or {}).get("project_id", "") if feed_context else ""
-        if _pid_slc:
-            try:
-                from .shared_learning_context import get_shared_prompt_block as _gslc
-                _slc = _gslc(_pid_slc, mode=chat_mode)
-                if _slc:
-                    context["shared_learning_context"] = _slc
-            except Exception:
-                pass
-
         # Chat-3: semantic long-term memory recall (additive third layer,
         # alongside conversation_memory/knowledge_state) — hard-scoped to
         # user_id, never crosses users. Non-fatal on any error.
@@ -351,76 +292,56 @@ def chat_stream(
         except Exception:
             logger.debug("[chat_service] feed_entry_anchor failed (non-fatal)")
 
-        # Chat-R7b: genuine Feed-context link, the sole signal for structured
-        # JSON output (chat_prompt_service.build_system_prompt) — a union of
-        # both signals, not either alone. feed_context is request-scoped and
-        # only present on the turn right after a Feed-card action; the
-        # feed_chat_links row backing feed_entry_anchor isn't created until
-        # AFTER that first turn's response completes (ChatWorkspace.jsx
-        # persists it in the onDone callback), so feed_entry_anchor is empty
-        # on turn 1 of a Feed-linked session. feed_context covers turn 1;
-        # feed_entry_anchor covers every turn after — together, no gap.
-        context["feed_linked"] = bool(feed_context) or bool(context.get("feed_entry_anchor"))
-
-        # Structured-mode fix (Task 1): real feed action + card title, only
-        # present on the same turn feed_context itself is (see union comment
-        # above) — learning_system_context_service uses these instead of
-        # hardcoding mode="deep_research" when building its LEARNING SYSTEM
-        # section, so the composer's own copy and the note this file used to
-        # append separately can't disagree. On turns 2+ (feed_context absent,
-        # feed_entry_anchor carries the link instead) these stay unset and
-        # that section falls back to its generic depth-hierarchy framing.
-        if feed_context:
-            context["feed_action"] = feed_context.get("action", "ask_about")
-            context["feed_topic"]  = feed_context.get("insight_title", "")
-
-        # Phase U: join the router now, before build_messages() — the crisis
-        # field decides whether CRISIS AND DISTRESS SUPPORT even goes into the
+        # Join the router now, before build_messages() — the crisis field
+        # decides whether CRISIS AND DISTRESS SUPPORT even goes into the
         # prompt, so build_messages() needs it up front, not after. Still
         # overlaps with everything submitted-to-here above (detect_intent/
-        # inject_memory/domain_context/action_router/detect_depth/feed
-        # context/vector_memory/feed_entry_anchor) — only the tail (document
-        # reinjection, token-budget instrumentation) loses the overlap, and
-        # latency is explicitly not a priority here (Phase W). Future.result()
-        # is safe to call again later (idempotent) for the task_type/mode_hint
-        # block further down, which reuses this same `decision`.
-        decision = router_future.result() if router_future is not None else None
+        # inject_memory/domain_context/feed context/vector_memory/
+        # feed_entry_anchor) — only the tail (document reinjection,
+        # token-budget instrumentation) loses the overlap.
+        decision = router_future.result()
+        plan = plan_turn(
+            decision,
+            message=message,
+            has_image=bool(image_attachments),
+            toggle_web_search=toggle_web_search,
+            toggle_simple=toggle_simple,
+            feed_action=feed_action,
+            sticky_simple=sticky_simple,
+        )
 
-        # HARD CONSTRAINT (Phase U): a real, valid classification is required
-        # to say "no crisis this turn". Anything else — both legs exhausted,
-        # or the router never ran at all (web_search/layman mode, an image
-        # attachment turn: none of those are a classify FAILURE, but none of
-        # them produced a real answer either) — defaults to True at the code
-        # level. This must never depend on the model successfully reasoning
-        # its way to true.
-        fresh_crisis = decision.crisis if decision is not None else True
-
-        # Session persistence (Task 3): a crisis turn keeps the section alive
-        # for the next few turns even if a follow-up ("fuck you", a topic
-        # swerve) wouldn't independently classify as crisis on its own — see
-        # chat_prompt_service._CRISIS_CONDUCT's AFTER A DISTRESS TURN section,
-        # which exists specifically because that's the ordinary shape distress
-        # comes back out in. Turn-count decay, not wall-clock: a long pause
-        # mid-conversation shouldn't silently expire it, and a slow reply
-        # shouldn't race it either.
+        # Phase U: a crisis turn keeps the section alive for the next few turns
+        # even when a follow-up ("fuck you", a topic swerve) would not classify as
+        # crisis on its own — that is one of the ordinary shapes distress comes
+        # back in. Turn-count decay, not wall-clock: a long pause mid-conversation
+        # must not silently expire it.
         from .chat_title_service import get_session_crisis_expiry, set_session_crisis_expiry
         turn_number = history_turns + 1
         persisted_expiry = get_session_crisis_expiry(session_id)
         persisted_active = persisted_expiry is not None and turn_number <= persisted_expiry
-        context["crisis_active"] = fresh_crisis or persisted_active
+        context["crisis_active"] = plan.crisis or persisted_active
         if context["crisis_active"]:
-            # _CRISIS_WINDOW_TURNS: generous on purpose — a false continue costs
-            # a slightly warmer tone and one skipped structured-output turn; a
-            # premature cutoff mid-distress is exactly the failure AFTER A
-            # DISTRESS TURN exists to prevent. NOT permanent-for-session: that
-            # would silently disable JSON/structured output (crisis_support
-            # overrides format rules) for the rest of a long conversation over
-            # one early turn. Refreshed every turn the window is live, so it
-            # keeps rolling forward as long as it stays active.
             set_session_crisis_expiry(session_id, turn_number + _CRISIS_WINDOW_TURNS)
 
+        # Phase 4.6 shared learning context — asked for in the tone this turn
+        # actually answers in, not the request's raw chat_mode.
+        _project_id = (feed_context or {}).get("project_id", "") if feed_context else ""
+        if _project_id:
+            try:
+                from .shared_learning_context import get_shared_prompt_block as _shared_block
+                _block = _shared_block(_project_id, mode="layman" if plan.simple_tone else "normal")
+                if _block:
+                    context["shared_learning_context"] = _block
+            except Exception:
+                logger.debug("[chat_service] shared learning context failed (non-fatal)")
+
+        # Decision (Task 4 brief override): build_messages still has its OLD
+        # signature until Task 6 — simple_tone lives behind context's
+        # layman_mode_context key, not a build_messages kwarg, until then.
         from .chat_prompt_service import build_messages as _build
-        messages_payload = _build(history, message, context, mode=chat_mode, attachments=image_attachments or None)
+        messages_payload = _build(history, message, context,
+                                  mode="layman" if plan.simple_tone else "normal",
+                                  attachments=image_attachments or None)
 
         # Inject feed context note first (background knowledge)
         #
@@ -504,47 +425,56 @@ def chat_stream(
         yield json.dumps({"t": "error", "message": "Failed to prepare context"}) + "\n"
         return
 
-    # ── Tool policy (Chat-4.1) ────────────────────────────────────────────────
-    # Retired backend pre-fetch (prepare_mode_context/stream_research_progress,
-    # still used unchanged by the sync chat() path above). chat_mode now only
-    # decides tool availability + an optional bias hint — web_search is a real
-    # tool the model calls itself; layman gets tools=None structurally.
-    from ..llm.chat_agent import resolve_tools_and_hint, build_mode_hint
-    tools_enabled, mode_hint = resolve_tools_and_hint(chat_mode)
+    # ── Block / sequence numbering ────────────────────────────────────────────
+    # seq is a flat per-turn counter; block_id groups contiguous same-kind events
+    # into one logical block, and a search's start/end pair shares one. Assigned
+    # here, in one place, because the turn now emits events from two sources (the
+    # search step and the answer stream) whose numbering must not collide.
+    _ids = {"seq": 0, "block": -1, "kind": None}
 
-    # ── Chat-R4: task-based router ────────────────────────────────────────────
-    # Only for "normal" mode (no explicit web_search toggle) and
-    # never for IMAGE attachment turns — an explicit toggle always wins outright
-    # (R1: 10/10 hit rate), and the vision hard gate (Chat-5) is untouched by
-    # task-based routing. Document-only turns route normally (Chat-R6a) — a
-    # document isn't a structural gate the way an image is. Non-fatal:
-    # classify_message returns None on any failure, leaving task_type=None
-    # (today's default fixed chain, no hint).
-    # Chat-R4b/Phase U: classify_message() itself already ran and was already
-    # joined (right before build_messages() above, so the crisis field could
-    # gate the prompt) — `decision` is that same result, reused here for
-    # routing. Still gated to "normal" mode only: decision is real for every
-    # mode now (crisis needs it everywhere), but an explicit web_search/layman
-    # toggle must keep winning outright regardless of what routing fields it
-    # carries (R1: 10/10 explicit-toggle hit rate) — unchanged from before.
-    task_type = None
-    # Phase M: the router already computes RoutingDecision.complexity on every
-    # message, but map_to_task_type() below never consults it on a tool-using
-    # turn (needs_tool wins first and returns "tool_use"), so on exactly the
-    # web_search turns this phase cares about the signal was computed and then
-    # discarded. Captured here and forwarded on the agent call metadata so
-    # chat_tools.web_search can size that turn's source count with it. Stays
-    # None whenever the router failed — the fixed 3+3 fallback.
-    router_complexity: str | None = None
-    if chat_mode == "normal" and decision is not None:
-        from ..llm.chat_router import map_to_task_type
-        task_type = map_to_task_type(decision)
-        router_complexity = decision.complexity
-        if decision.needs_tool:
-            mode_hint = build_mode_hint(decision.tool_name, decision.shaped_query)
+    def _next_ids(kind: str, same_block: bool = False) -> tuple[int, int]:
+        _ids["seq"] += 1
+        if not same_block and (kind != _ids["kind"] or kind == "tool_call"):
+            _ids["block"] += 1
+        _ids["kind"] = kind
+        return _ids["seq"], _ids["block"]
 
-    if mode_hint:
-        messages_payload = _inject_mode_note(messages_payload, mode_hint)
+    blocks:  list[dict] = []
+    sources: list[dict] = []
+    searched = False
+
+    # ── Web search: run here, not by the model ────────────────────────────────
+    # Same NDJSON status events and same persisted tool_call block the tool used
+    # to produce, so the frontend's live search block and [N] citations are
+    # unchanged — without the second LLM round-trip a tool call cost.
+    if plan.search:
+        seq, block_id = _next_ids("tool_call")
+        yield json.dumps({
+            "t": "status", "v": "Searching the web…", "seq": seq, "block_id": block_id,
+            "tool": "web_search", "query": plan.search_query,
+        }) + "\n"
+        search_block = {"type": "tool_call", "tool": "web_search",
+                        "query": plan.search_query, "sources": []}
+        blocks.append(search_block)
+        try:
+            from .web_search_reasoning_service import run_chat_search
+            _search_meta = {"trace_id": trace_id, "surface": "chat", "is_test": is_test}
+            if user_id:
+                _search_meta["user_id"] = user_id
+            search_note, sources = run_chat_search(
+                plan.search_query, complexity=plan.complexity, meta=_search_meta)
+        except Exception:
+            logger.exception("chat_stream: web search failed (non-fatal)")
+            search_note, sources = "", []
+        if search_note:
+            messages_payload = _inject_mode_note(messages_payload, search_note)
+        search_block["sources"] = sources
+        searched = True
+        seq, block_id = _next_ids("tool_call", same_block=True)
+        yield json.dumps({
+            "t": "status", "v": "Reviewing results…", "seq": seq, "block_id": block_id,
+            "tool": "web_search", "sources": sources,
+        }) + "\n"
 
     is_new_session = len(history) == 0
 
@@ -585,33 +515,14 @@ def chat_stream(
     except Exception:
         logger.debug("[chat_service] stream budget instrumentation failed (non-fatal)", exc_info=True)
 
-    # ── Stream AI response ────────────────────────────────────────────────────
-    # Keep the frontend loading indicator quiet until the model emits a
-    # meaningful step or the first answer chunk. The generic filler is now
-    # omitted for the default path to avoid redundant dots + text.
     from .chat_title_service import stream_extract_state, advance_stream_state
     title_state     = stream_extract_state() if is_new_session else None
-    collected:       list[str]  = []
-    thinking_chunks: list[str]  = []
+    collected:       list[str] = []
+    thinking_chunks: list[str] = []
     extracted_title: str | None = None
-    sources:         list[dict] = []
-    tool_used:       str | None = None
-    _TOOL_STATUS_LABELS = {
-        "web_search":    "Searching the web…",
-    }
-
-    # Chat-R10d: ordered {type: "thinking"|"tool_call"|"text", ...} segments,
-    # built alongside (not instead of) the flat thinking_chunks/collected
-    # accumulators above — thinking_chunks still becomes the `thinking`
-    # column exactly as before. `blocks` folds chat_agent's block_id-tagged
-    # events into one entry per contiguous run: a tool_start/tool_end pair
-    # for the same call shares a block_id (see chat_agent._stream_agent),
-    # so this dict lookup — not positional "last entry" — is what lets
-    # tool_end's sources land back on the same entry tool_start opened.
-    blocks:       list[dict]   = []
     _block_index: dict[int, int] = {}
 
-    def _block_entry(block_id, factory):
+    def _block_entry(block_id: int, factory):
         if block_id in _block_index:
             return blocks[_block_index[block_id]]
         _block_index[block_id] = len(blocks)
@@ -629,84 +540,42 @@ def chat_stream(
             _call_metadata["user_id"] = user_id
         if feed_agent_name:
             _call_metadata["agent_name"] = feed_agent_name
-        # Phase M — read by chat_tools.web_search via _tool_meta(config).
-        # Only set when the router actually produced a decision; absent means
-        # "unknown", which web_search_reasoning_service maps to today's 3+3.
-        if router_complexity:
-            _call_metadata["complexity"] = router_complexity
+
+        # TEMPORARY (removed in Task 5): the old agent still answers, but driven
+        # by the plan instead of chat_mode, and with tools off — the search above
+        # already ran. Task 5 replaces this call with
+        # ask_chat_stream(messages_payload, route=plan.route,
+        #                 route_reason=plan.reason, metadata=_call_metadata).
+        _LEGACY_TASK_TYPE = {"simple": "simple_qa", "complex": "complex_reasoning", "code": "coding"}
         for event in ask_chat_stream(
-            messages_payload, metadata=_call_metadata, tools_enabled=tools_enabled,
+            messages_payload, metadata=_call_metadata, tools_enabled=False,
             has_attachments=bool(image_attachments),
-            task_type=task_type,
+            task_type=None if plan.route == "image" else _LEGACY_TASK_TYPE[plan.route],
         ):
-            if event["type"] == "status":
+            kind = event["type"]
+            if kind == "status":
                 yield json.dumps({"t": "status", "v": event.get("text") or "Working…"}) + "\n"
                 continue
-            if event["type"] == "tool_start":
-                label = event.get("status_text") or _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…")
-                # Chat-R10e: tool/query on the wire (additive fields on the
-                # existing "status" type, no new NDJSON type) — R10d's
-                # seq/block_id alone don't give the frontend enough to render
-                # a live tool_call block; the persisted blocks column already
-                # had tool/query, this just also puts it on the stream.
-                yield json.dumps({
-                    "t": "status", "v": label,
-                    "seq": event.get("seq"), "block_id": event.get("block_id"),
-                    "tool": event["tool"], "query": event.get("query"),
-                }) + "\n"
-                _block_entry(event["block_id"], lambda: {
-                    "type": "tool_call", "tool": event["tool"],
-                    "query": event.get("query"), "sources": [],
-                })
+            if kind in ("thinking_gap", "code_execution_gap"):
+                yield json.dumps({"t": kind, "v": event["text"]}) + "\n"
                 continue
-            if event["type"] == "tool_end":
-                tool_used = event["tool"]
-                sources.extend(event.get("sources", []))
-                entry = _block_entry(event["block_id"], lambda: {
-                    "type": "tool_call", "tool": event["tool"],
-                    "query": None, "sources": [],
-                })
-                entry["sources"] = event.get("sources", [])
-                # Chat-R10e: second "status" emission (same type, same block_id)
-                # for the wire — no tool_end signal existed on the wire before
-                # this; carries sources so the live tool_call block can fill in
-                # without waiting for reload.
-                yield json.dumps({
-                    "t": "status", "v": event.get("status_text") or _TOOL_STATUS_LABELS.get(event["tool"], f"Running {event['tool']}…"),
-                    "seq": event.get("seq"), "block_id": event.get("block_id"),
-                    "tool": event["tool"], "sources": event.get("sources", []),
-                }) + "\n"
-                if entry.get("tool") is None:
-                    entry["tool"] = event["tool"]
-                continue
-            if event["type"] == "thinking":
-                # Bypasses title extraction — that parser only ever needs to see
-                # visible answer text (see ask_chat_stream's module docstring).
+
+            seq, block_id = _next_ids(kind)
+            if kind == "thinking":
+                # Bypasses title extraction: that parser only ever needs answer text.
                 thinking_chunks.append(event["text"])
-                entry = _block_entry(event["block_id"], lambda: {"type": "thinking", "text": ""})
+                entry = _block_entry(block_id, lambda: {"type": "thinking", "text": ""})
                 entry["text"] += event["text"]
-                yield json.dumps({
-                    "t": "thinking", "v": event["text"],
-                    "seq": event.get("seq"), "block_id": event.get("block_id"),
-                }) + "\n"
+                yield json.dumps({"t": "thinking", "v": event["text"],
+                                  "seq": seq, "block_id": block_id}) + "\n"
                 continue
-            if event["type"] == "thinking_gap":
-                # One-shot honest note when the Gemini 3+ leg answers — see
-                # chat_agent._THINKING_GAP_TEXT for why thinking never arrives here.
-                yield json.dumps({"t": "thinking_gap", "v": event["text"]}) + "\n"
+            if kind == "code":
+                yield json.dumps({"t": "code", "v": event["text"],
+                                  "language": event.get("language", "python")}) + "\n"
                 continue
-            if event["type"] == "code_execution_gap":
-                # Chat-R5b: one-shot note when task_type=="coding" but the leg
-                # answering isn't Gemini 3+ (code_execution unavailable there).
-                yield json.dumps({"t": "code_execution_gap", "v": event["text"]}) + "\n"
-                continue
-            if event["type"] == "code":
-                # Bypasses title extraction and collected/response_text, same as
-                # thinking — this is the model's executed source, not its answer.
-                yield json.dumps({"t": "code", "v": event["text"], "language": event.get("language", "python")}) + "\n"
-                continue
-            if event["type"] == "code_output":
-                yield json.dumps({"t": "code_output", "v": event["text"], "success": event.get("success", True)}) + "\n"
+            if kind == "code_output":
+                yield json.dumps({"t": "code_output", "v": event["text"],
+                                  "success": event.get("success", True)}) + "\n"
                 continue
 
             chunk = event["text"]
@@ -715,22 +584,13 @@ def chat_stream(
                 if result["title"] and not extracted_title:
                     extracted_title = result["title"]
                     yield json.dumps({"t": "title", "v": extracted_title}) + "\n"
-                if result["forward"] is not None:
-                    collected.append(result["forward"])
-                    entry = _block_entry(event["block_id"], lambda: {"type": "text", "text": ""})
-                    entry["text"] += result["forward"]
-                    yield json.dumps({
-                        "t": "chunk", "v": result["forward"],
-                        "seq": event.get("seq"), "block_id": event.get("block_id"),
-                    }) + "\n"
-            else:
-                collected.append(chunk)
-                entry = _block_entry(event["block_id"], lambda: {"type": "text", "text": ""})
-                entry["text"] += chunk
-                yield json.dumps({
-                    "t": "chunk", "v": chunk,
-                    "seq": event.get("seq"), "block_id": event.get("block_id"),
-                }) + "\n"
+                if result["forward"] is None:
+                    continue
+                chunk = result["forward"]
+            collected.append(chunk)
+            entry = _block_entry(block_id, lambda: {"type": "text", "text": ""})
+            entry["text"] += chunk
+            yield json.dumps({"t": "chunk", "v": chunk, "seq": seq, "block_id": block_id}) + "\n"
     except Exception as exc:
         logger.exception("chat_stream: AI generation failed")
         yield json.dumps({"t": "error", "message": str(exc)}) + "\n"
@@ -746,10 +606,9 @@ def chat_stream(
     except Exception:
         tension_scores = {}
 
-    # Chat-4.1: sources/chat_mode/auto_mode reflect which tool the model
-    # actually called this turn, not which mode was pre-selected.
-    resolved_mode = tool_used or chat_mode
-    auto_mode     = (chat_mode == "normal") and (tool_used is not None)
+    # What actually happened this turn, not what was pre-selected.
+    resolved_mode = "web_search" if searched else ("layman" if plan.simple_tone else "normal")
+    auto_mode     = searched and not toggle_web_search
 
     # ── Persist messages ──────────────────────────────────────────────────────
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -777,13 +636,15 @@ def chat_stream(
         except Exception:
             logger.exception("chat_stream: title persistence failed (non-fatal)")
 
-    # Persist layman conversation mode so subsequent turns stay simplified
-    if chat_mode == "layman":
+    # Sticky simple mode only when the USER asked for it (toggle, Feed card, or an
+    # already-sticky session). A classifier-detected "explain simply" answers this
+    # turn in that tone without silently pinning the rest of the session to it.
+    if toggle_simple or feed_action == "explain_simply" or sticky_simple:
         try:
             from .chat_title_service import set_session_conversation_mode
             set_session_conversation_mode(session_id, "layman")
         except Exception:
-            logger.exception("chat_stream: layman mode persistence failed (non-fatal)")
+            logger.exception("chat_stream: simple-mode persistence failed (non-fatal)")
 
     # ── Post-stream enrichment ────────────────────────────────────────────────
     research = context.get("research", {})
@@ -858,7 +719,6 @@ def chat_stream(
         "sources":             sources,
         "chat_mode":           resolved_mode,
         "auto_mode":           auto_mode,
-        "action":              action_result.get("action") if action_result else None,
         "recommendations":     recommendations,
         "structured_response": _parse_structured_response(response_text),
         "tension_scores":      tension_scores,

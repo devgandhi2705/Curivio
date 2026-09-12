@@ -31,6 +31,15 @@ def _article(url: str, title: str = "t", content: str = "c") -> dict:
     return {"url": url, "title": title, "content": content}
 
 
+def _fake_search(monkeypatch, message, primary_raw, contra_raw, seen=None):
+    """Query-keyed, not call-ordered: the two searches can now run in parallel."""
+    def _search(query, meta=None):
+        if seen is not None:
+            seen.append(query)
+        return list(primary_raw) if query == message else list(contra_raw)
+    monkeypatch.setattr(wsr, "_safe_search", _search)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # build_search_queries — primary/contradiction split
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,9 +66,11 @@ class TestBuildSearchQueries:
         )
         assert "FDA warning letter" in q["contradiction_query"]
 
-    def test_recency_language_forces_recent_shift_angle(self):
+    def test_recency_language_forces_a_recent_shift_angle_with_this_year(self):
+        from datetime import datetime
+        year = datetime.now().year
         q = wsr.build_search_queries("What is the current state of AI regulation?")
-        assert "latest news 2024 2025" in q["contradiction_query"]
+        assert f"latest news {year - 1} {year}" in q["contradiction_query"]
 
     def test_labels_present(self):
         q = wsr.build_search_queries("test")
@@ -81,8 +92,7 @@ class TestFetchReasonedResultsDedupAndSlicing:
         primary_raw = [_article("u1"), _article("u2"), _article("u3")]
         # u2 duplicates a KEPT primary result -> must be dropped from complicating
         contra_raw = [_article("u2"), _article("u4"), _article("u5"), _article("u6")]
-        calls = iter([primary_raw, contra_raw])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", primary_raw, contra_raw)
 
         result = wsr.fetch_reasoned_results("msg")
         complicating_urls = [a["url"] for a in result["complicating"]]
@@ -91,8 +101,7 @@ class TestFetchReasonedResultsDedupAndSlicing:
 
     def test_primary_sliced_to_primary_max(self, monkeypatch):
         primary_raw = [_article(f"p{i}") for i in range(5)]  # 5 > _PRIMARY_MAX (3)
-        calls = iter([primary_raw, []])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", primary_raw, [])
 
         result = wsr.fetch_reasoned_results("msg")
         assert len(result["supporting"]) == wsr._PRIMARY_MAX == 3
@@ -103,8 +112,7 @@ class TestFetchReasonedResultsDedupAndSlicing:
         # 5 unique contra results, none overlapping primary -> dedup keeps all 5,
         # then _CONTRADICTION_MAX (3) slicing must still cut it to 3.
         contra_raw = [_article(f"c{i}") for i in range(5)]
-        calls = iter([primary_raw, contra_raw])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", primary_raw, contra_raw)
 
         result = wsr.fetch_reasoned_results("msg")
         assert len(result["complicating"]) == wsr._CONTRADICTION_MAX == 3
@@ -117,15 +125,13 @@ class TestFetchReasonedResultsDedupAndSlicing:
         # list, not the raw list) rather than an idealized one.
         primary_raw = [_article("p1"), _article("p2"), _article("p3"), _article("p4")]
         contra_raw  = [_article("p4")]  # duplicates the DROPPED 4th primary result
-        calls = iter([primary_raw, contra_raw])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", primary_raw, contra_raw)
 
         result = wsr.fetch_reasoned_results("msg")
         assert [a["url"] for a in result["complicating"]] == ["p4"]
 
     def test_angle_tags_set(self, monkeypatch):
-        calls = iter([[_article("p1")], [_article("c1")]])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", [_article("p1")], [_article("c1")])
 
         result = wsr.fetch_reasoned_results("msg")
         assert result["supporting"][0]["_angle"] == "supporting"
@@ -135,8 +141,7 @@ class TestFetchReasonedResultsDedupAndSlicing:
     def test_has_complicating_false_when_all_deduped_away(self, monkeypatch):
         primary_raw = [_article("p1")]
         contra_raw  = [_article("p1")]  # fully duplicates the only primary result
-        calls = iter([primary_raw, contra_raw])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
+        _fake_search(monkeypatch, "msg", primary_raw, contra_raw)
 
         result = wsr.fetch_reasoned_results("msg")
         assert result["complicating"] == []
@@ -195,72 +200,64 @@ class TestReasoningSearchNoteNoTruncation:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestComplexityScaledCaps:
-    def _pool(self, monkeypatch, n_primary=5, n_contra=5):
-        primary_raw = [_article(f"p{i}") for i in range(n_primary)]
-        contra_raw  = [_article(f"c{i}") for i in range(n_contra)]
-        calls = iter([primary_raw, contra_raw])
-        monkeypatch.setattr(wsr, "_safe_search", lambda query, meta=None: next(calls))
-
     def test_caps_for_maps_each_tier(self):
-        assert wsr._caps_for("simple")  == (2, 2)
+        assert wsr._caps_for("simple")  == (4, 0)
         assert wsr._caps_for("complex") == (5, 4)
 
-    @pytest.mark.parametrize("unknown", [None, "", "moderate", "COMPLEX", "unknown"])
-    def test_unknown_complexity_falls_back_to_todays_fixed_three_plus_three(self, unknown):
-        """
-        The router genuinely returns None on failure (30.8% of real logged
-        calls), so this fallback is a live path, not a theoretical one.
-        Case-sensitive on purpose: only the exact literals the router emits
-        change behaviour, anything else is treated as "unknown".
-        """
-        assert wsr._caps_for(unknown) == (wsr._PRIMARY_MAX, wsr._CONTRADICTION_MAX) == (3, 3)
+    def test_simple_runs_one_search(self, monkeypatch):
+        seen = []
+        _fake_search(monkeypatch, "msg", [_article(f"p{i}") for i in range(5)],
+                     [_article(f"c{i}") for i in range(5)], seen)
+        result = wsr.fetch_reasoned_results("msg", complexity="simple")
+        assert seen == ["msg"], "a simple turn does not pay for a contradiction search"
+        assert len(result["supporting"]) == 4
+        assert result["complicating"] == [] and result["has_complicating"] is False
 
-    def test_simple_keeps_fewer_than_the_old_fixed_six(self, monkeypatch):
-        self._pool(monkeypatch)
-        r = wsr.fetch_reasoned_results("msg", complexity="simple")
-        assert len(r["supporting"]) == 2
-        assert len(r["complicating"]) == 2
-        assert len(r["all_articles"]) == 4 < 6
+    def test_complex_runs_both_searches(self, monkeypatch):
+        seen = []
+        _fake_search(monkeypatch, "msg", [_article(f"p{i}") for i in range(5)],
+                     [_article(f"c{i}") for i in range(5)], seen)
+        result = wsr.fetch_reasoned_results("msg", complexity="complex")
+        assert len(seen) == 2
+        assert len(result["supporting"]) == 5 and len(result["complicating"]) == 4
 
-    def test_complex_keeps_more_than_the_old_fixed_six(self, monkeypatch):
-        self._pool(monkeypatch)
-        r = wsr.fetch_reasoned_results("msg", complexity="complex")
-        assert len(r["supporting"]) == 5
-        assert len(r["complicating"]) == 4
-        assert len(r["all_articles"]) == 9 > 6
+    def test_unknown_complexity_keeps_the_old_three_plus_three(self, monkeypatch):
+        _fake_search(monkeypatch, "msg", [_article(f"p{i}") for i in range(5)],
+                     [_article(f"c{i}") for i in range(5)])
+        result = wsr.fetch_reasoned_results("msg")
+        assert len(result["supporting"]) == 3 and len(result["complicating"]) == 3
 
-    def test_no_complexity_argument_is_byte_identical_to_before_this_phase(self, monkeypatch):
-        self._pool(monkeypatch)
-        r = wsr.fetch_reasoned_results("msg")
-        assert len(r["supporting"]) == 3 and len(r["complicating"]) == 3
-        assert len(r["all_articles"]) == 6
 
-    def test_complex_under_fills_gracefully_when_the_pool_is_short(self, monkeypatch):
-        """
-        A thin pool must slice short, never pad, never raise. Real pools do run
-        thin: measured complicating availability was as low as 1 after dedup.
-        """
-        self._pool(monkeypatch, n_primary=2, n_contra=1)
-        r = wsr.fetch_reasoned_results("msg", complexity="complex")
-        assert len(r["supporting"]) == 2
-        assert len(r["complicating"]) == 1
-        assert len(r["all_articles"]) == 3
+class TestRunChatSearch:
+    """The chat turn's whole search step: fetch, note, sources. Replaces the
+    model-invoked chat_tools.web_search tool (and its extra LLM round-trip)."""
 
-    def test_search_count_is_two_regardless_of_tier(self, monkeypatch):
-        """The whole cost argument rests on this: tiers change selection, not fetch."""
-        for tier in (None, "simple", "complex"):
-            seen: list[str] = []
-            primary_raw = [_article(f"p{i}") for i in range(5)]
-            contra_raw  = [_article(f"c{i}") for i in range(5)]
-            calls = iter([primary_raw, contra_raw])
+    def test_note_and_sources_line_up(self, monkeypatch):
+        _fake_search(monkeypatch, "q", [_article("https://a", "A")], [_article("https://b", "B")])
+        note, sources = wsr.run_chat_search("q", complexity="complex")
+        assert "[1]" in note and "https://a" in note
+        assert sources == [{"title": "A", "url": "https://a"}, {"title": "B", "url": "https://b"}]
 
-            def _spy(query, meta=None):
-                seen.append(query)
-                return next(calls)
+    def test_url_less_results_never_shift_the_numbering(self, monkeypatch):
+        good, bad = _article("https://a", "A"), {"title": "no url", "content": "c"}
+        _fake_search(monkeypatch, "q", [bad, good], [])
+        note, sources = wsr.run_chat_search("q", complexity="simple")
+        assert [s["url"] for s in sources] == ["https://a"]
+        assert "[2]" not in note
 
-            monkeypatch.setattr(wsr, "_safe_search", _spy)
-            wsr.fetch_reasoned_results("msg", complexity=tier)
-            assert len(seen) == 2, f"tier {tier!r} made {len(seen)} searches, expected 2"
+    def test_no_results_gives_an_honest_note(self, monkeypatch):
+        _fake_search(monkeypatch, "q", [], [])
+        note, sources = wsr.run_chat_search("q", complexity="simple")
+        assert "No results" in note and sources == []
+
+    def test_a_search_failure_is_not_fatal(self, monkeypatch):
+        def _boom(query, meta=None):
+            raise RuntimeError("tinyfish down")
+        monkeypatch.setattr(wsr, "_safe_search", _boom)
+        monkeypatch.setattr(wsr, "fetch_reasoned_results",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("tinyfish down")))
+        note, sources = wsr.run_chat_search("q", complexity="simple")
+        assert note == "" and sources == []
 
 
 class TestPhaseECitationAlignmentIsCountAgnostic:
