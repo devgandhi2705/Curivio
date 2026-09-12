@@ -46,9 +46,13 @@ writer_provider_router.route_writer_call) instead of one input across a single
 from __future__ import annotations
 
 import io
+import itertools
 import logging
 import os
 import time
+import tomllib
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -67,6 +71,7 @@ from tenacity import retry_if_exception
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 from ..config import GEMINI_MODEL, GEMINI_FALLBACK_MODEL, GROQ_FALLBACK_MODEL
+from . import rate_limits
 from .call_logger import LLMCallLogger
 
 logger = logging.getLogger(__name__)
@@ -175,6 +180,281 @@ def _thinking_kwargs(model_name: str) -> dict:
     if _is_gemini_3_plus(model_name):
         return {"thinking_level": "low", "include_thoughts": True}
     return {"thinking_budget": 1024, "include_thoughts": True}
+
+
+# ── chat_models.toml — the editable chat model lists ──────────────────────────
+# The one file a human edits to change which models chat uses. Parsed once per
+# process and validated loudly: an unknown provider, an empty list or a code
+# list that does not start with a Gemini 3.x model is a configuration bug that
+# must surface at startup, not as a 400 mid-turn.
+
+_CHAT_MODELS_PATH = Path(__file__).with_name("chat_models.toml")
+_PROVIDERS = ("gemini", "groq", "openrouter")
+_ROUTES = ("classifier", "simple", "complex", "code", "image", "explain")
+_RETRY_FIELDS = ("retries_per_model", "skip_after_rate_limit_sec",
+                 "skip_after_daily_quota_sec", "skip_after_no_credit_sec")
+
+
+class ChatModelsConfigError(ValueError):
+    """chat_models.toml is missing, malformed, or names something unusable."""
+
+
+@dataclass(frozen=True)
+class ModelRef:
+    provider: str
+    model: str
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model}"
+
+
+@dataclass(frozen=True)
+class RouteConfig:
+    name: str
+    models: tuple[ModelRef, ...]
+    max_tokens: int
+    reasoning: str                    # "low" | "off"
+    timeout_seconds: float | None
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    retries_per_model: int
+    skip_after_rate_limit_sec: int
+    skip_after_daily_quota_sec: int
+    skip_after_no_credit_sec: int
+
+
+@dataclass(frozen=True)
+class ChatModelsConfig:
+    routes: dict[str, RouteConfig]
+    retry: RetryConfig
+
+
+def _parse_model_ref(raw, route: str) -> ModelRef:
+    if not isinstance(raw, str) or "/" not in raw:
+        raise ChatModelsConfigError(f"[{route}] model {raw!r} must look like 'provider/model-id'")
+    provider, model = raw.split("/", 1)
+    if provider not in _PROVIDERS:
+        raise ChatModelsConfigError(
+            f"[{route}] unknown provider {provider!r} in {raw!r} — known: {', '.join(_PROVIDERS)}")
+    if not model.strip():
+        raise ChatModelsConfigError(f"[{route}] model id missing in {raw!r}")
+    return ModelRef(provider, model.strip())
+
+
+def _parse_route(name: str, table: dict) -> RouteConfig:
+    models = table.get("models")
+    if not isinstance(models, list) or not models:
+        raise ChatModelsConfigError(f"[{name}] needs a non-empty models list")
+    refs = tuple(_parse_model_ref(m, name) for m in models)
+
+    max_tokens = table.get("max_tokens")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens <= 0:
+        raise ChatModelsConfigError(f"[{name}] max_tokens must be a positive integer")
+
+    reasoning = table.get("reasoning", "off")
+    if reasoning not in ("low", "off"):
+        raise ChatModelsConfigError(f'[{name}] reasoning must be "low" or "off", got {reasoning!r}')
+
+    timeout = table.get("timeout_seconds")
+    if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
+        raise ChatModelsConfigError(f"[{name}] timeout_seconds must be a positive number")
+
+    if name == "code" and not (refs[0].provider == "gemini" and _is_gemini_3_plus(refs[0].model)):
+        raise ChatModelsConfigError(
+            "[code] the first model must be a Gemini 3.x model — it is the only one that runs code")
+    if name == "image" and any(ref.provider != "gemini" for ref in refs):
+        raise ChatModelsConfigError("[image] only Gemini can read an attached image")
+
+    return RouteConfig(name=name, models=refs, max_tokens=max_tokens, reasoning=reasoning,
+                       timeout_seconds=float(timeout) if timeout else None)
+
+
+def load_chat_models(path: Path = _CHAT_MODELS_PATH) -> ChatModelsConfig:
+    """Parse and validate chat_models.toml. Raises ChatModelsConfigError on
+    anything a running server could not act on."""
+    try:
+        raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ChatModelsConfigError(f"{path} is missing") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ChatModelsConfigError(f"{path} is not valid TOML: {exc}") from exc
+
+    missing = [name for name in (*_ROUTES, "retry") if name not in raw]
+    if missing:
+        raise ChatModelsConfigError(f"missing section(s) {missing}")
+    unknown = sorted(set(raw) - set(_ROUTES) - {"retry"})
+    if unknown:
+        raise ChatModelsConfigError(
+            f"unknown section(s) {unknown} — expected {list(_ROUTES) + ['retry']}")
+
+    retry_table = raw["retry"]
+    for field_name in _RETRY_FIELDS:
+        value = retry_table.get(field_name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ChatModelsConfigError(f"[retry] {field_name} must be a non-negative integer")
+
+    return ChatModelsConfig(
+        routes={name: _parse_route(name, raw[name]) for name in _ROUTES},
+        retry=RetryConfig(**{field_name: retry_table[field_name] for field_name in _RETRY_FIELDS}),
+    )
+
+
+@lru_cache(maxsize=1)
+def chat_models() -> ChatModelsConfig:
+    """The parsed chat_models.toml, read once per process — edit the file, restart."""
+    return load_chat_models()
+
+
+# ── Legs and the fallback loop ────────────────────────────────────────────────
+# Every chat call (classifier, answer, explain) walks a route's list the same
+# way, so the walking lives here once: skip parked legs, retry a transient
+# error, park what failed, move on. Callers only say what one attempt does.
+
+@dataclass(frozen=True)
+class LegSpec:
+    """One (model, API key) attempt inside a route's list."""
+    route: str
+    step: int                 # 1-based position of this model in the route's list
+    provider: str
+    model: str
+    key_index: int
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model}"
+
+
+class AllLegsFailed(RuntimeError):
+    """Every model in a route's list failed or was already parked."""
+
+    def __init__(self, route: str, notes: list[str]) -> None:
+        self.route = route
+        self.notes = list(notes)
+        super().__init__(f"[{route}] every model failed: {'; '.join(notes) or 'no models available'}")
+
+
+class PromptTooLargeError(RuntimeError):
+    """This prompt cannot fit this leg's budget — try the next leg, don't call it."""
+    kind = "budget"
+
+
+class InvalidOutputError(RuntimeError):
+    """The model answered, but not in the shape the caller needs (classifier JSON)."""
+    kind = "invalid_output"
+
+
+def route_legs(route: str) -> list[LegSpec]:
+    """Every (model, key) pair for a route, in try order: a model is tried on
+    every key of its provider before the next model contributes a leg."""
+    config = chat_models().routes[route]
+    legs: list[LegSpec] = []
+    for step, ref in enumerate(config.models, 1):
+        key_count = len(_keys_for_provider(ref.provider))
+        if route == "image":
+            key_count = 1     # Gemini's Files API scopes an upload to the key that made it
+        legs.extend(LegSpec(route, step, ref.provider, ref.model, index) for index in range(key_count))
+    return legs
+
+
+def reasoning_kwargs(provider: str, model: str, reasoning: str) -> dict:
+    """The TOML's low/off mapped onto each provider's own parameter — the only
+    place this mapping exists. Gemini 3.x and Groq gpt-oss have no off switch."""
+    if provider == "gemini":
+        if _is_gemini_3_plus(model):
+            return {"thinking_level": "low"}
+        return {"thinking_budget": 1024 if reasoning == "low" else 0}
+    if provider == "groq":
+        return {"reasoning_effort": "low"} if "gpt-oss" in model else {}
+    if provider == "openrouter":
+        return {"reasoning": {"effort": "low"} if reasoning == "low" else {"enabled": False}}
+    return {}
+
+
+def registry_model_name(spec: LegSpec) -> str:
+    """The model_registry key for this leg — Gemini entries carry the models/ prefix."""
+    if spec.provider == "gemini" and not spec.model.startswith("models/"):
+        return f"models/{spec.model}"
+    return spec.model
+
+
+def build_leg(spec: LegSpec, *, streaming: bool = False, thinking: bool = False,
+              temperature: float = _TEMPERATURE):
+    """One bare chat model for this leg. Bare on purpose: callers attach
+    LLMCallLogger per call, because a callback baked onto the model collapses
+    per-token streaming (verified live, see this module's history)."""
+    config = chat_models().routes[spec.route]
+    key = _keys_for_provider(spec.provider)[spec.key_index]
+    kwargs: dict = dict(model=spec.model, temperature=temperature, max_retries=0, streaming=streaming)
+    kwargs.update(reasoning_kwargs(spec.provider, spec.model, config.reasoning))
+
+    if spec.provider == "gemini":
+        kwargs.update(api_key=key, max_output_tokens=config.max_tokens)
+        if thinking:
+            kwargs["include_thoughts"] = True
+        if config.timeout_seconds:
+            kwargs["timeout"] = config.timeout_seconds
+        return ChatGoogleGenerativeAI(**kwargs)
+
+    if spec.provider == "groq":
+        kwargs.update(api_key=key, max_tokens=config.max_tokens)
+        if config.timeout_seconds:
+            kwargs["request_timeout"] = config.timeout_seconds
+        return ChatGroq(**kwargs)
+
+    kwargs.update(openrouter_api_key=key, max_tokens=config.max_tokens)
+    if config.timeout_seconds:
+        kwargs["request_timeout"] = config.timeout_seconds
+    return ChatOpenRouter(**kwargs)
+
+
+def route_label(route: str, reason: str, notes: list[str]) -> str:
+    """The llm_call_log `route` value: what was chosen, why, and what it fell past."""
+    label = f"{route} ← {reason}" if reason else route
+    return f"{label} · {'; '.join(notes)}" if notes else label
+
+
+def run_route(route: str, attempt, *, notes: list[str], legs=None):
+    """Walk a route's list until one leg starts producing output.
+
+    `attempt(spec)` returns an iterator — a .stream() generator, or a generator
+    yielding one parsed result. A failure BEFORE its first item falls through to
+    the next leg; a failure after it propagates to the caller, because a
+    half-streamed answer must never be silently replaced by a second one.
+
+    `legs` lets a caller keep its own position across calls (the explain popover
+    resumes at the next leg after an unparseable answer).
+
+    Returns (spec, iterator) with the first item put back, and appends one note
+    per leg it gave up on so the caller can log why it landed where it did.
+    """
+    retries = chat_models().retry.retries_per_model
+    last_exc: BaseException | None = None
+
+    for spec in (legs if legs is not None else iter(route_legs(route))):
+        parked = rate_limits.is_skipped(spec.provider, spec.model, spec.key_index)
+        if parked:
+            notes.append(f"skipped {spec} ({parked})")
+            continue
+        for try_number in range(retries + 1):
+            try:
+                iterator = iter(attempt(spec))
+                first = next(iterator)
+            except StopIteration:
+                return spec, iter(())
+            except Exception as exc:
+                last_exc = exc
+                kind = rate_limits.classify_error(exc)
+                if kind == "transient" and try_number < retries:
+                    logger.warning("[llm] %s leg %s transient (%s) — retrying", route, spec, exc)
+                    continue
+                rate_limits.record_failure(spec.provider, spec.model, spec.key_index, kind)
+                notes.append(f"skipped {spec} ({kind})")
+                logger.warning("[llm] %s leg %s failed (%s): %s", route, spec, kind, exc)
+                break
+            return spec, itertools.chain([first], iterator)
+
+    raise AllLegsFailed(route, notes) from last_exc
 
 
 def _build_raw_models(
@@ -313,7 +593,10 @@ class _QuotaAwareRetry(RunnableRetry):
         retry_types = self.retry_exception_types
 
         def _should_retry(exc: BaseException) -> bool:
-            return isinstance(exc, retry_types) and not _is_daily_quota_exhausted(exc)
+            # Only a genuinely transient failure is worth a backoff sleep: a
+            # daily cap cannot recover inside one, an empty account never will,
+            # and a 400 will fail identically on every attempt.
+            return isinstance(exc, retry_types) and rate_limits.classify_error(exc) in ("rate_limit", "transient")
 
         kwargs["retry"] = retry_if_exception(_should_retry)
         return kwargs

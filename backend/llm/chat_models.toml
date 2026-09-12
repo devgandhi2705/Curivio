@@ -1,0 +1,44 @@
+# Curivio chat models. Each list is tried top to bottom.
+# Format "provider/model-id": provider = gemini | groq | openrouter.
+# Everything after the first "/" is the model id.
+# Each model is tried on every API key of its provider before the next model.
+# Edit, then restart the server.
+
+# Task 2 spike (2026-09-12): 30/30 valid JSON on groq/openai/gpt-oss-20b
+# (median 0.52s), 10/10 on gemini/gemini-3.1-flash-lite — order and
+# max_tokens below match what was measured, unchanged.
+[classifier]      # every turn: search? simple tone? code? crisis?
+models     = ["groq/openai/gpt-oss-20b", "gemini/gemini-3.1-flash-lite"]
+max_tokens = 400
+reasoning  = "low"          # low | off (ignored where unsupported)
+
+[simple]
+models     = ["groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash"]
+max_tokens = 8192
+reasoning  = "low"
+
+[complex]
+models     = ["gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite"]
+max_tokens = 8192
+reasoning  = "low"
+
+[code]            # first model must be Gemini 3.x (only one that can run code)
+models     = ["gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b"]
+max_tokens = 8192
+reasoning  = "low"
+
+[image]           # Gemini only
+models     = ["gemini/gemini-2.5-flash", "gemini/gemini-3.1-flash-lite"]
+max_tokens = 8192
+reasoning  = "low"
+
+[explain]         # select-to-explain popover
+models          = ["groq/openai/gpt-oss-120b", "gemini/gemini-flash-lite-latest"]
+max_tokens      = 200
+timeout_seconds = 5
+
+[retry]
+retries_per_model          = 1     # only network / server errors are retried
+skip_after_rate_limit_sec  = 30    # 429 per-minute limit -> skip that model+key
+skip_after_daily_quota_sec = 3600  # "per day" quota -> skip that model+key for 1 hour
+skip_after_no_credit_sec   = 600   # 402 no credit -> skip the whole provider

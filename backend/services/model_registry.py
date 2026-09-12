@@ -259,6 +259,24 @@ _REGISTRY: dict[str, ModelConfig] = {
         output_reserve   = 4_000,
         safety_buffer    = 2_000,
     ),
+    # Same 1M-context flash family as gemini-2.5-flash above; keyed with the
+    # literal "models/" prefix, which is what registry_model_name() passes.
+    "models/gemini-3.1-flash-lite": ModelConfig(
+        model_name       = "models/gemini-3.1-flash-lite",
+        provider         = "google",
+        context_window   = 1_000_000,
+        safe_utilization = 0.80,
+        output_reserve   = 4_000,
+        safety_buffer    = 2_000,
+    ),
+    "models/gemini-flash-lite-latest": ModelConfig(
+        model_name       = "models/gemini-flash-lite-latest",
+        provider         = "google",
+        context_window   = 1_000_000,
+        safe_utilization = 0.80,
+        output_reserve   = 4_000,
+        safety_buffer    = 2_000,
+    ),
 }
 
 # Safe fallback for unknown models (conservative limits)

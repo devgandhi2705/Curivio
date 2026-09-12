@@ -112,6 +112,13 @@ AUTH_LOOSE_RATE_LIMIT    = cfg.AUTH_LOOSE_RATE_LIMIT
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # chat_models.toml drives every chat model choice — a typo in it must stop
+    # the process here, not surface as a 400 in someone's chat turn.
+    from .llm.model_provider import chat_models
+    _routes = chat_models().routes
+    logger.info("[startup] chat models loaded: %s",
+                {name: [str(m) for m in route.models] for name, route in _routes.items()})
+
     # Warn about missing API keys but don't block startup
     _missing = [k for k in ("GROQ_API_KEY", "TINYFISH_API_KEY") if not os.getenv(k)]
     if _missing:

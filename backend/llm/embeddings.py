@@ -71,18 +71,11 @@ _rate_limited = contextvars.ContextVar("embeddings_rate_limited", default=False)
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
-    """Gemini's RESOURCE_EXHAUSTED (R19b's 100 req/min free-tier ceiling).
-    Checked on __cause__.status first — langchain_google_genai's
-    embed_documents wraps the real google.genai ClientError into
-    GoogleGenerativeAIError via `raise GoogleGenerativeAIError(f"Error
-    embedding content ({e.status}): {e}") from e` (confirmed by reading its
-    source), so the original ClientError.status ("RESOURCE_EXHAUSTED" for a
-    429) survives as __cause__. Message-string check as a fallback in case
-    __cause__ isn't preserved."""
-    cause = exc.__cause__
-    if getattr(cause, "status", None) == "RESOURCE_EXHAUSTED":
-        return True
-    return "RESOURCE_EXHAUSTED" in str(exc)
+    """Gemini's RESOURCE_EXHAUSTED (the free tier's 100 req/min ceiling).
+    classify_error walks __cause__, which is where langchain_google_genai keeps
+    the real ClientError after wrapping it in GoogleGenerativeAIError."""
+    from .rate_limits import classify_error
+    return classify_error(exc) in ("rate_limit", "daily_quota")
 
 
 def _before_sleep(retry_state) -> None:

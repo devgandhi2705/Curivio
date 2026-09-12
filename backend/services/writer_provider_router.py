@@ -41,8 +41,10 @@ _FULL_CONTENT_CHAR_BUDGET = 12_000
 
 
 def _is_quota_error(exc: Exception) -> bool:
-    msg = str(exc)
-    return "429" in msg or "RESOURCE_EXHAUSTED" in msg
+    """Gemini pool exhausted (per-minute or per-day) — the only case that earns
+    the Groq fallback. See backend/llm/rate_limits.py for the classification."""
+    from ..llm.rate_limits import classify_error
+    return classify_error(exc) in ("rate_limit", "daily_quota")
 
 
 def format_articles_full(
