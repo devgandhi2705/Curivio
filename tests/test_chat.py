@@ -278,35 +278,6 @@ class TestChatPromptService:
         prompt = build_system_prompt(ctx)
         assert "RAG Pipelines" in prompt
 
-    def test_build_system_prompt_includes_research_summary(self):
-        # Chat-R7b: research/session dumps render in the structured prompt,
-        # which now gates on a genuine Feed link (context["feed_linked"]),
-        # not mode.
-        ctx = self._empty_context()
-        ctx["feed_linked"] = True
-        ctx["research"]["topic"] = "RAG Pipelines"
-        ctx["research"]["has_deep_research"] = True
-        ctx["research"]["deep_research"] = {"summary": "RAG is about retrieval augmented generation"}
-        prompt = build_system_prompt(ctx, mode="web_search")
-        assert "RAG" in prompt
-
-    def test_build_system_prompt_includes_session_memory(self):
-        ctx = self._empty_context()
-        ctx["feed_linked"] = True
-        ctx["session"] = {
-            "topic": "LoRA",
-            "times_explored": 2,
-            "has_deep_research": True,
-            "has_learning_path": False,
-            "has_topic_expansion": False,
-            "has_github_repos": False,
-            "last_activity_at": "2025-01-01",
-            "recommended_next": [],
-        }
-        prompt = build_system_prompt(ctx, mode="web_search")
-        assert "LoRA" in prompt
-        assert "2" in prompt  # times_explored
-
     def test_build_messages_includes_system_and_user(self):
         ctx = self._empty_context()
         messages = build_messages([], "Hello there", ctx)

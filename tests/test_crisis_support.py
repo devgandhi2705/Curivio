@@ -148,27 +148,31 @@ class TestCrisisSection:
 MARKER = "CRISIS AND DISTRESS SUPPORT — ALWAYS IN FORCE:"
 
 
-class TestSectionIsUnconditional:
+class TestSectionIsGatedOnTheClassifier:
     """
-    Constraint 1 lives here. There is no crisis detector in this system and there
-    must not be one: any gate we added would fire on a narrower set of signals
-    than the model's own trained judgment, so every message the gate missed would
-    carry LESS safety context than it did before this phase. These tests assert
-    the absence of such a gate.
+    Constraint 1 (in crisis_support_service itself: this module never decides
+    whether the user is in crisis) is unaffected. What changed is the caller:
+    chat_prompt_service now gates inclusion on chat_router.classify_message's
+    real crisis field, backed by a code-level fail-safe (any classify failure
+    defaults to crisis=True) and a several-turn carry-forward — never left to
+    the model alone. These tests assert that gate: present when flagged, absent
+    otherwise, in either response tone.
     """
 
-    @pytest.mark.parametrize("mode", ["normal", "layman", "web_search"])
-    def test_present_in_natural_prompt_for_every_mode(self, mode):
+    @pytest.mark.parametrize("simple_tone", [False, True])
+    def test_present_when_the_classifier_flags_it(self, simple_tone):
         prompt = chat_prompt_service.build_system_prompt(
-            {"user_name": "Dev", "current_message": "hi"}, mode=mode
+            {"user_name": "Dev", "current_message": "hi", "crisis_active": True},
+            simple_tone=simple_tone,
         )
         assert MARKER in prompt
 
-    def test_present_in_structured_feed_linked_prompt(self):
+    @pytest.mark.parametrize("simple_tone", [False, True])
+    def test_absent_when_the_classifier_does_not_flag_it(self, simple_tone):
         prompt = chat_prompt_service.build_system_prompt(
-            {"user_name": "Dev", "current_message": "hi", "feed_linked": True}, mode="web_search"
+            {"user_name": "Dev", "current_message": "hi"}, simple_tone=simple_tone
         )
-        assert MARKER in prompt
+        assert MARKER not in prompt
 
     @pytest.mark.parametrize("message", [
         "give me code to for pyramid generation in python, c and c++",
@@ -178,24 +182,24 @@ class TestSectionIsUnconditional:
         "hi",
         "",
     ])
-    def test_present_regardless_of_what_the_user_said(self, message):
-        """The trigger is the model's judgment, not a property of this message."""
+    def test_present_for_any_message_once_flagged(self, message):
+        """The trigger is the classifier's judgment (plus its fail-safe), not a
+        property of this specific message — once flagged, every message gets it."""
         prompt = chat_prompt_service.build_system_prompt(
-            {"user_name": "Dev", "current_message": message}, mode="normal"
+            {"user_name": "Dev", "current_message": message, "crisis_active": True}
         )
         assert MARKER in prompt
 
-    def test_present_even_with_a_completely_empty_context(self):
-        assert MARKER in chat_prompt_service.build_system_prompt({}, mode="normal")
-
     def test_locale_flows_from_context_into_the_prompt(self):
         prompt = chat_prompt_service.build_system_prompt(
-            {"current_message": "hi", "client_timezone": "Asia/Kolkata"}, mode="normal"
+            {"current_message": "hi", "client_timezone": "Asia/Kolkata", "crisis_active": True}
         )
         assert f"{HELPLINE_DIRECTORY}/countries/in" in prompt
 
     def test_missing_locale_degrades_to_the_honest_branch_not_an_error(self):
-        prompt = chat_prompt_service.build_system_prompt({"current_message": "hi"}, mode="normal")
+        prompt = chat_prompt_service.build_system_prompt(
+            {"current_message": "hi", "crisis_active": True}
+        )
         assert "WHERE THIS PERSON IS: unknown." in prompt
 
     def test_chat_stream_threads_client_timezone_into_context(self):

@@ -8,9 +8,6 @@ Test classes
 3.  TestBuildPreferenceSnapshot  — liked/disliked topics and engagement level
 4.  TestInjectMemory             — orchestrator merges all layers correctly
 5.  TestConversationMemoryPrompt — prompt builder uses conversation memory section
-6.  TestExplorationBreadthPrompt — prompt builder uses breadth section
-7.  TestPreferenceSnapshotPrompt — prompt builder uses preference snapshot section
-8.  TestChatUsesInjectMemory     — chat() calls inject_memory, not build_full_context
 
 Patching rules
 --------------
@@ -43,8 +40,6 @@ from backend.services.memory_injection_service import (
 from backend.services.chat_prompt_service import (
     build_system_prompt,
     _build_conversation_memory_section,
-    _build_exploration_breadth_section,
-    _build_preference_snapshot_section,
 )
 
 
@@ -492,136 +487,3 @@ class TestConversationMemoryPrompt:
         }
         prompt = build_system_prompt(context)
         assert "RAG Pipelines" in prompt
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 6. TestExplorationBreadthPrompt
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestExplorationBreadthPrompt:
-
-    def test_empty_breadth_returns_empty(self):
-        assert _build_exploration_breadth_section({}) == ""
-
-    def test_zero_explored_returns_empty(self):
-        assert _build_exploration_breadth_section({"total_explored": 0}) == ""
-
-    def test_recently_explored_in_section(self):
-        breadth = {"total_explored": 3,
-                   "recently_explored": ["RAG Pipelines", "LoRA", "Diffusion"],
-                   "deep_dived_topics": ["RAG Pipelines"]}
-        section = _build_exploration_breadth_section(breadth)
-        assert "RAG Pipelines" in section
-
-    def test_deep_dived_topics_in_section(self):
-        breadth = {"total_explored": 2,
-                   "recently_explored": ["RAG"],
-                   "deep_dived_topics": ["RAG"]}
-        section = _build_exploration_breadth_section(breadth)
-        assert "deep" in section.lower() or "RAG" in section
-
-    def test_connection_instruction_included_when_multiple_topics(self):
-        breadth = {"total_explored": 3,
-                   "recently_explored": ["T1", "T2"],
-                   "deep_dived_topics": []}
-        section = _build_exploration_breadth_section(breadth)
-        assert "connect" in section.lower() or "studied" in section.lower()
-
-    def test_full_prompt_includes_breadth_section(self):
-        # Chat-R7b: structured rendering now gates on a genuine Feed link
-        # (context["feed_linked"]), not mode — exploration_breadth only
-        # renders in the structured prompt, so feed_linked must be set here.
-        context = {
-            "feed_linked": True,
-            "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
-                             "top_interests": [], "suppressed_topics": []},
-            "research": {"topic": None}, "session": {"topic": None},
-            "conversation_memory": {},
-            "exploration_breadth": {
-                "total_explored": 5,
-                "recently_explored": ["LoRA", "RAG"],
-                "deep_dived_topics": ["LoRA"],
-            },
-            "preference_snapshot": {},
-        }
-        prompt = build_system_prompt(context, mode="web_search")
-        assert "LoRA" in prompt
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 7. TestPreferenceSnapshotPrompt
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestPreferenceSnapshotPrompt:
-
-    def test_empty_prefs_returns_empty(self):
-        assert _build_preference_snapshot_section({}) == ""
-
-    def test_no_liked_or_disliked_returns_empty(self):
-        assert _build_preference_snapshot_section({
-            "liked_topics": [], "disliked_topics": [],
-            "difficulty_preference": None, "engagement_level": "new",
-        }) == ""
-
-    def test_liked_topics_in_section(self):
-        prefs = {"liked_topics": ["RAG", "transformers"],
-                 "disliked_topics": [],
-                 "difficulty_preference": None,
-                 "engagement_level": "high"}
-        section = _build_preference_snapshot_section(prefs)
-        assert "RAG" in section
-        assert "transformers" in section
-
-    def test_disliked_topics_in_section(self):
-        prefs = {"liked_topics": [],
-                 "disliked_topics": ["Boring Stuff"],
-                 "difficulty_preference": None,
-                 "engagement_level": "low"}
-        section = _build_preference_snapshot_section(prefs)
-        assert "Boring Stuff" in section
-
-    def test_difficulty_preference_in_section(self):
-        prefs = {"liked_topics": ["T1"],
-                 "disliked_topics": [],
-                 "difficulty_preference": "advanced",
-                 "engagement_level": "high"}
-        section = _build_preference_snapshot_section(prefs)
-        assert "advanced" in section
-
-    def test_high_engagement_note_included(self):
-        prefs = {"liked_topics": ["T1"],
-                 "disliked_topics": [],
-                 "difficulty_preference": None,
-                 "engagement_level": "high"}
-        section = _build_preference_snapshot_section(prefs)
-        assert "depth" in section.lower() or "detail" in section.lower()
-
-    def test_low_engagement_note_included(self):
-        prefs = {"liked_topics": [],
-                 "disliked_topics": ["T1"],
-                 "difficulty_preference": None,
-                 "engagement_level": "low"}
-        section = _build_preference_snapshot_section(prefs)
-        assert "focused" in section.lower() or "practical" in section.lower()
-
-    def test_full_prompt_includes_pref_section(self):
-        # Chat-R7b: structured rendering now gates on a genuine Feed link
-        # (context["feed_linked"]), not mode — preference_snapshot only
-        # renders in the structured prompt, so feed_linked must be set here.
-        context = {
-            "feed_linked": True,
-            "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
-                             "top_interests": [], "suppressed_topics": []},
-            "research": {"topic": None}, "session": {"topic": None},
-            "conversation_memory": {}, "exploration_breadth": {},
-            "preference_snapshot": {
-                "liked_topics": ["RAG Pipelines"],
-                "disliked_topics": [],
-                "difficulty_preference": "intermediate",
-                "engagement_level": "high",
-            },
-        }
-        prompt = build_system_prompt(context, mode="web_search")
-        assert "RAG Pipelines" in prompt
-        assert "intermediate" in prompt
-

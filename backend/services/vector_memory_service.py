@@ -153,18 +153,20 @@ def search(user_id: str | None, query_text: str, top_k: int = _TOP_K_DEFAULT) ->
 
 
 def format_for_prompt(entries: list[dict], max_items: int = 3) -> str:
-    """
-    Format search() results into a compact, clearly-labeled prompt section.
-    Returns "" when entries is empty (composer skips empty sections).
-    """
+    """Format search() results into a compact, clearly-labeled prompt section.
+    Identical lines are dropped: the same entry can come back from two different
+    sessions, and paying for it twice in the prompt buys nothing."""
     if not entries:
         return ""
     lines = ["Related past discussion (different session, same user):"]
-    for e in entries[:max_items]:
-        topic = e.get("topic") or ""
-        text  = e.get("entry_text") or ""
-        if topic:
-            lines.append(f"  • [{topic}] {text}")
-        else:
-            lines.append(f"  • {text}")
-    return "\n".join(lines)
+    seen: set[str] = set()
+    for entry in entries:
+        topic, text = entry.get("topic") or "", entry.get("entry_text") or ""
+        line = f"  • [{topic}] {text}" if topic else f"  • {text}"
+        if line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+        if len(seen) >= max_items:
+            break
+    return "\n".join(lines) if len(lines) > 1 else ""

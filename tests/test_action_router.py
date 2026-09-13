@@ -7,7 +7,6 @@ Coverage
   TestDetectActionNegative  — messages that should not trigger any action
   TestDispatchAction        — mocked workflow dispatch per action
   TestRouteFunction         — end-to-end route() combining detect + dispatch
-  TestActionPromptSection   — system prompt injection via _build_action_result_section
   TestChatServiceAction     — chat() returns action key in response dict
   TestActionEndpoint        — POST /chat response includes action field
   TestActionIntegration     — integration test (marked, uses real DB fixture)
@@ -416,58 +415,6 @@ class TestRouteFunction:
         with patch("backend.services.github_service.get_topic_repos", return_value=[]):
             result = route("Show repos", "  Vector Databases  ", _ctx())
         assert result["topic"] == "Vector Databases"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestActionPromptSection
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestActionPromptSection:
-    def _section(self, action_result):
-        from backend.services.chat_prompt_service import _build_action_result_section
-        return _build_action_result_section(action_result)
-
-    def test_empty_dict_returns_empty(self):
-        assert self._section({}) == ""
-
-    def test_none_instruction_returns_empty(self):
-        assert self._section({"instruction": None}) == ""
-
-    def test_blank_instruction_returns_empty(self):
-        assert self._section({"instruction": "   "}) == ""
-
-    def test_instruction_is_returned_verbatim(self):
-        instr = "Action: EXPLAIN SIMPLY\nExplain Vector Databases plainly."
-        result = self._section({"instruction": instr})
-        assert result == instr
-
-    def test_instruction_is_stripped(self):
-        result = self._section({"instruction": "  Hello world  "})
-        assert result == "Hello world"
-
-    def test_section_in_system_prompt(self):
-        # Chat-R7b: action_result renders in the structured prompt, which now
-        # gates on a genuine Feed link (context["feed_linked"]), not mode.
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = {
-            "feed_linked": True,
-            "user_profile": {}, "research": {}, "session": {},
-            "conversation_memory": {}, "exploration_breadth": {},
-            "preference_snapshot": {}, "learner_profile": {},
-            "action_result": {"instruction": "Action: SHOW REPOSITORIES\nHere are repos..."},
-        }
-        prompt = build_system_prompt(ctx, mode="web_search")
-        assert "Action: SHOW REPOSITORIES" in prompt
-
-    def test_no_action_result_prompt_unchanged(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = {
-            "user_profile": {}, "research": {}, "session": {},
-            "conversation_memory": {}, "exploration_breadth": {},
-            "preference_snapshot": {}, "learner_profile": {},
-        }
-        prompt = build_system_prompt(ctx)
-        assert "Action:" not in prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────

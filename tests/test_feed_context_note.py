@@ -18,6 +18,4 @@ def test_feed_context_note_preserves_complete_card_content_and_sources():
     assert "Educational explanation: A longer explanation of how the models adapt." in note
     assert "[evidence] The evidence block is retained." in note
     assert "Paper: https://example.com/paper" in note
-    assert "do NOT search the web" not in note
-    assert "use web search" in note
-    assert "inspect the provided source URLs" in note
+    assert "web search" not in note.lower()

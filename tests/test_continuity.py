@@ -7,8 +7,6 @@ Coverage
   TestRecordRecommendations      — persist recs, skip non-stored, dedup
   TestGetContinuityContext       — retrieval, empty topic, cross-session stats
   TestExtractConceptsFromContext — helper that pulls concepts from context dict
-  TestContinuityPromptSection    — _build_continuity_section output
-  TestContinuityInSystemPrompt   — section appears in build_system_prompt
   TestInjectMemoryIncludesContinuity — inject_memory returns continuity key
   TestChatServiceRecordsContinuity   — chat() calls record_concepts after turn
   TestContinuityIntegration      — integration test (marked, uses in-memory DB)
@@ -93,21 +91,6 @@ def patch_db(db, monkeypatch):
     monkeypatch.setattr(_chat, "get_connection", cm)
     monkeypatch.setattr(_db,   "get_connection", cm)
     return db
-
-
-def _base_ctx():
-    return {
-        "user_profile":        {"top_interests": []},
-        "research":            {},
-        "session":             {},
-        "conversation_memory": {"message_count": 0, "session_turns": 0,
-                                "topics_discussed": [], "last_user_messages": []},
-        "exploration_breadth": {"total_explored": 0, "all_topics": [],
-                                "recently_explored": [], "deep_dived_topics": []},
-        "preference_snapshot": {},
-        "learner_profile":     {"inferred_level": "intermediate", "directive": ""},
-        "continuity":          {},
-    }
 
 
 def _recs(topics: list[str], source: str = "stored") -> dict:
@@ -384,118 +367,6 @@ class TestExtractConceptsFromContext:
         ctx = {"research": {"deep_research": {"key_concepts": [123, None, "ValidConcept"]}}}
         result = self._extract(ctx)
         assert result == ["ValidConcept"]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestContinuityPromptSection
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestContinuityPromptSection:
-    def _section(self, continuity):
-        from backend.services.chat_prompt_service import _build_continuity_section
-        return _build_continuity_section(continuity)
-
-    def test_empty_dict_returns_empty(self):
-        assert self._section({}) == ""
-
-    def test_no_topic_returns_empty(self):
-        assert self._section({"explained_concepts": ["X"]}) == ""
-
-    def test_no_data_returns_empty(self):
-        assert self._section({"topic": "VDB"}) == ""
-
-    def test_explained_concepts_in_output(self):
-        result = self._section({
-            "topic": "Vector Databases",
-            "explained_concepts": ["Embeddings", "ANN"],
-            "prior_recommendations": [],
-            "cross_session_turns": 0,
-            "sessions_count": 1,
-        })
-        assert "Embeddings" in result
-        assert "ANN" in result
-
-    def test_prior_recs_in_output(self):
-        result = self._section({
-            "topic": "Vector Databases",
-            "explained_concepts": [],
-            "prior_recommendations": ["RAG Pipelines", "FAISS"],
-            "cross_session_turns": 0,
-            "sessions_count": 1,
-        })
-        assert "RAG Pipelines" in result
-
-    def test_multi_session_note_shown(self):
-        result = self._section({
-            "topic": "VDB",
-            "explained_concepts": ["X"],
-            "prior_recommendations": [],
-            "cross_session_turns": 12,
-            "sessions_count": 3,
-        })
-        assert "3 sessions" in result
-
-    def test_single_session_no_multi_note(self):
-        result = self._section({
-            "topic": "VDB",
-            "explained_concepts": ["X"],
-            "prior_recommendations": [],
-            "cross_session_turns": 4,
-            "sessions_count": 1,
-        })
-        # The multi-session depth note ("Discussed across N sessions") should not appear
-        assert "Discussed across" not in result
-
-    def test_topic_name_in_output(self):
-        result = self._section({
-            "topic": "Transformer Architecture",
-            "explained_concepts": ["Attention"],
-            "prior_recommendations": [],
-            "cross_session_turns": 0,
-            "sessions_count": 0,
-        })
-        assert "Transformer Architecture" in result
-
-    def test_anti_repetition_instruction_present(self):
-        result = self._section({
-            "topic": "VDB",
-            "explained_concepts": ["Embeddings"],
-            "prior_recommendations": [],
-            "cross_session_turns": 0,
-            "sessions_count": 0,
-        })
-        assert "re-explain" in result.lower() or "build on" in result.lower()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TestContinuityInSystemPrompt
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestContinuityInSystemPrompt:
-    def test_section_appears_in_prompt(self):
-        # Chat-R7b: continuity renders in the structured prompt, which now
-        # gates on a genuine Feed link (context["feed_linked"]), not mode.
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = {
-            **_base_ctx(),
-            "feed_linked": True,
-            "continuity": {
-                "topic": "Vector Databases",
-                "explained_concepts": ["Embeddings", "HNSW"],
-                "prior_recommendations": ["FAISS"],
-                "cross_session_turns": 8,
-                "sessions_count": 2,
-            },
-        }
-        prompt = build_system_prompt(ctx, mode="web_search")
-        assert "Embeddings" in prompt
-        assert "FAISS" in prompt
-
-    def test_no_continuity_prompt_clean(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = _base_ctx()
-        prompt = build_system_prompt(ctx)
-        assert "Cross-session" not in prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────

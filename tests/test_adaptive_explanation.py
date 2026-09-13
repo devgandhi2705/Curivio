@@ -11,8 +11,7 @@ Test classes
 6.  TestDirectiveContent         — directive strings match each level's style
 7.  TestTopicConnections         — topic grounding in directive
 8.  TestProgressiveDepth         — session depth modifies directive
-9.  TestExplanationDirectivePrompt — prompt builder includes directive section
-10. TestInjectMemoryIncludesProfile — inject_memory adds learner_profile key
+9.  TestInjectMemoryIncludesProfile — inject_memory adds learner_profile key
 
 Patching rules
 --------------
@@ -47,11 +46,6 @@ from backend.services.adaptive_explanation_service import (
     build_learner_profile,
     get_explanation_directive,
 )
-from backend.services.chat_prompt_service import (
-    _build_explanation_directive_section,
-    build_system_prompt,
-)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared fixtures
@@ -556,70 +550,6 @@ class TestProgressiveDepth:
         signals = self._signals_with_depth(0)  # 0 non-default signals → low confidence
         directive = _build_directive("intermediate", signals, [])
         assert "limited" in directive.lower() or "adjust" in directive.lower()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9. TestExplanationDirectivePrompt
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestExplanationDirectivePrompt:
-
-    def _make_context(self, learner_profile=None):
-        return {
-            "user_profile": {"learning_stage": "beginner", "difficulty_preference": None,
-                             "top_interests": [], "suppressed_topics": []},
-            "research":  {"topic": None},
-            "session":   {"topic": None},
-            "conversation_memory": {},
-            "exploration_breadth": {},
-            "preference_snapshot": {},
-            "learner_profile": learner_profile or {},
-        }
-
-    def test_empty_learner_profile_returns_empty(self):
-        assert _build_explanation_directive_section({}) == ""
-
-    def test_directive_from_profile_passed_through(self):
-        directive = "Explanation style: ADVANCED\n- Use precise terminology."
-        result = _build_explanation_directive_section({"directive": directive})
-        assert result == directive.strip()
-
-    def test_empty_directive_returns_empty(self):
-        result = _build_explanation_directive_section({"directive": ""})
-        assert result == ""
-
-    def test_whitespace_directive_returns_empty(self):
-        result = _build_explanation_directive_section({"directive": "   "})
-        assert result == ""
-
-    def test_full_prompt_includes_beginner_directive(self):
-        profile = {
-            "directive": "Explanation style: BEGINNER\n- Use simple language.\n- Use analogies.",
-            "inferred_level": "beginner",
-        }
-        ctx = self._make_context(learner_profile=profile)
-        prompt = build_system_prompt(ctx)
-        assert "BEGINNER" in prompt
-
-    def test_full_prompt_includes_advanced_directive(self):
-        profile = {
-            "directive": "Explanation style: ADVANCED\n- Full technical depth.",
-            "inferred_level": "advanced",
-        }
-        ctx = self._make_context(learner_profile=profile)
-        prompt = build_system_prompt(ctx)
-        assert "ADVANCED" in prompt
-
-    def test_directive_appears_before_guidelines_in_prompt(self):
-        profile = {
-            "directive": "Explanation style: INTERMEDIATE\n- Standard depth.",
-            "inferred_level": "intermediate",
-        }
-        ctx = self._make_context(learner_profile=profile)
-        prompt = build_system_prompt(ctx)
-        directive_pos  = prompt.index("INTERMEDIATE")
-        guidelines_pos = prompt.index("Guidelines:")
-        assert directive_pos < guidelines_pos
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

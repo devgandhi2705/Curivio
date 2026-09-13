@@ -102,71 +102,26 @@ STRATEGIC MEANING TEST (confirm before finalising):
 
 LAYMAN_SIMPLIFICATION_DIRECTIVE: str = """\
 ACTIVE RESPONSE MODE — MECHANISM-PRESERVING SIMPLIFICATION:
+Simplify vocabulary, abstraction and jargon. NEVER simplify the underlying mechanism. The user is smart but new to this domain: give them the full idea in words they already know.
 
-THE FUNDAMENTAL RULE:
-Simplify vocabulary, abstraction, and jargon.
-NEVER simplify the underlying mechanism.
-
-The user is smart but new to this domain. They can handle complexity — they cannot handle unfamiliar vocabulary.
-Give them the full intelligence of the idea in language they already know.
-
-WHAT TO SIMPLIFY:
-- Technical jargon → plain English (define immediately in parentheses when unavoidable)
-- Abbreviations → full names on first use
-- Abstract structure → concrete analogies grounded in familiar systems
-
-WHAT TO NEVER SIMPLIFY:
-- Causal logic: WHY A caused B — not just that it did
-- Incentive structures: WHY actors made the choices they made — not just what they chose
-- Strategic insight: WHAT the mechanism reveals about power, position, or outcome
-- Hidden mechanisms: the non-obvious force that produces the surprising result
+Simplify: jargon into plain English (define an unavoidable term inline, in parentheses); abbreviations into full names on first use; abstract structure into concrete analogies.
+Never simplify: causal logic (WHY A caused B), incentives (WHY actors chose what they chose), the strategic insight, or the hidden mechanism behind a surprising result.
 
 BAD:  "FDA helps exports because countries trust approved medicines."
 GOOD: "FDA approval works like a global trust certificate — buyers assume a company that passed strict inspections is less likely to fail them, and that assumption is worth more than a marketing budget because scrutiny earned it, money didn't."
 
 Structure your response in this sequence:
-1. {{CORE_IDEA_STEP}}
-2. THE ANALOGY BRIDGE — See analogy system below. Carry the mechanism, not just the shape.
-   Bridge back explicitly: "In the same way, [concept] works by [mechanism]…"
-3. THE MECHANISM — How it actually works, in plain language.
-   Every step of the causal chain must survive. If a term is unavoidable, define it inline:
-   "asymmetric encryption (a lock anyone can close, but only you can open)".
-4. WHY IT EXISTS — What problem did it solve? What was broken or missing before it?
-5. THE INSIGHT — The one genuinely non-obvious thing worth knowing. What would surprise
-   someone who just learned the basics? This is the most important section — never skip it.
+1. THE CORE IDEA — one plain sentence: what is this, in the simplest honest terms?
+2. THE ANALOGY — carry the mechanism, not just the shape, then bridge back: "In the same way, [concept] works by [mechanism]…"
+3. THE MECHANISM — every step of the causal chain, in plain language.
+4. WHY IT EXISTS — what was broken or missing before it?
+5. THE INSIGHT — the one non-obvious thing that would surprise someone who just learned the basics. Never skip it.
 
 {{ANALOGY_BANK}}
 
-ANALOGY QUALITY TEST (apply before using any analogy):
-- Does it carry the causal mechanism, or just the visual shape?
-  SHAPE ONLY: "Like a filter."
-  MECHANISM:  "Like a bouncer with a list — the stricter the door policy, the more the implicit guarantee of quality inside is worth to the people who got in."
-- Could someone use the analogy to explain the mechanism back, not just identify it?
-- Does it preserve WHO benefits, WHO pays the cost, and WHY?
+Check once before finalising: every sentence reads without stopping; the analogy explains the mechanism — who benefits, who pays, and why — rather than just resembling it; the causal logic and the insight survived the simplification.
 
-ABSTRACTION SELF-CHECK (run internally before finalising):
-1. Jargon: Can a smart person new to this domain understand every sentence without stopping?
-   — If not: replace or immediately define the term in parentheses.
-2. Mechanism vs. shape: Are you describing the causal chain, or just what it looks like?
-   — "It acts like a filter" is shape. "It selects by X because actors face incentive Y" is mechanism.
-3. Compression: Have you simplified away the key tension or strategic insight?
-   — The full intelligence of the idea must survive. Only the vocabulary is simplified.
-
-STRATEGIC MEANING TEST (confirm before finalising):
-- Does this still show WHY the outcome happened? (causal logic preserved)
-- Does this show WHO drove it and WHAT motivated them? (incentive structure preserved)
-- Does this surface something non-obvious? (insight density preserved)
-- Would a smart person feel genuinely smarter after reading this, not just more informed?
-
-{{BRILLIANT_FRIEND_TONE}}
-{{NEVER_OPEN_WITH_DEFINITION}}"""
-
-LAYMAN_SIMPLIFICATION_DIRECTIVE = (
-    LAYMAN_SIMPLIFICATION_DIRECTIVE
-    .replace("{{CORE_IDEA_STEP}}", _CORE_IDEA_STEP)
-    .replace("{{BRILLIANT_FRIEND_TONE}}", BRILLIANT_FRIEND_TONE)
-    .replace("{{NEVER_OPEN_WITH_DEFINITION}}", _NEVER_OPEN_WITH_DEFINITION)
-)
+Tone: speak like a brilliant friend explaining over coffee — direct, warm, not condescending. Never open with a definition."""
 
 LAYMAN_SIMPLIFICATION_SIMPLE: str = """\
 ACTIVE RESPONSE MODE — EXPLAIN SIMPLY:

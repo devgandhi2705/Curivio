@@ -9,10 +9,8 @@ Output modes under test
 ------------------------
 1. Day 1 Feed       — make_daily_package_prompt (no prior history or memory)
 2. Day 2 Feed       — make_daily_package_prompt (with history, continuity, memory)
-3. Chat             — build_system_prompt in normal/standard mode
-4. Explain Simply   — build_system_prompt in layman mode
-5. Compare Mode     — build_system_prompt in compare structured mode
-6. Trend Analysis   — build_system_prompt in trend_analysis structured mode
+3. Chat             — build_system_prompt (plain tone)
+4. Explain Simply   — build_system_prompt (simple_tone=True)
 
 Validation dimensions
 ---------------------
@@ -193,47 +191,6 @@ _CHAT_CONTEXT_LAYMAN = {
         "mechanism": "RAG retrieves relevant documents from a vector database to ground LLM responses in factual context.",
     },
     "domain_context": {"domain": "machine_learning"},
-}
-
-_CHAT_CONTEXT_STRUCTURED = {
-    **_CHAT_CONTEXT_NORMAL,
-    "exploration_breadth": {
-        "total_explored": 12,
-        "recently_explored": ["transformers", "RAG", "FAISS", "LangChain"],
-        "deep_dived_topics": ["RAG pipelines", "vector databases"],
-    },
-    "preference_snapshot": {
-        "liked_topics": ["RAG", "transformers", "embeddings"],
-        "disliked_topics": ["blockchain"],
-        "difficulty_preference": "advanced",
-        "engagement_level": "high",
-    },
-    "learner_profile": {
-        "directive": (
-            "ADAPTIVE EXPLANATION: User has intermediate ML background with strong transformer knowledge. "
-            "Skip basic neural network explanations. Emphasise system design and production trade-offs."
-        )
-    },
-    "domain_context": {
-        "domain": "machine_learning",
-        "directive": (
-            "DOMAIN: Machine Learning / AI Systems. "
-            "Favour precision over accessibility. Name specific architectures and benchmarks."
-        ),
-    },
-    "continuity": {
-        "topic": "RAG pipelines",
-        "explained_concepts": ["transformers", "attention", "embeddings"],
-        "prior_recommendations": ["FAISS", "sentence-transformers"],
-        "cross_session_turns": 15,
-        "sessions_count": 3,
-    },
-    "action_result": {
-        "instruction": (
-            "WORKFLOW DATA AVAILABLE: Deep research on 'RAG pipelines' with 8 sources. "
-            "Present as structured analysis with key findings, strategic implications, and next steps."
-        )
-    },
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -532,7 +489,7 @@ class TestChatNormal:
     @pytest.fixture(scope="class")
     def prompt(self):
         from backend.services.chat_prompt_service import build_system_prompt
-        return build_system_prompt(_CHAT_CONTEXT_NORMAL, mode="normal")
+        return build_system_prompt(_CHAT_CONTEXT_NORMAL)
 
     def test_prompt_health(self, prompt):
         _assert_prompt_health(prompt, min_tokens=100, label="ChatNormal")
@@ -578,7 +535,7 @@ class TestExplainSimply:
     @pytest.fixture(scope="class")
     def prompt(self):
         from backend.services.chat_prompt_service import build_system_prompt
-        return build_system_prompt(_CHAT_CONTEXT_LAYMAN, mode="layman")
+        return build_system_prompt(_CHAT_CONTEXT_LAYMAN, simple_tone=True)
 
     def test_prompt_health(self, prompt):
         _assert_prompt_health(prompt, min_tokens=100, label="ExplainSimply")
@@ -604,58 +561,6 @@ class TestExplainSimply:
 
     def test_no_json_schema(self, prompt):
         assert "OUTPUT FORMAT — MANDATORY" not in prompt
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Mode 5 — Compare Mode
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestCompareMode:
-    """Mode 6 — Structured compare mode for analytical comparisons."""
-
-    @pytest.fixture(scope="class")
-    def prompt(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = {**_CHAT_CONTEXT_STRUCTURED, "format_intent": "comparison"}
-        return build_system_prompt(ctx, mode="compare")
-
-    def test_prompt_health(self, prompt):
-        _assert_prompt_health(prompt, min_tokens=200, label="CompareMode")
-
-    def test_json_schema_present(self, prompt):
-        assert "OUTPUT FORMAT — MANDATORY" in prompt
-
-    def test_comparison_format_guidance_present(self, prompt):
-        assert "comparison" in prompt.lower() or "FORMAT GUIDANCE" in prompt
-
-    def test_schema_has_sections_field(self, prompt):
-        assert '"sections"' in prompt
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Mode 7 — Trend Analysis
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestTrendAnalysis:
-    """Mode 7 — Structured trend_analysis mode."""
-
-    @pytest.fixture(scope="class")
-    def prompt(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        ctx = {**_CHAT_CONTEXT_STRUCTURED, "format_intent": "analysis"}
-        return build_system_prompt(ctx, mode="trend_analysis")
-
-    def test_prompt_health(self, prompt):
-        _assert_prompt_health(prompt, min_tokens=200, label="TrendAnalysis")
-
-    def test_json_schema_present(self, prompt):
-        assert "OUTPUT FORMAT — MANDATORY" in prompt
-
-    def test_analysis_format_guidance(self, prompt):
-        assert "analysis" in prompt.lower() or "FORMAT GUIDANCE" in prompt
-
-    def test_schema_has_next_topics(self, prompt):
-        assert "next_topics" in prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -852,15 +757,9 @@ class TestTokenEfficiency:
 
     def test_chat_natural_within_reasonable_budget(self):
         from backend.services.chat_prompt_service import build_system_prompt
-        prompt = build_system_prompt(_CHAT_CONTEXT_NORMAL, mode="normal")
+        prompt = build_system_prompt(_CHAT_CONTEXT_NORMAL)
         tokens = max(1, len(prompt) // 4)
         assert tokens < 3_000, f"Chat natural prompt unexpectedly large: {tokens} tokens"
-
-    def test_chat_structured_within_reasonable_budget(self):
-        from backend.services.chat_prompt_service import build_system_prompt
-        prompt = build_system_prompt(_CHAT_CONTEXT_STRUCTURED, mode="web_search")
-        tokens = max(1, len(prompt) // 4)
-        assert tokens < 5_000, f"Chat structured prompt unexpectedly large: {tokens} tokens"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -900,33 +799,10 @@ class TestBuildMessages:
 
     def test_layman_mode_messages(self):
         from backend.services.chat_prompt_service import build_messages
-        msgs = build_messages([], "Explain RAG simply", _CHAT_CONTEXT_LAYMAN, mode="layman")
+        msgs = build_messages([], "Explain RAG simply", _CHAT_CONTEXT_LAYMAN, simple_tone=True)
         system_content = msgs[0]["content"]
         assert "simplif" in system_content.lower() or "plain" in system_content.lower() \
             or "analogy" in system_content.lower() or "Curivio" in system_content
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# detect_depth helper
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestDetectDepth:
-    def test_greeting_returns_quick(self):
-        from backend.services.chat_prompt_service import detect_depth
-        assert detect_depth("hi") == "quick"
-
-    def test_detailed_trigger_returns_detailed(self):
-        from backend.services.chat_prompt_service import detect_depth
-        assert detect_depth("explain in detail how transformers work") == "detailed"
-
-    def test_research_trigger_returns_research(self):
-        from backend.services.chat_prompt_service import detect_depth
-        assert detect_depth("analyze the tradeoffs and compare perspectives") == "research"
-
-    def test_standard_question_returns_standard(self):
-        from backend.services.chat_prompt_service import detect_depth
-        # > 4 words, no depth/research/greeting keywords → standard
-        assert detect_depth("Summarize the benefits of vector databases") == "standard"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

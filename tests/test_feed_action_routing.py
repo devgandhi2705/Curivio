@@ -103,33 +103,19 @@ class TestLaymanEscapesTheStructuredPrompt:
     def _ctx(self, **over):
         ctx = {
             "feed_linked": True,
-            "layman_mode_context": {"active": True, "mechanism": "The 1940 Act assumes simple chemistry."},
             "current_message": "Explain this simply.",
         }
         ctx.update(over)
         return ctx
 
-    def test_feed_linked_layman_gets_no_json_schema(self):
-        prompt = build_system_prompt(self._ctx(), mode="layman")
+    def test_feed_linked_simple_tone_gets_the_simplification_directive_no_json(self):
+        prompt = build_system_prompt(self._ctx(), simple_tone=True)
+        assert "MECHANISM-PRESERVING SIMPLIFICATION" in prompt
         assert _JSON_SCHEMA_MARKER not in prompt
 
-    def test_feed_linked_layman_gets_the_mechanism_preservation_directive(self):
-        prompt = build_system_prompt(self._ctx(), mode="layman")
-        assert "MECHANISM TO PRESERVE" in prompt
-        assert "The 1940 Act assumes simple chemistry." in prompt
-
-    def test_feed_linked_non_layman_still_gets_the_structured_prompt(self):
-        # Ask About must be unaffected — it is the reason the structured path exists.
-        prompt = build_system_prompt(
-            {"feed_linked": True, "current_message": "How does this work in practice?"},
-            mode="normal",
-        )
-        assert _JSON_SCHEMA_MARKER in prompt
-
-    def test_plain_layman_chat_is_unchanged(self):
-        prompt = build_system_prompt(
-            {"layman_mode_context": {"active": True, "mechanism": ""}}, mode="layman"
-        )
+    def test_feed_linked_non_simple_also_gets_no_json_schema(self):
+        # There is no JSON path left at all — Feed-linked or not.
+        prompt = build_system_prompt(self._ctx())
         assert _JSON_SCHEMA_MARKER not in prompt
 
 
@@ -146,7 +132,7 @@ class TestFeedContextNote:
             "mechanism": "Analytical chemistry standards can't characterise nano-DDS.",
         })
         assert note.startswith("[FEED INSIGHT — Simple Explanation]")
-        assert "Do NOT search the web" in note
+        assert "Keep its core mechanism" in note
 
     def test_ask_about_note_is_labeled_discussion(self):
         from backend.services.chat_modes_service import build_feed_context_note

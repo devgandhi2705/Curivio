@@ -255,13 +255,6 @@ def chat_stream(
             except Exception:
                 pass
 
-        # Inject layman mode flag into context for system prompt
-        if chat_mode == "layman":
-            context["layman_mode_context"] = {
-                "active":    True,
-                "mechanism": (feed_context or {}).get("mechanism", ""),
-            }
-
         from .domain_classifier_service import get_domain_context as _get_domain
         context["domain_context"] = _get_domain(
             feed_context.get("domain") or topic_hint or message
@@ -335,13 +328,9 @@ def chat_stream(
             except Exception:
                 logger.debug("[chat_service] shared learning context failed (non-fatal)")
 
-        # Decision (Task 4 brief override): build_messages still has its OLD
-        # signature until Task 6 — simple_tone lives behind context's
-        # layman_mode_context key, not a build_messages kwarg, until then.
-        from .chat_prompt_service import build_messages as _build
-        messages_payload = _build(history, message, context,
-                                  mode="layman" if plan.simple_tone else "normal",
-                                  attachments=image_attachments or None)
+        messages_payload = build_messages(history, message, context,
+                                          simple_tone=plan.simple_tone,
+                                          attachments=image_attachments or None)
 
         # Inject feed context note first (background knowledge)
         #

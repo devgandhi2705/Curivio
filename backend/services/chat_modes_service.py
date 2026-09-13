@@ -27,40 +27,43 @@ format_reasoning_search_note(reasoning)     → str
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 
-_ASK_ABOUT_INSTRUCTION = """\
-The user opened this card from their feed and asked the question below.
+_ASK_ABOUT_INSTRUCTION = (
+    "The user opened this card from their feed and asked the question below. Answer THEIR "
+    "question: the card is grounding, not the subject, so don't summarise it unless that is what "
+    'they asked. A narrow question gets a narrow, exact answer; an open one ("explain this") gets '
+    "the full teach-through. The blocks above are compressed notes — use their specifics (the "
+    "named company, the mechanism, the number, the failure mode) instead of restating the summary "
+    "in more general words."
+)
 
-Answer THEIR question. The card is your grounding material, not your subject — do
-not write a summary of the card unless that is what they asked for. A narrow question
-gets a narrow, exact answer. An open one (“explain this”, “what does this mean”) is a
-request for the full teach-through, so give it in full.
+_MD_IMAGE_RE     = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_LINK_ONLY_RE = re.compile(r"^\s*[-*]?\s*\[[^\]]*\]\([^)]*\)\s*$")
+_MD_LINK_RE      = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_BARE_URL_RE     = re.compile(r"^\s*https?://\S+\s*$")
 
-Work from what you actually have. The blocks above are compressed notes, not the
-article: use their specifics — the named company, the mechanism, the number, the
-failure mode — rather than restating them in more general language. Restating the
-summary in different words is the single most common way this answer goes wrong.
-When the answer turns on something only the underlying articles can settle, call
-web_search on the source URLs above instead of hedging.
 
-Make it worth reading:
-- Open with the one sentence that actually answers them. No preamble, no restating
-  the question, no “this card discusses…”.
-- Then the mechanism — WHY it works this way, in causal steps that follow one from
-  the next, not a list of characteristics.
-- Give genuinely list-like material real bullets with bolded lead-ins, and leave
-  genuine prose as prose. An undifferentiated wall of paragraphs is the failure mode
-  here; so is bulleting something that is really one idea.
-- End on what is genuinely non-obvious — the second-order effect, the thing that
-  breaks, the reason a practitioner would care. Never end by summarising what you
-  just wrote.
-
-Depth means more real content — a named example, a concrete number, one more step of
-mechanism, a tension between two sources. It never means longer sentences about the
-same thing. If you have nothing further that is real, stop."""
+def _clean_extracted_text(text: str) -> str:
+    """Page markdown as retrieved is mostly furniture. A real sample: 1.9K chars
+    whose first 700 were a logo, a newsletter prompt repeated twice, and avatar
+    images. Images and link-only nav lines go; a heading's link TEXT stays
+    (that is usually the article title); repeated lines are kept once."""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for raw_line in (text or "").splitlines():
+        line = _MD_IMAGE_RE.sub("", raw_line).rstrip()
+        if not line.strip() or _MD_LINK_ONLY_RE.match(line) or _BARE_URL_RE.match(line):
+            continue
+        line = _MD_LINK_RE.sub(r"\1", line).strip()
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def build_feed_context_note(feed_context: dict) -> str:
@@ -95,7 +98,6 @@ def build_feed_context_note(feed_context: dict) -> str:
 
     _ACTION_LABELS = {
         "ask_about":         "Discussion",
-        "continue_research": "Extended Research",
         "explain_simply":    "Simple Explanation",
     }
     label = _ACTION_LABELS.get(action, "Feed Insight")
@@ -127,14 +129,17 @@ def build_feed_context_note(feed_context: dict) -> str:
     if explanation:
         parts.append(f"Educational explanation: {explanation}")
     if blocks:
-        parts.append("Card content blocks:")
-        for block in blocks:
-            if not isinstance(block, dict):
-                continue
-            block_type = block.get("type", "content")
-            content = block.get("content", "")
-            if content:
-                parts.append(f"  [{block_type}] {content}")
+        # Skip a block that just repeats the summary or "Why it matters" line —
+        # real cards carry the mechanism in both, which is two of the up-to-four
+        # copies of the same sentence this task removes.
+        already_said = {(summary or "").strip(), (why or "").strip()}
+        block_lines = [f"  [{b.get('type', 'content')}] {b.get('content', '')}"
+                       for b in blocks
+                       if isinstance(b, dict) and b.get("content")
+                       and b["content"].strip() not in already_said]
+        if block_lines:
+            parts.append("Card content blocks:")
+            parts.extend(block_lines)
     if sources:
         # Where the cache still holds the article text behind a source, it is
         # rendered inline under that source rather than as a bare URL. This is
@@ -153,14 +158,13 @@ def build_feed_context_note(feed_context: dict) -> str:
             else:
                 label = url
             parts.append(f"  • {label}")
-            body = (contents.get(url) or "").strip()
+            body = _clean_extracted_text(contents.get(url) or "")
             if body:
                 parts.append(f"    Extracted text: {body}")
         if contents:
             parts.append(
                 f"({len(contents)} of {len(sources)} sources include their extracted text above — "
-                "quote and reason from that text, not from the card summary. Sources shown as a bare "
-                "URL were not retrieved; use web_search if the answer needs them.)"
+                "quote and reason from that text, not from the card summary.)"
             )
 
     # Prior mechanisms this user has covered in this project
@@ -185,36 +189,15 @@ def build_feed_context_note(feed_context: dict) -> str:
         # Guidance, not a template — a narrow question still gets a narrow answer.
         parts.append(_ASK_ABOUT_INSTRUCTION)
     elif action == "explain_simply":
-        if mechanism:
-            parts.append(
-                f"The user wants this card explained in the simplest, most intuitive terms. "
-                f"PRESERVE THIS SPECIFIC MECHANISM: \"{mechanism[:200]}\" "
-                f"— simplify the vocabulary, not the intelligence. "
-                f"Use the Explain Simply structure from your system prompt. "
-                f"Do NOT search the web — the card above is sufficient."
-            )
-        else:
-            parts.append(
-                "The user wants this topic explained in the simplest, most intuitive way possible. "
-                "Use the feed insight above as the source material. "
-                "Do NOT search the web — the context above is sufficient. "
-                "Follow the Explain Simply mode instructions in your system prompt."
-            )
-    else:  # continue_research
-        if mechanism:
-            parts.append(
-                f"ZOOM LEVEL: Reality Validation. "
-                f"The card established this mechanism: \"{mechanism[:200]}\" "
-                f"Use the web search results below to VALIDATE, EXTEND, or CHALLENGE this specific claim "
-                f"with current evidence and live examples. "
-                f"Open with what the evidence confirms or contradicts — not with a re-summary of the card."
-            )
-        else:
-            parts.append(
-                "The user wants to dig deeper into this topic beyond the feed insight. "
-                "Use the feed context as background knowledge and the web search results "
-                "below to expand with new angles and recent developments."
-            )
+        # The mechanism sentence itself is already above (it IS the card's "Why
+        # it matters" line, or the first line of its summary). It used to be
+        # pasted again here AND again in the system prompt — up to four copies
+        # of the same sentence in one prompt.
+        anchor = "the “Why it matters” line" if why else "the summary above"
+        parts.append(
+            "The user wants this card explained in the simplest, most intuitive terms. Keep its "
+            f"core mechanism — {anchor} — intact: simplify the vocabulary, not the logic."
+        )
 
     # Structured-mode fix (Task 1): the LEARNING SYSTEM layer note used to be
     # appended here too, via learning_system_context_service.build_feed_layer_note()
@@ -248,103 +231,44 @@ def build_feed_context_note(feed_context: dict) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def format_reasoning_search_note(reasoning: dict) -> str:
+    """The system note that carries search results into the turn.
+
+    Was ~2K chars of instruction: a four-step internal ritual (PRIOR POSITION /
+    EVIDENCE CHECK / POSITION UPDATE / OPEN QUESTIONS), a MANDATORY "What the
+    data complicates" section on every search turn whether or not anything
+    conflicted, and rules the system prompt already carries. What stays is what
+    the citations and the frontend depend on: one contiguous 1..N numbering
+    across both result sets (so [N] resolves to sources[N-1]) and the rules
+    specific to reading search results.
     """
-    Reasoning-first system note for web search mode.
+    supporting   = reasoning.get("supporting", [])
+    complicating = reasoning.get("complicating", [])
+    queries = [q for q in (reasoning.get("primary_query"), reasoning.get("contradiction_query")) if q]
 
-    Splits results into supporting vs. complicating sections and instructs the
-    LLM to: (1) state its prior position before incorporating results, (2)
-    explicitly update conclusions where complicating evidence warrants it, and
-    (3) include a 'What the data complicates' section when contradictions exist.
-    """
-    p_query  = reasoning.get("primary_query",       "")
-    c_query  = reasoning.get("contradiction_query",  "")
-    supporting   = reasoning.get("supporting",   [])
-    complicating = reasoning.get("complicating",  [])
-    has_complicating = reasoning.get("has_complicating", False)
+    lines = ["[WEB SEARCH RESULTS]"]
+    if queries:
+        lines.append("Searched: " + " · ".join(f'"{q[:120]}"' for q in queries))
 
-    lines = ["[REASONING-AUGMENTED WEB SEARCH]"]
-    lines.append(
-        "\nSearch covered two angles deliberately:"
-        f"\n  • Primary:      \"{p_query[:120]}\""
-        f"\n  • Contradiction: \"{c_query[:120]}\""
-    )
+    for index, article in enumerate(supporting + complicating, 1):
+        marker  = " ⚑" if index > len(supporting) else ""
+        title   = (article.get("title") or "").strip()
+        content = (article.get("content") or "").strip()
+        lines.append(f"\n  [{index}]{marker} {title}\n      {content}\n      Source: {article.get('url', '')}")
 
     lines.append(
-        "\nBEFORE incorporating these results, work through this sequence internally:"
-        "\n  1. PRIOR POSITION — What would you have concluded without this search data? Identify it."
-        "\n  2. EVIDENCE CHECK — Which results support your prior? Which complicate or contradict it?"
-        "\n  3. POSITION UPDATE — Revise explicitly where the evidence changes your conclusion."
-        "\n  4. OPEN QUESTIONS — What remains genuinely unresolved after seeing this evidence?"
+        "\nHow to use these results:"
+        "\n- Open with the substantive finding, not with what was searched. Draw patterns across "
+        "sources rather than summarising them one by one."
+        '\n- Cite claims with the bracketed source number, e.g. "the market grew 5% [1]"; stack '
+        'numbers when several sources support a claim ("[1][3]"). Cite only what that source '
+        "genuinely supports, and leave your own synthesis uncited."
     )
-
-    # Supporting results
-    #
-    # Web-search fix: content is already truncate_at_sentence()-capped at 2000
-    # chars upstream (tinyfish_service.search / fetch_as_articles, the shared
-    # per-result ingestion cap every consumer of
-    # these results — Feed, deep_research, chat — reads). The [:280] cut here
-    # predates that upstream cap by ~7 weeks (git blame: this line landed
-    # 2026-05-24, the 2000-char cap 2026-07-11) and was never revisited once it
-    # became redundant — confirmed no comment or commit message anywhere states
-    # a real reason for 280 specifically (UI space, token budget), and this
-    # content only ever reaches the model (chat_tools.py's own docstring: the
-    # tool's `content` return is what the model reads; `artifact`, the only
-    # user-facing part, carries just {title, url} — never this snippet text).
-    # Recon's real numbers: 2000 sentence-aware chars vs. a hard 280-char
-    # midsentence cut was routinely starving the model of the part of a
-    # result that actually answered the question.
-    if supporting:
-        lines.append("\nSUPPORTING EVIDENCE — confirms or elaborates the mainstream understanding:")
-        for i, a in enumerate(supporting, 1):
-            title   = a.get("title", "").strip()
-            content = (a.get("content") or "").strip()
-            url     = a.get("url", "")
-            lines.append(f"\n  [{i}] {title}\n      {content}\n      Source: {url}")
-
-    # Complicating results
     if complicating:
         lines.append(
-            "\nCOMPLICATING EVIDENCE — challenges assumptions, surfaces recent shifts, "
-            "or contradicts the expected conclusion:"
-        )
-        offset = len(supporting)
-        for i, a in enumerate(complicating, offset + 1):
-            title   = a.get("title", "").strip()
-            content = (a.get("content") or "").strip()
-            url     = a.get("url", "")
-            lines.append(f"\n  [{i}] ⚑ {title}\n      {content}\n      Source: {url}")
-
-    # Synthesis requirements
-    lines.append("\nSYNTHESIS REQUIREMENTS — enforce every rule:")
-    lines.append(
-        "- Extract cross-source PATTERNS — never summarise articles one by one."
-    )
-    lines.append(
-        "- Cite claims to their source using the bracketed number shown next to each result above — "
-        "e.g. 'the market grew 5% [1]'. Stack multiple numbers when a claim draws on more than one "
-        "source, e.g. '[1][3]'. Only cite a number for a claim that source genuinely supports — never "
-        "invent a number, and leave genuinely uncited claims (your own synthesis, general knowledge) "
-        "unmarked."
-    )
-    if has_complicating:
-        lines.append(
-            "- MANDATORY: include a 'What the data complicates' or 'Where this assumption breaks' section."
-            "\n  BAD:  'Here are articles supporting Indian pharma growth.'"
-            "\n  GOOD: 'Recent FDA warning letters suggest quality issues remain uneven despite export growth,"
-            "\n         complicating the assumption that the sector is uniformly improving.'"
-        )
-        lines.append(
-            "- Where complicating evidence conflicts with supporting evidence: name what each claims"
-            "\n  and explicitly state what the contradiction means for the overall conclusion."
+            "- Results marked ⚑ came from a deliberately contradicting search. Where they genuinely "
+            "conflict with the rest, say what each claims and what the conflict means for the "
+            'conclusion, under a short "What the data complicates" heading.'
         )
     else:
-        lines.append(
-            "- If any source contradicts another: surface the disagreement explicitly — name what each says."
-        )
-    lines.append(
-        "- DO NOT open with a summary of what you searched for — open with the substantive finding."
-        "\n- The response must feel like informed, updated reasoning — not a digest of search results."
-    )
-
+        lines.append("- If two sources contradict each other, surface the disagreement explicitly.")
     return "\n".join(lines)
-

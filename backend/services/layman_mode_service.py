@@ -190,21 +190,9 @@ def _normalise_domain(domain: str) -> str:
 
 
 def _format_bank(bank: dict, topic_hint: str | None) -> str:
-    domains = bank.get("domains", [])
-    if isinstance(domains, list):
-        domains_str = "; ".join(domains)
-    else:
-        domains_str = str(domains)
-
-    lines = [
-        "ANALOGY DOMAIN BANK:",
-        f"- Draw from: {domains_str}",
-        f"- Seed example: {bank.get('seed', '')}",
-        f"- Mechanism caution: {bank.get('caution', '')}",
-    ]
+    lines = ["ANALOGY DOMAIN BANK:", f"- Seed example: {bank.get('seed', '')}"]
     if topic_hint:
         lines.append(
-            f"- Anchor the analogy to the specific topic: \"{topic_hint}\" — "
-            "a specific analogy sticks far better than a general one."
-        )
+            f'- Anchor the analogy to the specific topic: "{topic_hint}" — '
+            "a specific analogy sticks far better than a general one.")
     return "\n".join(lines)
