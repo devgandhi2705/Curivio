@@ -541,17 +541,8 @@ def chat_stream(
         if feed_agent_name:
             _call_metadata["agent_name"] = feed_agent_name
 
-        # TEMPORARY (removed in Task 5): the old agent still answers, but driven
-        # by the plan instead of chat_mode, and with tools off — the search above
-        # already ran. Task 5 replaces this call with
-        # ask_chat_stream(messages_payload, route=plan.route,
-        #                 route_reason=plan.reason, metadata=_call_metadata).
-        _LEGACY_TASK_TYPE = {"simple": "simple_qa", "complex": "complex_reasoning", "code": "coding"}
-        for event in ask_chat_stream(
-            messages_payload, metadata=_call_metadata, tools_enabled=False,
-            has_attachments=bool(image_attachments),
-            task_type=None if plan.route == "image" else _LEGACY_TASK_TYPE[plan.route],
-        ):
+        for event in ask_chat_stream(messages_payload, route=plan.route,
+                                     route_reason=plan.reason, metadata=_call_metadata):
             kind = event["type"]
             if kind == "status":
                 yield json.dumps({"t": "status", "v": event.get("text") or "Working…"}) + "\n"

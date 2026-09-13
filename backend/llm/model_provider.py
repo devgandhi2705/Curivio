@@ -550,39 +550,14 @@ def extract_text(response) -> str:
     return pairs
 
 
-def _is_daily_quota_exhausted(exc: BaseException) -> bool:
-    """
-    Distinguishes a DAILY quota exhaustion (can't recover within any backoff
-    window — waiting before retrying/falling through is pure wasted latency)
-    from a genuine short-term RPM/TPM rate limit (worth waiting out).
-
-    Gemini: confirmed live (real 429s hit this session) that the error body's
-    QuotaFailure.violations[].quotaId names the exact window hit, e.g.
-    'GenerateRequestsPerDayPerProjectPerModel-FreeTier' for the daily
-    free-tier cap — "PerDay" is Google's own stable substring. A genuine
-    RPM/TPM limit would show "...PerMinute..." instead (not seen live this
-    session — every real 429 hit was the daily cap).
-
-    Groq: NOT live-verified this session (only ever hit BadRequestError, the
-    unrelated schema quirk — see _build_pooled_leg — never a real
-    RateLimitError). Best-effort per Groq's documented OpenAI-compatible
-    rate-limit message convention (names RPD/TPD for daily caps, RPM/TPM for
-    per-minute). Unmatched text keeps today's backoff behavior — a false
-    negative here just retries as before; it can never falsely skip backoff
-    on a still-recoverable case.
-    """
-    text = str(exc)
-    return "PerDay" in text or "RPD" in text or "TPD" in text or "per day" in text.lower()
-
-
 class _QuotaAwareRetry(RunnableRetry):
     """
     Same as RunnableRetry, but the retry predicate additionally excludes
-    confirmed daily-quota-exhaustion errors (_is_daily_quota_exhausted) — a
-    daily cap can't recover between attempts, let alone within a backoff
-    window, so retrying it at all (waiting or not) is pure waste; this skips
-    straight to _handle_failure/re-raise, no sleep, immediate fallthrough to
-    the next fallback leg. Genuine transient errors (RPM/TPM rate limits,
+    confirmed daily-quota-exhaustion errors (identified by classify_error in
+    rate_limits) — a daily cap can't recover between attempts, let alone within
+    a backoff window, so retrying it at all (waiting or not) is pure waste; this
+    skips straight to _handle_failure/re-raise, no sleep, immediate fallthrough
+    to the next fallback leg. Genuine transient errors (RPM/TPM rate limits,
     network hiccups) keep today's exponential-jitter backoff and full retry
     budget, completely unchanged.
     """
