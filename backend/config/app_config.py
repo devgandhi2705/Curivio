@@ -7,7 +7,7 @@ import os
 
 # ── AI Model ──────────────────────────────────────────────────────────────────
 # Phase F: llama-3.3-70b-versatile AND llama-3.1-8b-instant (the old
-# GROQ_FAST_MODEL below) are BOTH gone from Groq's real, live model list —
+# GROQ_FAST_MODEL, deleted by chat-routing v2) are BOTH gone from Groq's real, live model list —
 # confirmed via a direct GET to https://api.groq.com/openai/v1/models with
 # this project's real key (200 OK, key itself is valid — this was never a
 # dead-key problem). Groq's real current lineup on this key: allam-2-7b,
@@ -43,25 +43,6 @@ GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-3.1-fl
 # Same model as GROQ_MODEL today; decoupled so this leg can change independently.
 GROQ_FALLBACK_MODEL   = os.getenv("GROQ_FALLBACK_MODEL", GROQ_MODEL)
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
-
-# Task-based model priority registry (backend/llm/model_priority.py, Chat-R3).
-# Lightweight Gemini tier for high-volume/low-stakes tasks (routing) — same
-# model family as GEMINI_UNPACK_MODEL but a separate knob so routing and
-# unpack can be tuned independently.
-# Was "models/gemini-2.5-flash-lite" — confirmed live 404 "no longer available
-# to new users" for at least one pooled key/project (see GEMINI_UNPACK_MODEL
-# above, same underlying issue). "-latest" confirmed live-reachable.
-GEMINI_LITE_MODEL = os.getenv("GEMINI_LITE_MODEL", "models/gemini-flash-lite-latest")
-# Phase F: llama-3.1-8b-instant is also gone from Groq's real live model list
-# (see GROQ_MODEL above — same real check). openai/gpt-oss-20b is the
-# smaller sibling of the now-fixed GROQ_MODEL — real tpm limit on this key
-# is 8,000 for both (see backend/services/model_registry.py tier_limits,
-# confirmed via real x-ratelimit-limit-tokens response headers, not assumed).
-GROQ_FAST_MODEL       = os.getenv("GROQ_FAST_MODEL", "openai/gpt-oss-20b")
-# Chat model routing OpenRouter leg — real winner of tools/model_bakeoff's tool-call
-# format bake-off (0.0% format failure over 100 classified steps, see report.md),
-# recommended there specifically for the "chat_router / classifier" role.
-OPENROUTER_NEMOTRON_MODEL = os.getenv("OPENROUTER_NEMOTRON_MODEL", "nvidia/nemotron-3-nano-30b-a3b")
 
 # ── Attachment storage (Chat-R13/R14a) ───────────────────────────────────────
 # Original-bytes retention window for R2-backed chat attachments (raw file

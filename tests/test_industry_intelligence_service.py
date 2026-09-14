@@ -1,5 +1,5 @@
 """
-Tests for industry_intelligence_service and the industry_brief action router action.
+Tests for industry_intelligence_service.
 
 All Tavily, Groq, and DB calls are mocked — zero API cost, zero network traffic.
 
@@ -9,7 +9,6 @@ Test coverage:
   3. analyze_industry — cache hit path
   4. analyze_industry — full generation path (mocked Groq + Tavily)
   5. analyze_industry — error paths (no articles, bad JSON, missing keys)
-  6. Action router — industry_brief detection & dispatch
 
 Run with:
     pytest tests/test_industry_intelligence_service.py -v
@@ -456,137 +455,3 @@ class TestAnalyzeIndustryErrors:
         ):
             result = analyze_industry("finance")   # must not raise
         assert "trend_summary" in result
-
-
-# ── 6. Action router — industry_brief ────────────────────────────────────────
-
-class TestIndustryBriefAction:
-
-    def _route(self, message, topic, domain=None, brief=None, brief_raises=False):
-        """Route a message with all external calls mocked."""
-        context = {}
-        if domain:
-            context["domain_context"] = {"domain": domain}
-
-        def mock_analyze(key):
-            if brief_raises:
-                raise RuntimeError("generation failed")
-            from backend.services.industry_intelligence_service import _INDUSTRY_CONFIG
-            display = _INDUSTRY_CONFIG[key].display_name if key in _INDUSTRY_CONFIG else key
-            return brief or {**_mock_brief(display), "industry_key": key, "cached": False}
-
-        with patch(
-            "backend.services.industry_intelligence_service.analyze_industry",
-            side_effect=mock_analyze,
-        ):
-            from backend.services.action_router_service import route
-            return route(message, topic, context)
-
-    # ── Detection ─────────────────────────────────────────────────────────────
-
-    @pytest.mark.parametrize("msg", [
-        "give me an industry trend analysis for finance",
-        "what's the market outlook for pharma?",
-        "what is happening in manufacturing right now?",
-        "finance trends and news",
-        "sector analysis for exports",
-        "show me business intelligence for the AI ecosystem",
-    ])
-    def test_industry_brief_detected(self, msg):
-        result = self._route(msg, "finance", domain="Finance")
-        assert result is not None
-        assert result["action"] == "industry_brief"
-
-    def test_non_industry_message_not_detected(self):
-        result = self._route("explain transformers to me", "transformers")
-        assert result is None or result.get("action") != "industry_brief"
-
-    # ── Dispatch — domain context maps to industry ────────────────────────────
-
-    @pytest.mark.parametrize("domain,expected_key", [
-        ("Finance",        "finance"),
-        ("Pharmaceutical", "pharma"),
-        ("Manufacturing",  "manufacturing"),
-        ("Export/Trade",   "exports"),
-        ("AI",             "ai_business"),
-    ])
-    def test_domain_context_maps_to_correct_industry(self, domain, expected_key):
-        called_with: list[str] = []
-
-        def mock_analyze(key):
-            called_with.append(key)
-            return {**_mock_brief(), "industry_key": key, "cached": False}
-
-        context = {"domain_context": {"domain": domain}}
-        with patch(
-            "backend.services.industry_intelligence_service.analyze_industry",
-            side_effect=mock_analyze,
-        ):
-            from backend.services.action_router_service import route
-            route("industry trends", domain.lower(), context)
-
-        assert called_with == [expected_key]
-
-    # ── Result shape ──────────────────────────────────────────────────────────
-
-    def test_found_true_when_brief_generated(self):
-        result = self._route("market trends for finance", "finance", domain="Finance")
-        assert result["found"] is True
-
-    def test_data_contains_brief_fields(self):
-        result = self._route("sector analysis finance", "finance", domain="Finance")
-        assert "trend_summary" in result["data"]
-        assert "market_developments" in result["data"]
-
-    def test_instruction_contains_trend_summary(self):
-        result = self._route("industry brief pharma", "pharma", domain="Pharmaceutical")
-        assert "trend_summary" in result["instruction"].lower() \
-               or "Test trend summary" in result["instruction"]
-
-    def test_instruction_mentions_industry(self):
-        result = self._route("manufacturing outlook", "manufacturing", domain="Manufacturing")
-        assert "Manufacturing" in result["instruction"] or "manufacturing" in result["instruction"]
-
-    # ── No-industry fallback ──────────────────────────────────────────────────
-
-    def test_no_industry_detected_returns_found_false(self):
-        result = self._route("industry trends", "blockchain gaming NFTs")
-        # When domain_context absent and topic doesn't match any industry
-        if result and result["action"] == "industry_brief":
-            # Could be found=False (ask user) or skipped — either is valid
-            assert isinstance(result["found"], bool)
-
-    # ── Generation failure fallback ───────────────────────────────────────────
-
-    def test_generation_failure_returns_result_not_raises(self):
-        result = self._route(
-            "industry trends manufacturing",
-            "manufacturing",
-            domain="Manufacturing",
-            brief_raises=True,
-        )
-        assert result is not None
-        assert result["action"] == "industry_brief"
-        assert result["found"] is False
-
-    def test_generation_failure_instruction_has_fallback_text(self):
-        result = self._route(
-            "industry news for exports",
-            "exports",
-            domain="Export/Trade",
-            brief_raises=True,
-        )
-        assert result is not None
-        instruction = result["instruction"]
-        assert "Draw on your own knowledge" in instruction or "failed" in instruction.lower()
-
-    # ── Missing topic → None ──────────────────────────────────────────────────
-
-    def test_route_returns_none_without_topic(self):
-        with patch(
-            "backend.services.industry_intelligence_service.analyze_industry",
-            return_value=_mock_brief(),
-        ):
-            from backend.services.action_router_service import route
-            result = route("industry trend analysis", None, {})
-        assert result is None

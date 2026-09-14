@@ -1,7 +1,7 @@
 import os
 import time
 import logging
-from openai import OpenAI, RateLimitError
+from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -115,64 +115,3 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
     )
 
     return response.choices[0].message.content
-
-
-def ask_grok_chat_stream(messages: list[dict]):
-    """
-    Streaming version of ask_grok_chat.
-
-    Yields text chunks as they arrive from the Groq API.
-    Logs usage after the stream is fully consumed.
-    """
-    from .api_usage_service import log_api_call, estimate_groq_cost
-
-    _preflight_check("ask_grok_chat_stream", messages=messages)
-
-    t0 = time.monotonic()
-    try:
-        stream = _get_client().chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.7,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-    except RateLimitError:
-        raise RuntimeError("Our AI is busy — please try again in a moment.")
-    except Exception as exc:
-        raise RuntimeError(
-            f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."
-        ) from exc
-
-    input_tokens  = None
-    output_tokens = None
-
-    for chunk in stream:
-        delta = chunk.choices[0].delta if chunk.choices else None
-        if delta and delta.content:
-            yield delta.content
-        # Usage arrives in the final chunk when stream_options include_usage is set
-        if getattr(chunk, "usage", None):
-            usage         = chunk.usage
-            input_tokens  = getattr(usage, "prompt_tokens",     None)
-            output_tokens = getattr(usage, "completion_tokens", None)
-
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    cost        = estimate_groq_cost(input_tokens or 0, output_tokens or 0)
-
-    log_api_call(
-        service="groq",
-        operation="chat_stream",
-        model=MODEL_NAME,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        duration_ms=duration_ms,
-        cache_hit=False,
-        query_hint=(messages[-1].get("content", "") if messages else "")[:120],
-        estimated_cost_usd=cost,
-    )
-
-    logger.info(
-        "[groq_stream] %dms | in=%s out=%s | cost=$%.6f",
-        duration_ms, input_tokens, output_tokens, cost,
-    )

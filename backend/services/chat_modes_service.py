@@ -1,17 +1,19 @@
 """
-Chat mode orchestration — feed-context system note formatting.
+Chat mode orchestration — system note formatting for chat_service.
 
-Two modes
----------
-  normal        — memory/context only, fastest, no external retrieval
-  web_search    — Tavily search injected before LLM call
+Two note formatters, both plain string builders with no I/O of their own:
 
-Retrieval for web_search is now driven by the model itself via real tool
-calls (chat_agent.py + chat_tools.py, Chat-4.1) — this module no longer
-pre-fetches or builds mode-flag system notes for chat_stream(). It still
-formats the feed-context note (build_feed_context_note) and the tool-result
-formatter chat_tools.py calls after a live tool invocation
-(format_reasoning_search_note).
+  build_feed_context_note      — the Feed card note. When a chat turn opens
+                                  from a Feed card, chat_service injects this
+                                  before the user's first message so the model
+                                  has the card's title/summary/sources/mechanism
+                                  without a retrieval call.
+  format_reasoning_search_note — the search-results note. Chat-routing v2's
+                                  classifier (chat_router) decides a turn needs
+                                  a web search, web_search_reasoning_service
+                                  runs it, and chat_service injects this note
+                                  with the results — there is no model-invoked
+                                  search tool anymore.
 
 prepare_mode_context/build_mode_system_note (the old backend-orchestrated
 mode-flag pre-fetch) and their private helpers/formatters were removed —

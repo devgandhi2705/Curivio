@@ -13,7 +13,6 @@ Coverage
   TestImportantResources      — URL classification and sort order
   TestFormatReportAsMarkdown  — section headings, confidence badge, date, table
   TestFormatReportAsText      — strips markdown symbols
-  TestActionRouterIntegration — detect_action + dispatch for research_report
   TestEdgeCases               — empty data, missing optional fields, industry enrichment
 """
 
@@ -543,71 +542,6 @@ class TestFormatReportAsText:
 
     def test_non_empty(self):
         assert len(self._text()) > 100
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 9. Action router integration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestActionRouterIntegration:
-
-    def test_detect_generate_report(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("generate a research report") == "research_report"
-
-    def test_detect_create_report(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("create a report on this topic") == "research_report"
-
-    def test_detect_research_report_phrase(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("show me the research report") == "research_report"
-
-    def test_detect_full_report(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("give me the full report") == "research_report"
-
-    def test_detect_detailed_report(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("can you make a detailed report") == "research_report"
-
-    def test_detect_format_findings(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("format my findings into a document") == "research_report"
-
-    def test_dispatch_returns_dict_on_stored_research(self):
-        from backend.services.action_router_service import dispatch_action
-        with patch("backend.services.deep_research_service.get_stored_research",
-                   return_value=FULL_RESEARCH):
-            result = dispatch_action("research_report", "transformer architecture", {})
-        assert isinstance(result, dict)
-        assert result["found"] is True
-
-    def test_dispatch_success_false_when_no_research(self):
-        from backend.services.action_router_service import dispatch_action
-        with patch("backend.services.deep_research_service.get_stored_research",
-                   return_value=None):
-            result = dispatch_action("research_report", "unknown topic", {})
-        assert result["found"] is False
-
-    def test_dispatch_instruction_contains_markdown_report(self):
-        from backend.services.action_router_service import dispatch_action
-        with patch("backend.services.deep_research_service.get_stored_research",
-                   return_value=FULL_RESEARCH):
-            result = dispatch_action("research_report", "transformer architecture", {})
-        assert "## Key Findings" in result["instruction"]
-
-    def test_dispatch_instruction_prompts_research_when_missing(self):
-        from backend.services.action_router_service import dispatch_action
-        with patch("backend.services.deep_research_service.get_stored_research",
-                   return_value=None):
-            result = dispatch_action("research_report", "unknown topic", {})
-        assert result["found"] is False
-        assert "no stored research" in result["instruction"].lower()
-
-    def test_report_action_higher_priority_than_find_reports(self):
-        from backend.services.action_router_service import detect_action
-        assert detect_action("generate a detailed report on AI") == "research_report"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

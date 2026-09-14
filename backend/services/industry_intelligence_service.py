@@ -230,12 +230,14 @@ def analyze_industry(industry_key: str) -> dict:
     # unconditionally up front (same B1 pattern as generate_project_insight's
     # trace_id = str(_stub_id) if ... else uuid.uuid4().hex) — cheap even on
     # a cache hit, where it's simply never used. NOT threaded from the calling
-    # chat turn's own trace_id (action_router_service._handle_industry_brief
-    # is this function's real caller): analyze_industry() is cached per
-    # industry+day and shared across whichever user/chat-turn happens to miss
-    # the cache first, so it's its own operation, not a sub-step of one chat
-    # turn — threading chat's trace_id in would misattribute a shared,
-    # cross-user cache-fill to whichever request happened to trigger it.
+    # chat turn's own trace_id (action_router_service._handle_industry_brief was
+    # this function's real caller; chat-routing v2 deleted action_router_service
+    # and nothing replaced the call, so analyze_industry has no backend caller
+    # now): analyze_industry() is cached per industry+day and shared across
+    # whichever user/chat-turn happens to miss the cache first, so it's its own
+    # operation, not a sub-step of one chat turn — threading chat's trace_id in
+    # would misattribute a shared, cross-user cache-fill to whichever request
+    # happened to trigger it.
     import uuid
     trace_id = uuid.uuid4().hex
 

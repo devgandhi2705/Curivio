@@ -35,8 +35,8 @@ function CodeBlockCopyButton({ code }) {
 // ([text](url)), inline code (`text`), citation markers ([N], Phase E).
 // `sources` is the turn's real, ordered {title,url} list (from the tool_call
 // block(s) — see MarkdownText below); [N] resolves to sources[N-1], 1-indexed
-// to match the numbering chat_tools.web_search/format_reasoning_search_note
-// assign server-side.
+// to match the numbering web_search_reasoning_service.run_chat_search/
+// format_reasoning_search_note assign server-side.
 //
 // Branch ORDER below is load-bearing, not incidental:
 //   link -> citation -> bold -> code -> italic

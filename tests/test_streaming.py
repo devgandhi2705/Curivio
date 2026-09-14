@@ -2,7 +2,6 @@
 Tests for streaming AI responses.
 
 Covers:
-  - ask_grok_chat_stream  (grok_service)
   - chat_stream           (chat_service)
   - POST /chat/stream     (FastAPI endpoint)
 
@@ -12,7 +11,7 @@ All tests mock external calls (Groq API, DB) per project testing rules.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -20,25 +19,6 @@ import pytest
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def _fake_chunk(content):
-    """Build a mock ChatCompletionChunk with the given text content."""
-    chunk = MagicMock()
-    chunk.choices = [MagicMock()]
-    chunk.choices[0].delta.content = content
-    chunk.usage = None
-    return chunk
-
-
-def _fake_chunk_with_usage(input_tokens=10, output_tokens=20):
-    """Final chunk that carries usage stats (no text content)."""
-    chunk = MagicMock()
-    chunk.choices = []
-    chunk.usage = MagicMock()
-    chunk.usage.prompt_tokens     = input_tokens
-    chunk.usage.completion_tokens = output_tokens
-    return chunk
-
 
 def _parse_ndjson(text: str) -> list[dict]:
     return [json.loads(line) for line in text.strip().splitlines() if line.strip()]
@@ -78,13 +58,11 @@ def patched_chat_stream(monkeypatch):
     a DB or live Groq API.
     """
     import backend.services.memory_injection_service as mis
-    import backend.services.action_router_service    as ars
     import backend.services.chat_prompt_service      as cps
     import backend.services.follow_up_service        as fus
     import backend.services.chat_service             as cs
 
     monkeypatch.setattr(mis, "inject_memory",       lambda *a, **kw: dict(EMPTY_CONTEXT))
-    monkeypatch.setattr(ars, "route",               lambda *a, **kw: None)
     monkeypatch.setattr(cps, "build_messages",      lambda *a, **kw: [{"role": "user", "content": "hi"}])
     monkeypatch.setattr(fus, "get_recommendations", lambda *a, **kw: dict(EMPTY_RECOMMENDATIONS))
     monkeypatch.setattr(cs,  "_load_history_messages", lambda *a, **kw: [])
@@ -114,78 +92,7 @@ def api_client():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. ask_grok_chat_stream
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class TestAskGrokChatStream:
-    def _patch_client(self, monkeypatch, chunks):
-        import backend.services.grok_service as gs
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = iter(chunks)
-        monkeypatch.setattr(gs, "client", mock_client)
-        return mock_client
-
-    def test_yields_text_chunks(self, monkeypatch):
-        import backend.services.grok_service as gs
-        chunks = [_fake_chunk("Hi"), _fake_chunk(" there"), _fake_chunk("!")]
-        self._patch_client(monkeypatch, chunks)
-        with patch("backend.services.api_usage_service.log_api_call"):
-            result = list(gs.ask_grok_chat_stream([{"role": "user", "content": "hello"}]))
-        assert result == ["Hi", " there", "!"]
-
-    def test_skips_none_content_chunks(self, monkeypatch):
-        import backend.services.grok_service as gs
-        chunks = [_fake_chunk(None), _fake_chunk("Hello"), _fake_chunk(None)]
-        self._patch_client(monkeypatch, chunks)
-        with patch("backend.services.api_usage_service.log_api_call"):
-            result = list(gs.ask_grok_chat_stream([{"role": "user", "content": "hello"}]))
-        assert result == ["Hello"]
-
-    def test_skips_empty_choices_chunks(self, monkeypatch):
-        import backend.services.grok_service as gs
-        usage_chunk = _fake_chunk_with_usage()
-        chunks = [_fake_chunk("A"), usage_chunk]
-        self._patch_client(monkeypatch, chunks)
-        with patch("backend.services.api_usage_service.log_api_call"):
-            result = list(gs.ask_grok_chat_stream([]))
-        assert result == ["A"]
-
-    def test_reads_usage_from_final_chunk(self, monkeypatch):
-        import backend.services.grok_service as gs
-        usage_chunk = _fake_chunk_with_usage(input_tokens=5, output_tokens=10)
-        chunks = [_fake_chunk("Hi"), usage_chunk]
-        self._patch_client(monkeypatch, chunks)
-
-        logged = {}
-        def capture_log(*a, **kw):
-            logged.update(kw)
-
-        with patch("backend.services.api_usage_service.log_api_call", side_effect=capture_log):
-            with patch("backend.services.api_usage_service.estimate_groq_cost", return_value=0.001):
-                list(gs.ask_grok_chat_stream([]))
-
-        assert logged.get("input_tokens")  == 5
-        assert logged.get("output_tokens") == 10
-        assert logged.get("operation")     == "chat_stream"
-
-    def test_raises_runtime_error_on_api_failure(self, monkeypatch):
-        import backend.services.grok_service as gs
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = Exception("network error")
-        monkeypatch.setattr(gs, "client", mock_client)
-        with pytest.raises(RuntimeError, match="API request failed"):
-            list(gs.ask_grok_chat_stream([]))
-
-    def test_yields_nothing_for_empty_stream(self, monkeypatch):
-        import backend.services.grok_service as gs
-        self._patch_client(monkeypatch, [])
-        with patch("backend.services.api_usage_service.log_api_call"):
-            result = list(gs.ask_grok_chat_stream([]))
-        assert result == []
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 2. chat_stream generator
+# 1. chat_stream generator
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestChatStreamGenerator:
@@ -354,7 +261,7 @@ class TestChatStreamGenerator:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 3. POST /chat/stream endpoint
+# 2. POST /chat/stream endpoint
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestStreamEndpoint:

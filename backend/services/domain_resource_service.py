@@ -284,8 +284,11 @@ def build_resource_instruction(topic: str, resource_result: dict) -> str:
     """
     Build a ready-to-inject prompt section from a discover_resources() result.
 
-    Used by action_router_service to tell the AI what domain resources were
-    found and how to present them.
+    Was used by action_router_service to tell the AI what domain resources
+    were found and how to present them. Chat-routing v2 deleted
+    action_router_service (chat_service's code-run search and chat_router's
+    classifier replaced its routing job); nothing replaced this call, so
+    build_resource_instruction has no backend caller now.
     """
     domain  = resource_result.get("domain", "General")
     groups  = resource_result.get("resource_groups", [])

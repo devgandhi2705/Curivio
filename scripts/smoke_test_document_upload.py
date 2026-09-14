@@ -17,8 +17,8 @@ Verifies, against live APIs:
   5. Real oversized document -> retrieval-trimming fires, answer reflects the
      relevant chunk, not a truncated blob.
   6. Real image attachment still routes through the native vision path
-     (has_attachments=True, task_type forced None) — document attachments do
-     NOT force this gate, and route normally.
+     (route="image") — document attachments do NOT force this gate, and route
+     normally.
   7. ChatRequest's file-count cap (main.py, _CHAT_ATTACHMENTS_MAX=4) fires a
      clear, specific pydantic ValidationError at 5 attachments.
 
@@ -211,8 +211,7 @@ def test_image_still_routes_native_vision() -> None:
     orig_ask = chat_agent.ask_chat_stream
 
     def _spy(*args, **kwargs):
-        captured["has_attachments"] = kwargs.get("has_attachments")
-        captured["task_type"] = kwargs.get("task_type")
+        captured["route"] = kwargs.get("route")
         return orig_ask(*args, **kwargs)
 
     from unittest.mock import patch
@@ -222,9 +221,8 @@ def test_image_still_routes_native_vision() -> None:
         # picked up correctly.
         result = _run_turn("What color is the shape in this image?", attachments=[result_upload])
     print("answer:", result["text"][:200])
-    print("captured has_attachments:", captured.get("has_attachments"), "task_type:", captured.get("task_type"))
-    assert captured.get("has_attachments") is True, "image attachment must still force has_attachments=True"
-    assert captured.get("task_type") is None, "vision hard gate must still force task_type=None"
+    print("captured route:", captured.get("route"))
+    assert captured.get("route") == "image", "an image attachment must still route to the image list"
     # NOTE: raw vision delivery was independently verified (bypassing
     # chat_service's system prompt) to correctly answer "Red" for this exact
     # image — see the isolated check run alongside this suite. The full
@@ -232,7 +230,7 @@ def test_image_still_routes_native_vision() -> None:
     # because of a PRE-EXISTING persona line in chat_prompt_service's system
     # prompt (unrelated to R6a — that file was not touched by this phase).
     # This test asserts what R6a actually owns: the routing gate, not persona text.
-    print("PASS: image attachment still forces the vision hard gate (has_attachments=True, task_type=None)")
+    print("PASS: image attachment still routes to the image model list (route='image')")
 
 
 def test_attachment_count_cap() -> None:

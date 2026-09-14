@@ -6,9 +6,12 @@ Groq synthesis -> the /deep-research routes, the chat "Deep Research" toggle,
 and the chat deep_research tool) has been removed — nothing can create new
 rows in the deep_research table going forward. This module now exists only
 to read back rows generated before removal, since other live features
-(chat_context_service's per-turn context block, action_router_service's
-research_report/explain_simply actions, timeline_service's deep_dive
+(chat_context_service's per-turn context block, timeline_service's deep_dive
 milestones) depend on that historical data continuing to work.
+action_router_service, the module that used to read these rows for its
+research_report/explain_simply actions, was deleted by chat-routing v2
+(chat_service's code-run search and chat_router's classifier replaced its
+routing job; nothing replaced this particular read).
 
 Public API
 ----------

@@ -1203,9 +1203,7 @@ def _extract_concepts_from_context(context: dict) -> list[str]:
     """
     Pull concept names from the injected context for continuity recording.
 
-    Sources (in priority order):
-      1. Deep research key_concepts for the current topic
-      2. Action result key_concepts / beginner step concepts
+    Source: deep research key_concepts for the current topic.
     Returns up to 12 unique, non-empty strings.
     """
     seen: set[str] = set()
@@ -1217,21 +1215,12 @@ def _extract_concepts_from_context(context: dict) -> list[str]:
             seen.add(t.lower())
             result.append(t)
 
-    # 1. Deep research key_concepts
+    # Deep research key_concepts
     deep = context.get("research", {}).get("deep_research", {})
     if isinstance(deep, dict):
         for c in deep.get("key_concepts", []):
             if isinstance(c, str):
                 _add(c)
-
-    # 2. Action result data
-    action_data = context.get("action_result", {}).get("data", {})
-    for c in action_data.get("key_concepts", []):
-        if isinstance(c, str):
-            _add(c)
-    for step in action_data.get("beginner_steps", []):
-        if isinstance(step, dict):
-            _add(step.get("concept", ""))
 
     return result[:12]
 

@@ -70,15 +70,6 @@ const RESOURCE_TYPE_CONFIG = {
   report:   { label: "Report",   color: "bg-amber-900/50 text-amber-300 border-amber-800/50"         },
 }
 
-const ACTION_LABELS = {
-  show_repos:         { label: "Repos found",     color: "bg-emerald-900/60 text-emerald-300 border-emerald-800/60" },
-  learning_roadmap:   { label: "Roadmap",          color: "bg-blue-900/60 text-blue-300 border-blue-800/60"         },
-  compare:            { label: "Comparison",       color: "bg-violet-900/60 text-violet-300 border-violet-800/60"   },
-  explain_simply:     { label: "Simplified",       color: "bg-amber-900/60 text-amber-300 border-amber-800/60"      },
-  find_tutorials:     { label: "Tutorials found",  color: "bg-cyan-900/60 text-cyan-300 border-cyan-800/60"         },
-  beginner_resources: { label: "Beginner guide",   color: "bg-teal-900/60 text-teal-300 border-teal-800/60"         },
-}
-
 // ─── Structured response components ─────────────────────────────────────────
 
 function StreamingCursor() {
@@ -401,17 +392,6 @@ function ExportButton({ structuredResponse }) {
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
-
-function ActionBadge({ action }) {
-  const config = ACTION_LABELS[action]
-  if (!config) return null
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${config.color}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />
-      {config.label}
-    </span>
-  )
-}
 
 function ContextBadges({ contextUsed }) {
   if (!contextUsed) return null
@@ -1350,9 +1330,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
       </div>
 
       <div className="flex-1 min-w-0">
-        {!message.streaming && message.action && <ActionBadge action={message.action} />}
-
-        <div className={!message.streaming && message.action ? "mt-2" : ""}>
+        <div>
           {/* R5 gap note keys off the flat `thinking` field (chat_service.py
               still fills this alongside blocks[] — see _stream_agent's gap
               yields, which bypass block tagging entirely), so it applies the

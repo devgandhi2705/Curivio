@@ -330,28 +330,8 @@ class TestExtractConceptsFromContext:
         result = self._extract(ctx)
         assert "ANN" in result and "HNSW" in result
 
-    def test_extracts_from_action_result_data(self):
-        ctx = {"research": {}, "action_result": {"data": {"key_concepts": ["PCA", "Reduction"]}}}
-        result = self._extract(ctx)
-        assert "PCA" in result
-
-    def test_extracts_beginner_steps_from_action(self):
-        ctx = {
-            "research": {},
-            "action_result": {"data": {"beginner_steps": [
-                {"concept": "What is a Vector?"},
-                {"concept": "Embeddings 101"},
-            ]}},
-        }
-        result = self._extract(ctx)
-        assert "What is a Vector?" in result
-        assert "Embeddings 101" in result
-
     def test_deduplicates_case_insensitive(self):
-        ctx = {
-            "research": {"deep_research": {"key_concepts": ["Embeddings"]}},
-            "action_result": {"data": {"key_concepts": ["embeddings"]}},
-        }
+        ctx = {"research": {"deep_research": {"key_concepts": ["Embeddings", "embeddings"]}}}
         result = self._extract(ctx)
         assert result.count("Embeddings") == 1
 
