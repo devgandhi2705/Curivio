@@ -5,7 +5,7 @@ get_structured_chat_model() (see model_provider.py) — callers don't attach
 anything themselves.
 
 Callers pass call_type/user_id/project_id/day_ref/trace_id/agent_name/
-step_index/surface/is_test through LangChain's standard config={"metadata": {...}}
+step_index/surface/is_test/route/route_step through LangChain's standard config={"metadata": {...}}
 on invoke(); this handler reads them off the on_chat_model_start `metadata`
 kwarg — no separate ID/metadata plumbing.
 
@@ -15,7 +15,7 @@ parent_run_id) — not a hand-rolled counter.
 
 write_call_row() below is also the generic, non-callback insert path shared
 by code that logs to llm_call_log without going through a LangChain callback
-at all (chat tool calls, explain/translate/read-aloud) — same 27-column
+at all (chat tool calls, explain/translate/read-aloud) — same 29-column
 shape LLMCallLogger writes, one INSERT, reused rather than duplicated.
 """
 from __future__ import annotations
@@ -31,7 +31,10 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-from ..utils.db import get_connection
+# Lazy import to allow monkeypatching in tests
+def _get_connection():
+    from ..utils.db import get_connection
+    return get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +80,13 @@ def write_call_row(
     surface: str | None = None,
     is_test: bool = False,
     target_language: str | None = None,
+    route: str | None = None,
+    route_step: int | None = None,
 ) -> None:
     """Single INSERT into llm_call_log — every column, including the Phase-3
-    (trace_id/agent_name/step_index/surface), Phase-B1 (is_test), and
-    Phase-B2 (target_language, translate-only) additions.
+    (trace_id/agent_name/step_index/surface), Phase-B1 (is_test),
+    Phase-B2 (target_language, translate-only), and chat-routing-v2
+    (route/route_step) additions.
 
     created_at defaults to timestamp_end when omitted, so every writer emits
     the same ISO+offset format the timestamp_start/timestamp_end columns use
@@ -91,6 +97,7 @@ def write_call_row(
     if created_at is None:
         created_at = timestamp_end
     try:
+        get_connection = _get_connection()
         with get_connection() as conn:
             conn.execute(
                 """INSERT INTO llm_call_log (
@@ -99,8 +106,9 @@ def write_call_row(
                     user_id, project_id, day_ref,
                     input, output, input_tokens, output_tokens, total_tokens,
                     success, error_type, error_message, retry_count, created_at,
-                    trace_id, agent_name, step_index, surface, is_test, target_language
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    trace_id, agent_name, step_index, surface, is_test, target_language,
+                    route, route_step
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id, parent_run_id, timestamp_start, timestamp_end, latency_ms,
                     provider, model_requested, model_used, call_type,
@@ -108,6 +116,7 @@ def write_call_row(
                     input_text, output, input_tokens, output_tokens, total_tokens,
                     int(success), error_type, error_message, retry_count, created_at,
                     trace_id, agent_name, step_index, surface, int(is_test), target_language,
+                    route, route_step,
                 ),
             )
     except Exception:
@@ -149,6 +158,8 @@ class LLMCallLogger(BaseCallbackHandler):
             "step_index": meta.get("step_index"),
             "surface": meta.get("surface"),
             "is_test": bool(meta.get("is_test", False)),
+            "route": meta.get("route"),
+            "route_step": meta.get("route_step"),
         }
 
     def on_llm_end(
@@ -262,4 +273,6 @@ class LLMCallLogger(BaseCallbackHandler):
             step_index=start["step_index"],
             surface=start["surface"],
             is_test=start["is_test"],
+            route=start["route"],
+            route_step=start["route_step"],
         )

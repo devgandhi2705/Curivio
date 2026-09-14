@@ -168,6 +168,7 @@ function exportMeta(row) {
     ["Model", formatModel(row)],
     ["Latency", row.latency_ms != null ? `${row.latency_ms}ms` : "—"],
     ["Tokens", row.total_tokens != null ? String(row.total_tokens) : "—"],
+    ["Route", row.route ? `${row.route}${row.route_step != null ? ` (step ${row.route_step})` : ""}` : "—"],
     ["Status", row.success ? "OK" : "ERROR"],
   ]
   if (row.error_type) {
@@ -291,6 +292,8 @@ const CSV_COLUMNS = [
   ["created_at",      r => r.created_at],
   ["call_type",       r => r.call_type],
   ["agent_name",      r => r.agent_name],
+  ["route",           r => r.route],
+  ["route_step",      r => r.route_step],
   ["provider",        r => r.provider],
   ["model_requested", r => r.model_requested],
   ["model_used",      r => r.model_used],
@@ -638,6 +641,14 @@ function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSel
               <p className="text-[9px] uppercase tracking-widest text-slate-600 mb-0.5">Tokens</p>
               <p className="text-xs text-slate-300 font-mono tabular-nums">{fmtTokens(row.total_tokens)}</p>
             </div>
+            {row.route && (
+              <div className="col-span-2">
+                <p className="text-[9px] uppercase tracking-widest text-slate-600 mb-0.5">Route</p>
+                <p className="text-xs text-slate-300 truncate" title={row.route}>
+                  {row.route}{row.route_step != null ? ` · step ${row.route_step}` : ""}
+                </p>
+              </div>
+            )}
           </div>
 
           {!row.success && (() => {

@@ -1030,6 +1030,12 @@ MIGRATE_ADD_LLM_CALL_LOG_TARGET_LANGUAGE = (
     "ALTER TABLE llm_call_log ADD COLUMN target_language TEXT"
 )
 
+# Chat routing v2 — which model list answered this call and why, plus that
+# model's 1-based position in the list. Additive and nullable: every existing
+# writer (feed_v2's logger included) keeps working untouched.
+MIGRATE_ADD_LLM_CALL_LOG_ROUTE      = "ALTER TABLE llm_call_log ADD COLUMN route TEXT"
+MIGRATE_ADD_LLM_CALL_LOG_ROUTE_STEP = "ALTER TABLE llm_call_log ADD COLUMN route_step INTEGER"
+
 CREATE_CONVERSATION_MEMORY_VEC = """
 CREATE VIRTUAL TABLE IF NOT EXISTS conversation_memory_vec USING vec0(
     embedding   float[3072],
@@ -1212,6 +1218,8 @@ MIGRATIONS = [
     MIGRATE_ADD_LLM_CALL_LOG_IS_TEST,
     MIGRATE_BACKFILL_LLM_CALL_LOG_IS_TEST,
     MIGRATE_ADD_LLM_CALL_LOG_TARGET_LANGUAGE,
+    MIGRATE_ADD_LLM_CALL_LOG_ROUTE,
+    MIGRATE_ADD_LLM_CALL_LOG_ROUTE_STEP,
     MIGRATE_DOCUMENT_CHUNKS_VEC_ADD_PAGE_NO,
     MIGRATE_RESET_TOKENS_TOKEN_TO_CODE_HASH,
 ]

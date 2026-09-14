@@ -343,6 +343,7 @@ def _log_chat_search(query: str, output: str, t0: float, meta: dict | None,
         agent_name="web_search",
         surface=meta.get("surface", "chat"),
         is_test=bool(meta.get("is_test", False)),
+        route="web_search",
     )
 
 
