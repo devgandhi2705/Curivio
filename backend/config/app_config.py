@@ -15,8 +15,9 @@ import os
 # meta-llama/llama-prompt-guard-2-*, openai/gpt-oss-120b, openai/gpt-oss-20b,
 # openai/gpt-oss-safeguard-20b, qwen/qwen3.6-27b, whisper-large-v3*.
 # openai/gpt-oss-120b was already this project's own proven, working
-# GROQ_UNPACK_MODEL choice below — reused here rather than introducing a new
-# untested model. groq/compound(-mini) were also live-tested and rejected:
+# explain-popover model choice (chat_models.toml's [explain] list) — reused
+# here rather than introducing a new untested model. groq/compound(-mini)
+# were also live-tested and rejected:
 # real prompt_tokens usage (460-1055 for a ~15-token prompt) shows Groq's
 # "compound" family injects its own agentic tool-calling overhead
 # automatically — a real behavior change grok_service.py's plain
@@ -24,16 +25,6 @@ import os
 # project_service) don't expect and shouldn't silently inherit.
 GROQ_MODEL    = "openai/gpt-oss-120b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-
-# Unpack (select-to-explain). Groq primary, Gemini fallback — see
-# unpack-feature-spec.md. Groq's free-tier lineup churns; re-check
-# https://console.groq.com/docs/deprecations before changing GROQ_UNPACK_MODEL.
-GROQ_UNPACK_MODEL   = "openai/gpt-oss-120b"
-# Was "models/gemini-2.5-flash-lite" — confirmed live 404 "no longer available
-# to new users" for at least one pooled key/project (real, per-project access
-# restriction, not a universal deprecation — model metadata still resolves
-# fine). "-latest" confirmed live-reachable across all 3 pooled keys.
-GEMINI_UNPACK_MODEL = "models/gemini-flash-lite-latest"
 
 # ── LangChain provider layer (backend/llm/) ─────────────────────────────────────
 # Additive, parallel to the existing hand-rolled Groq/Gemini call sites above —
