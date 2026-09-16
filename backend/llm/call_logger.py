@@ -15,7 +15,7 @@ parent_run_id) — not a hand-rolled counter.
 
 write_call_row() below is also the generic, non-callback insert path shared
 by code that logs to llm_call_log without going through a LangChain callback
-at all (chat tool calls, explain/translate/read-aloud) — same 29-column
+at all (chat tool calls, explain/translate/read-aloud) — same 30-column
 shape LLMCallLogger writes, one INSERT, reused rather than duplicated.
 """
 from __future__ import annotations
@@ -31,10 +31,12 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-# Lazy import to allow monkeypatching in tests
-def _get_connection():
-    from ..utils.db import get_connection
-    return get_connection
+def get_connection():
+    """Looked up at call time, not bound at import, so a test can patch either
+    backend.utils.db.get_connection (the source) or call_logger.get_connection
+    (this module) and write_call_row will see it."""
+    from ..utils import db
+    return db.get_connection()
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,6 @@ def write_call_row(
     if created_at is None:
         created_at = timestamp_end
     try:
-        get_connection = _get_connection()
         with get_connection() as conn:
             conn.execute(
                 """INSERT INTO llm_call_log (
