@@ -83,6 +83,14 @@ def patched_chat_stream(monkeypatch):
     )
     monkeypatch.setattr(chat_router, "classify_message", lambda *a, **kw: None)
 
+    # chat_stream updates and re-reads per-session knowledge state after the
+    # answer. Unpatched, that wrote session "sess1" into the real database on
+    # every run, and a later run read back model text stored there by the old
+    # live-LLM tests — which is what broke test_recommendations_in_done_event.
+    import backend.services.conversation_state_service as css
+    monkeypatch.setattr(css, "update_state", lambda *a, **kw: None)
+    monkeypatch.setattr(css, "get_state", lambda *a, **kw: {})
+
 
 @pytest.fixture
 def api_client():
