@@ -49,6 +49,34 @@ _ROUTER_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="chat-r
 _CRISIS_WINDOW_TURNS = 5
 
 
+def _crisis_window(fresh_crisis: bool, turn_number: int, expiry: int | None) -> tuple[bool, int | None]:
+    """Whether this turn carries the crisis section, and the new expiry to store
+    (None = leave the stored one as it is).
+
+    A turn that raises crisis itself — a real signal, or the classifier
+    fail-safe — opens a window covering that turn and the next
+    _CRISIS_WINDOW_TURNS, so a hostile follow-up or a topic swerve still gets
+    the safety framing. Turns that are active only because of that window do
+    NOT extend it: they used to, so one flag kept the section for the whole
+    session. A new crisis turn inside the window restarts it from that turn.
+    """
+    if fresh_crisis:
+        return True, turn_number + _CRISIS_WINDOW_TURNS
+    return (expiry is not None and turn_number <= expiry), None
+
+
+def _count_user_turns(session_id: str) -> int:
+    """User messages already stored for this session. Counted in SQL, not from
+    the loaded history: that load stops at 50 messages, so a count derived from
+    it froze at turn 26 and could never pass a later crisis expiry."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ? AND role = 'user'",
+            (session_id,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,18 +354,17 @@ def chat_stream(
             sticky_simple=sticky_simple,
         )
 
-        # Phase U: a crisis turn keeps the section alive for the next few turns
-        # even when a follow-up ("fuck you", a topic swerve) would not classify as
-        # crisis on its own — that is one of the ordinary shapes distress comes
-        # back in. Turn-count decay, not wall-clock: a long pause mid-conversation
-        # must not silently expire it.
+        # Phase U: a crisis turn keeps the section for itself and the next few
+        # turns, because a follow-up ("fuck you", a topic swerve) is one of the
+        # ordinary shapes distress comes back in — then it switches off (see
+        # _crisis_window). Turn-count decay, not wall-clock: a long pause
+        # mid-conversation must not silently expire it.
         from .chat_title_service import get_session_crisis_expiry, set_session_crisis_expiry
-        turn_number = history_turns + 1
-        persisted_expiry = get_session_crisis_expiry(session_id)
-        persisted_active = persisted_expiry is not None and turn_number <= persisted_expiry
-        context["crisis_active"] = plan.crisis or persisted_active
-        if context["crisis_active"]:
-            set_session_crisis_expiry(session_id, turn_number + _CRISIS_WINDOW_TURNS)
+        turn_number = _count_user_turns(session_id) + 1
+        context["crisis_active"], new_expiry = _crisis_window(
+            plan.crisis, turn_number, get_session_crisis_expiry(session_id))
+        if new_expiry is not None:
+            set_session_crisis_expiry(session_id, new_expiry)
 
         # Phase 4.6 shared learning context — asked for in the tone this turn
         # actually answers in, not the request's raw chat_mode.

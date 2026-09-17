@@ -325,3 +325,74 @@ class TestRealTurns:
         """
         text = self._run(f"test-crisis-trig-{uuid.uuid4().hex[:8]}", trigger, "Asia/Kolkata")
         assert OFFERS_HELP.search(text), f"trigger stopped producing an offer:\n{trigger!r}\n{text}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The carry-over window: the crisis turn plus the next few, never the session
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCrisisCarryOverWindow:
+    """A crisis turn keeps the section for itself and the next
+    _CRISIS_WINDOW_TURNS turns — so a hostile follow-up still gets the safety
+    framing — and then it switches off. It used to refresh on every turn it was
+    active, so one flag (or one classifier failure) kept it for the whole session."""
+
+    def _session(self, crisis_by_turn: dict[int, bool], turns: int) -> list[bool]:
+        from backend.services.chat_service import _crisis_window
+        expiry, active_by_turn = None, []
+        for turn in range(1, turns + 1):
+            active, new_expiry = _crisis_window(crisis_by_turn.get(turn, False), turn, expiry)
+            if new_expiry is not None:
+                expiry = new_expiry
+            active_by_turn.append(active)
+        return active_by_turn
+
+    def test_one_crisis_turn_covers_itself_and_the_next_five_then_stops(self):
+        active = self._session({1: True}, turns=10)
+        assert active == [True] * 6 + [False] * 4
+
+    def test_a_quiet_turn_inside_the_window_does_not_extend_it(self):
+        # Turns 2-6 are active only because of turn 1; none of them may push the
+        # expiry forward, or the window never closes.
+        assert self._session({1: True}, turns=8)[6:] == [False, False]
+
+    def test_a_new_crisis_turn_inside_the_window_restarts_it(self):
+        active = self._session({1: True, 4: True}, turns=12)
+        assert active == [True] * 9 + [False] * 3
+
+    def test_no_crisis_means_no_section(self):
+        assert self._session({}, turns=5) == [False] * 5
+
+    def test_the_window_closes_even_deep_into_a_long_session(self):
+        # The old turn counter came from a 50-message history load, so it stopped
+        # at turn 26 and could never pass an expiry beyond it.
+        active = self._session({30: True}, turns=40)
+        assert active[29:36] == [True] * 6 + [False]
+        assert not any(active[36:])
+
+
+class TestTurnCounter:
+    def test_counts_every_user_message_not_just_the_loaded_history(self, monkeypatch):
+        import sqlite3
+        from contextlib import contextmanager
+        from backend.database.schema import ALL_TABLES
+        from backend.services import chat_service
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        for statement in ALL_TABLES:
+            conn.execute(statement)
+        session_id = f"test-turns-{uuid.uuid4().hex[:8]}"
+        for i in range(60):   # 60 turns = 120 messages, past the 50-row history load
+            for role in ("user", "assistant"):
+                conn.execute(
+                    "INSERT INTO chat_messages (session_id, role, content, created_at) "
+                    "VALUES (?, ?, 'x', '2026-01-01 00:00:00')", (session_id, role))
+
+        @contextmanager
+        def _get_conn():
+            yield conn
+
+        monkeypatch.setattr(chat_service, "get_connection", _get_conn)
+        assert chat_service._count_user_turns(session_id) == 60
+        assert chat_service._count_user_turns("no-such-session") == 0
