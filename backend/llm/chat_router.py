@@ -27,7 +27,9 @@ plan_turn(decision, *, message, ...) -> TurnPlan
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -107,13 +109,39 @@ def _history_text(turn: dict) -> str:
     return ""
 
 
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _drop_stale_years(query: str, said: str) -> str:
+    """Remove years older than this one that nobody in the conversation wrote.
+
+    The classifier's training data ends before today, so it tends to pin
+    "latest"-style queries to what it thinks the current year is. A past year
+    only belongs in the query when the user (or the chat so far) brought it up."""
+    this_year = datetime.now(timezone.utc).year
+    mentioned = set(_YEAR_RE.findall(said))
+
+    def keep(m: re.Match) -> str:
+        year = m.group(0)
+        return year if int(year) >= this_year or year in mentioned else ""
+
+    return " ".join(_YEAR_RE.sub(keep, query).split())
+
+
 def classify_message(
     message: str, *, history: list[dict] | None = None,
     card_title: str = "", has_image: bool = False, metadata: dict | None = None,
 ) -> RoutingDecision | None:
     """Classify one turn. Returns None (never raises) when every model in the
     [classifier] list fails — the caller treats that as crisis=True."""
-    messages: list[dict] = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    messages: list[dict] = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": (
+            f"Today's date is {datetime.now(timezone.utc):%Y-%m-%d}. Your training data is older "
+            "than that, so what you think of as the latest year or version may be out of date. "
+            "Never put a year in search_query unless the user asked about that year; for "
+            "anything current, describe it (\"latest\", \"current\") instead of dating it.")},
+    ]
     if card_title:
         messages.append({"role": "system", "content": (
             f'This chat is about a Feed card titled "{card_title}". Its text is already in front '
@@ -148,11 +176,17 @@ def classify_message(
 
     try:
         _, results = run_route("classifier", attempt, notes=notes)
-        return next(iter(results))
+        decision = next(iter(results))
     except AllLegsFailed:
         logger.warning("[chat_router] no classifier model answered (%s) — safe plan applies",
                        "; ".join(notes))
         return None
+
+    said = "\n".join([message, *(_history_text(t) for t in history or [])])
+    query = _drop_stale_years(decision.search_query, said)
+    if query != decision.search_query:
+        decision = decision.model_copy(update={"search_query": query})
+    return decision
 
 
 def plan_turn(

@@ -185,3 +185,52 @@ class TestClassifyMessage:
         sent = model.structured.calls[0][0]
         assert all(isinstance(m["content"], str) for m in sent)
         assert any("look at this" in m["content"] for m in sent)
+
+
+class TestSearchQueryDates:
+    """The classifier's training data ends before today, so left alone it
+    stamps its own "current" year onto recency queries ("... comparison
+    2024" in 2026). It is told today's date, and a year it invented that is
+    older than today never reaches the search."""
+
+    @pytest.fixture(autouse=True)
+    def _one_key(self, monkeypatch):
+        from backend.llm import rate_limits
+        rate_limits.clear()
+        monkeypatch.setattr(mp, "_keys_for_provider", lambda provider: ["k"])
+        yield
+        rate_limits.clear()
+
+    def _classify(self, monkeypatch, query, message, history=None):
+        model = _FakeModel({"parsed": _decision(needs_web_search=True, search_query=query),
+                            "raw": None, "parsing_error": None})
+        monkeypatch.setattr("backend.llm.chat_router.build_leg", lambda spec, **kw: model)
+        return model, classify_message(message, history=history)
+
+    def test_todays_date_is_given_to_the_classifier(self, monkeypatch):
+        from datetime import datetime, timezone
+        model, _ = self._classify(monkeypatch, "q", "latest news")
+        sent = "\n".join(m["content"] for m in model.structured.calls[0][0])
+        assert datetime.now(timezone.utc).strftime("%Y-%m-%d") in sent
+
+    def test_a_stale_year_the_user_never_wrote_is_dropped(self, monkeypatch):
+        _, decision = self._classify(
+            monkeypatch, "Claude vs ChatGPT comparison 2024 features performance",
+            "Tell me comparision of claude vs chatgpt in depth as much as possible.")
+        assert decision.search_query == "Claude vs ChatGPT comparison features performance"
+
+    def test_a_year_the_user_wrote_is_kept(self, monkeypatch):
+        _, decision = self._classify(monkeypatch, "2022 FIFA World Cup winner",
+                                     "who won the 2022 world cup?")
+        assert decision.search_query == "2022 FIFA World Cup winner"
+
+    def test_a_year_from_earlier_in_the_chat_is_kept(self, monkeypatch):
+        _, decision = self._classify(monkeypatch, "India GDP 2019", "and what was it then?",
+                                     history=[{"role": "user", "content": "India GDP in 2019"}])
+        assert decision.search_query == "India GDP 2019"
+
+    def test_the_current_year_is_kept(self, monkeypatch):
+        from datetime import datetime, timezone
+        year = datetime.now(timezone.utc).year
+        _, decision = self._classify(monkeypatch, f"best laptops {year}", "best laptops right now")
+        assert decision.search_query == f"best laptops {year}"
