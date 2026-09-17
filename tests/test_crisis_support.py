@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -212,6 +213,42 @@ class TestSectionIsGatedOnTheClassifier:
         assert "client_timezone" in inspect.signature(chat_service.chat_stream).parameters
         source = inspect.getsource(chat_service.chat_stream)
         assert 'context["client_timezone"]' in source
+
+
+class TestClassifierFailureReachesTheRealPrompt:
+    """M13: the most safety-relevant wiring in this branch, end to end. A
+    classifier failure (classify_message returns None) must land the crisis
+    section in the REAL system prompt chat_stream hands to ask_chat_stream —
+    not just in build_system_prompt's own unit tests above, which never touch
+    chat_stream's wiring. build_messages is deliberately left unmocked: mocking
+    it would hide exactly the gap this test exists to catch (a stale import
+    binding, a context key that never reaches the builder, and so on)."""
+
+    def test_classifier_none_puts_crisis_marker_in_the_real_prompt(self):
+        from backend.services import chat_service
+
+        captured: dict = {}
+
+        def fake_ask_chat_stream(messages, *args, **kwargs):
+            captured["messages"] = messages
+            yield {"type": "text", "text": "answer"}
+
+        session_id = f"test-m13-{uuid.uuid4().hex[:8]}"
+        with patch("backend.llm.chat_router.classify_message", return_value=None), \
+             patch("backend.services.chat_service._load_history_messages", return_value=[]), \
+             patch("backend.services.chat_service._save_message", return_value=1), \
+             patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
+             patch("backend.services.memory_injection_service.inject_memory", return_value={}), \
+             patch("backend.services.domain_classifier_service.get_domain_context", return_value={}), \
+             patch("backend.services.follow_up_service.get_recommendations",
+                   return_value={"based_on_topic": None, "source": "empty",
+                                 "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
+             patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream):
+            for _ in chat_service.chat_stream(session_id, "hello", chat_mode="normal"):
+                pass
+
+        system_prompt = captured["messages"][0]["content"]
+        assert MARKER in system_prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
