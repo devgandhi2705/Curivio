@@ -1190,7 +1190,7 @@ function ThinkingGapNote({ text }) {
   )
 }
 
-// Chat-R5b: task_type=="coding" but the leg that answered can't run
+// Chat-R5b: route=="code" but the leg that answered can't run
 // code_execution (every Gemini 3+ leg exhausted, or landed on 2.5's
 // write-only tier) — shown alongside CodeExecutionPanel, not in place of it,
 // since there's no executed block to show, just an unexecuted answer.
@@ -1332,7 +1332,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
       <div className="flex-1 min-w-0">
         <div>
           {/* R5 gap note keys off the flat `thinking` field (chat_service.py
-              still fills this alongside blocks[] — see _stream_agent's gap
+              still fills this alongside blocks[] — see ask_chat_stream's gap
               yields, which bypass block tagging entirely), so it applies the
               same regardless of which branch below renders — a Gemini-3+ turn
               with a real blocks[] (e.g. just a text block) still needs

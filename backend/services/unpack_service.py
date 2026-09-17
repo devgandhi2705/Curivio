@@ -164,10 +164,6 @@ def _done_line(result: dict, source: str, provider: str | None = None) -> str:
     )
 
 
-def _fmt_messages(messages: list[dict]) -> str:
-    return "\n".join(f"{m['role']}: {m['content']}" for m in messages)
-
-
 def _log_explain(
     trace_id: str, agent_name: str, provider: str, input_text: str, t0: float,
     *, output: str | None, success: bool, user_id: str, error: Exception | None = None,

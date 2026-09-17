@@ -1,10 +1,10 @@
 """
 Cognitive Tension Engine.
 
-build_tension_directive() and everything only it used (the tension-type
-directive text, domain hints, open-loop endings, intent→tension mapping) were
-deleted by chat-routing v2 — the per-response prompt-injected directive is
-gone, replaced by one RESPONSE PRINCIPLES line in the new prompt builder.
+The per-response prompt-injected tension directive and everything only it
+used (the tension-type directive text, domain hints, open-loop endings,
+intent→tension mapping) were deleted by chat-routing v2 — replaced by one
+RESPONSE PRINCIPLES line in the new prompt builder.
 
 What remains scores a response after the fact, for analytics — it does not
 gate or shape generation:

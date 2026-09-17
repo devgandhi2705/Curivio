@@ -191,19 +191,16 @@ def build_messages(history: list[dict], user_message: str, context: dict,
 
 def resolve_user_level(context: dict) -> str:
     """
-    Single user-level signal, shared by natural mode (Chat identity pass)
-    and structured mode (structured-mode fix pass, Task 3).
+    Single user-level signal for the one prompt builder (build_system_prompt).
 
-    Previously two independent, differently-scaled paths could both reach the
-    prompt: recommendation_service.get_learning_stage() (early/developing/
+    Two independent, differently-scaled signals could otherwise both reach
+    the prompt: recommendation_service.get_learning_stage() (early/developing/
     proficient, liked-topic count) via user_profile.learning_stage, and
     adaptive_explanation_service's 4-signal inferred_level (beginner/
-    intermediate/advanced) via learning_system_context_service's "Learner
-    context" line. That second path is gone from natural mode along with the
-    rest of the learning_system section (see _build_natural_prompt) — this
-    resolver just picks which single value is worth surfacing here: the richer
-    multi-signal inferred_level once there's enough history to trust it
-    (5+ explored topics), the coarser liked-topic stage before that.
+    intermediate/advanced). This resolver picks which single value is worth
+    surfacing: the richer multi-signal inferred_level once there's enough
+    history to trust it (5+ explored topics), the coarser liked-topic stage
+    before that.
     """
     total_explored = context.get("exploration_breadth", {}).get("total_explored", 0)
     if total_explored >= 5:
@@ -214,7 +211,7 @@ def resolve_user_level(context: dict) -> str:
 
 
 def _build_compact_profile(context: dict) -> str:
-    """One-liner profile hint for natural mode — avoids verbose context dumps."""
+    """One-liner profile hint for the system prompt — avoids verbose context dumps."""
     profile   = context.get("user_profile", {})
     interests = profile.get("top_interests", [])
     level     = resolve_user_level(context)
@@ -232,16 +229,17 @@ def _build_compact_profile(context: dict) -> str:
 
 def _build_conversation_memory_section(conv: dict, include_recency: bool = True) -> str:
     """
-    include_recency=True (default — structured mode, untouched this pass): keeps
-    the turn-count header and the "Most recent question" line.
+    build_system_prompt's only call site always passes include_recency=False,
+    which drops the turn-count header and the "Most recent question" line:
+    last_user_messages[0] duplicates the prior turn already present verbatim
+    in the truncated history array build_messages() sends alongside this
+    system prompt, and session_turns adds nothing the model needs.
+    topics_discussed + the "do not re-explain" instruction (genuinely
+    additive — aggregated across the session, not derivable from the
+    last-N-turn array alone) are kept either way.
 
-    include_recency=False (natural mode, Chat identity pass): drops both. Recon
-    confirmed both are redundant — last_user_messages[0] duplicates the prior
-    turn already present verbatim in the truncated history array build_messages()
-    sends alongside this system prompt; session_turns adds nothing the model
-    needs. topics_discussed + the "do not re-explain" instruction (genuinely
-    additive — aggregated across the session, not derivable from the last-N-turn
-    array alone) are kept in both modes.
+    include_recency=True (the default) is otherwise unused in production —
+    kept because tests still exercise it directly.
     """
     if not conv or conv.get("message_count", 0) == 0:
         return ""

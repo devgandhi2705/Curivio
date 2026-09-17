@@ -282,8 +282,9 @@ def run_chat_search(query: str, *, complexity: str | None = None,
                     meta: dict | None = None) -> tuple[str, list[dict]]:
     """One chat turn's whole search step: fetch, build the note the model reads,
     and return the [{title, url}] list the frontend resolves [N] citations
-    against. Moved here from the retired chat_tools.web_search tool — same
-    formatter, same log row, minus the extra LLM round-trip a tool call cost.
+    against. Moved here from the old model-invoked search tool chat-routing v2
+    retired — same formatter, same log row, minus the extra LLM round-trip a
+    tool call cost.
 
     Filtering url-less articles ONCE, before the note and the source list are
     built, is what keeps citation [N] pointing at sources[N-1]. Never raises: a
@@ -316,9 +317,10 @@ def run_chat_search(query: str, *, complexity: str | None = None,
 
 def _log_chat_search(query: str, output: str, t0: float, meta: dict | None,
                      *, success: bool, error: Exception | None = None) -> None:
-    """One llm_call_log row per chat search — same shape chat_tools.web_search
-    wrote, so the admin panel's existing chat_web_search rows stay continuous.
-    provider="none": this is retrieval, not a model completion. Never raises."""
+    """One llm_call_log row per chat search — same shape the old model-invoked
+    search tool wrote, so the admin panel's existing chat_web_search rows stay
+    continuous. provider="none": this is retrieval, not a model completion.
+    Never raises."""
     from datetime import timezone
     from uuid import uuid4
     from ..llm.call_logger import write_call_row

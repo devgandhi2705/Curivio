@@ -5,16 +5,17 @@ Unified LangChain chat-model provider — two independent layers in one module.
    per route (classifier/simple/complex/code/image/explain); route_legs()
    flattens that into one (provider, model, key) leg per pool key, build_leg()
    builds one bare leg, and run_route() walks the list until a leg produces
-   output. chat_router.py and chat_agent.py are the only callers.
+   output. chat_router.py, chat_agent.py and unpack_service.py (the explain
+   popover, via the [explain] route) are the callers.
 
 2. The old Feed chain, untouched by the routing layer above: the Feed
    pipeline (persona, journey planner, retrieval planner, writer, synthesis)
    is migrated onto get_chat_model()/get_structured_chat_model() — see
    intent_profile_service.py, journey_planner_service.py, retrieval_planner.py,
    writer_provider_router.py, generation_orchestrator.py,
-   package_synthesizer_service.py. grok_service.py and unpack_service.py are
-   unrelated features (chat, notes/bookmarks) and still use their own raw
-   OpenAI-compatible clients — untouched, out of scope.
+   package_synthesizer_service.py. grok_service.py is an unrelated feature
+   (chat) and still uses its own raw OpenAI-compatible client — untouched,
+   out of scope.
 
    Chain shape, built with .with_fallbacks(): one ChatGoogleGenerativeAI instance per
    key in GEMINI_API_KEYS (comma-separated pool), then ChatGroq last. The final pooled
@@ -150,8 +151,8 @@ def upload_attachment(file_bytes: bytes, mime_type: str, filename: str) -> dict:
     verified live that a file uploaded with key #1 returns 403 PERMISSION_DENIED
     when read by key #2. Since the Gemini fallback-tier leg and the Groq leg can
     therefore never serve an attached file anyway (Groq also has no vision model
-    configured here), chat_agent.py builds a primary-key-only agent for any turn
-    carrying attachments instead of pretending the pool still applies.
+    configured here), route_legs() hard-codes key_count=1 for the "image" route
+    instead of pretending the pool still applies.
 
     Returns {uri, mime_type, filename, size_bytes, expires_at} — never the raw
     bytes; callers persist this dict, not the file itself. `expires_at` mirrors

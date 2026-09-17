@@ -18,114 +18,59 @@ from ..prompts.instruction_packs.core_learning_pack import LAYMAN_SIMPLIFICATION
 
 # ── Domain → analogy bank ──────────────────────────────────────────────────────
 # Each entry:
-#   domains   — familiar systems to draw analogies from
 #   seed      — a concrete worked example of a mechanism-carrying analogy
-#   caution   — the specific intelligence dimension most at risk of being lost
+# (a "domains" list and a "caution" note used to live here too, dropped once
+# grep confirmed _format_bank only ever reads "seed" — the prompt's block
+# table never surfaced them.)
 
 _ANALOGY_BANKS: dict[str, dict] = {
     "pharmaceutical": {
-        "domains": [
-            "restaurant kitchens and food safety inspection",
-            "certification marks and trust signals",
-            "supply chains and ingredient sourcing",
-        ],
         "seed": (
             "FDA approval → a restaurant with a health inspection certificate in the window: "
             "the certificate doesn't make the food tastier, but buyers assume a company that "
             "passed strict scrutiny is less likely to fail them — and that assumption is worth "
             "more than advertising because it cannot be purchased."
         ),
-        "caution": (
-            "Preserve the economic asymmetry: who does the manufacturing vs. who captures the profit — "
-            "scale advantage and value capture are structurally decoupled."
-        ),
     },
     "ai": {
-        "domains": [
-            "hiring and skill screening",
-            "human learning and pattern recognition",
-            "tools that amplify existing skills",
-        ],
         "seed": (
             "Training a model → hiring 1 million interns to read every book ever written and "
             "extract patterns, then distilling everything they learned into one entity's intuition — "
             "the patterns are implicit, not explicit rules."
         ),
-        "caution": (
-            "Preserve: data is leverage, compute is capital, and the moment of inference is "
-            "where costs scale — the same dynamic that makes models powerful makes them expensive to deploy."
-        ),
     },
     "finance": {
-        "domains": [
-            "sports betting and probability",
-            "insurance and risk pooling",
-            "water flow and pressure",
-        ],
         "seed": (
             "Liquidity → water pressure in a pipe: abundant flow makes movement easy and cheap; "
             "a sudden drop creates friction everywhere simultaneously, even for parties that weren't "
             "the source of the problem."
         ),
-        "caution": (
-            "Preserve incentive misalignment: who earns fees on transactions vs. who bears the risk "
-            "of the outcome — the advisor and the investor do not have identical incentives."
-        ),
     },
     "technology": {
-        "domains": [
-            "plumbing and standardised connections",
-            "roads and traffic infrastructure",
-            "electrical standards and plug sockets",
-        ],
         "seed": (
             "API → a standardised plug socket: any device that conforms to the spec can draw power "
             "without knowing how the national grid works — standardisation creates leverage for "
             "whoever controls the spec."
         ),
-        "caution": (
-            "Preserve: abstraction layers create dependency, and dependency creates leverage — "
-            "the platform owner who defines the interface captures disproportionate value."
-        ),
     },
     "manufacturing": {
-        "domains": [
-            "restaurant mise en place and prep timing",
-            "construction site logistics",
-            "orchestra and timing dependencies",
-        ],
         "seed": (
             "Just-in-time supply → a restaurant that orders only what it needs for tonight's reservations: "
             "zero storage cost, maximum freshness, but if a single supplier fails, the kitchen stops — "
             "efficiency and fragility are the same thing."
         ),
-        "caution": (
-            "Preserve: concentration risk is invisible during stability and catastrophic during disruption — "
-            "the optimisation that looks smart in a spreadsheet breaks under stress."
-        ),
     },
     "economics": {
-        "domains": [
-            "ecosystems and incentive feedback loops",
-            "auctions and bidding dynamics",
-            "games with rules that reward specific behaviour",
-        ],
         "seed": (
             "Price signals → a traffic light system for scarcity: rising prices tell producers "
             "'make more of this' without anyone coordinating — the signal emerges from millions "
             "of individual decisions, not a central plan."
         ),
-        "caution": (
-            "Preserve: who designs the rules captures the most value — the market is not neutral, "
-            "it reflects the incentives of whoever structured it."
-        ),
     },
 }
 
 _DEFAULT_ANALOGY_BANK: dict = {
-    "domains": ["everyday systems the user already understands: sports, cooking, roads, construction"],
     "seed": "Match the analogy to the mechanism (why things happen), not the surface shape (what it looks like).",
-    "caution": "The analogy must carry the causal logic — surface resemblance without mechanism is decoration.",
 }
 
 

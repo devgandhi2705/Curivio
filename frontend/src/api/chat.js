@@ -114,7 +114,7 @@ function clientTimezone() {
  * @param {function} callbacks.onThinking    - called with (text, seq, blockId) for each reasoning delta (Chat-6; ordering Chat-R10d)
  * @param {function} callbacks.onThinkingGap - called once with an honest note when reasoning ran
  *                                              but can't stream on this turn's model (Chat-6 followup)
- * @param {function} callbacks.onCodeExecutionGap - called once when task_type=="coding" but the
+ * @param {function} callbacks.onCodeExecutionGap - called once when route=="code" but the
  *                                              leg answering can't run code_execution (Chat-R5b)
  * @param {function} callbacks.onCode        - called with (source, language) when Gemini executes code (Chat-7)
  * @param {function} callbacks.onCodeOutput  - called with (output, success) for that code's result (Chat-7)

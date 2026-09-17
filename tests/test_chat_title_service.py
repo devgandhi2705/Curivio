@@ -313,10 +313,8 @@ class TestAutoTitleIntegration:
     """Verify title extraction wires into chat_stream correctly."""
 
     def _collect_events(self, message, history, grok_chunks):
-        # chat_stream() calls chat_agent.ask_chat_stream() (not
-        # grok_service.ask_grok_chat_stream, retired from this path in an
-        # earlier phase) — it yields {"type": "text", "text": ...} event dicts,
-        # not plain string chunks.
+        # chat_stream() calls chat_agent.ask_chat_stream() — it yields
+        # {"type": "text", "text": ...} event dicts, not plain string chunks.
         import json
         from backend.services.chat_service import chat_stream
 

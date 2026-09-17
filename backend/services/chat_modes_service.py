@@ -201,31 +201,22 @@ def build_feed_context_note(feed_context: dict) -> str:
             f"core mechanism — {anchor} — intact: simplify the vocabulary, not the logic."
         )
 
-    # Structured-mode fix (Task 1): the LEARNING SYSTEM layer note used to be
-    # appended here too, via learning_system_context_service.build_feed_layer_note()
-    # — a second copy of the same framing the composer's own "learning_system"
-    # section already adds in _build_structured_prompt, previously hardcoded to
-    # a generic mode="deep_research" label so the two could actively disagree.
-    # That section now reads the real feed action (chat_service.py threads it
-    # into context as feed_action/feed_topic) and produces this exact note
-    # itself — this is no longer the place that adds it.
-
     return "\n".join(parts)
 
 
 # Chat-4.3: stream_status_event removed — confirmed genuinely orphaned (zero
 # real callers repo-wide, only its own unit tests). It drove the pre-fetch
 # status line for the OLD backend-orchestrated web_search/deep_research
-# retrieval; chat_stream doesn't pre-fetch anymore (Chat-4.1's real tool
-# calls surface their own tool_start status events instead).
+# retrieval; chat_stream doesn't pre-fetch anymore (chat_service now runs the
+# web search step itself and emits its own tool_start/tool_end status events).
 
 # Chat-4.2: stream_research_progress removed — confirmed genuinely orphaned
 # (Chat-4.1 recon found zero callers in chat_service.py; this phase's recon
 # re-confirmed zero callers anywhere in the repo, backend or frontend, beyond
 # its own direct unit tests). The per-stage status UX it drove is superseded
-# by chat_agent.ask_chat_stream's real tool_start/tool_end events (Chat-4.1)
-# and deep_research_service's own plan->act->replan subgraph logging
-# (Chat-4.2) — there was no real remaining use to wire it to.
+# by chat_service's own tool_start/tool_end status events around its web
+# search step, and deep_research_service's own plan->act->replan subgraph
+# logging (Chat-4.2) — there was no real remaining use to wire it to.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

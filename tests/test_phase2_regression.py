@@ -513,7 +513,7 @@ class TestChatNormal:
 
     def test_natural_guidelines_present(self, prompt):
         # CONVERSATIONAL RULES was replaced by RESPONSE PRINCIPLES (see
-        # chat_prompt_service._build_natural_prompt docstring).
+        # chat_prompt_service.build_response_principles).
         assert "RESPONSE PRINCIPLES" in prompt
 
     def test_no_json_schema_in_natural_mode(self, prompt):
@@ -555,8 +555,8 @@ class TestExplainSimply:
         assert "FORMAT GUIDANCE" not in prompt
 
     def test_natural_guidelines_present(self, prompt):
-        # CONVERSATIONAL RULES was replaced by RESPONSE PRINCIPLES_LAYMAN (see
-        # chat_prompt_service._build_natural_prompt docstring).
+        # CONVERSATIONAL RULES was replaced by RESPONSE PRINCIPLES, minus the
+        # two rules simple tone drops (see chat_prompt_service.build_response_principles).
         assert "RESPONSE PRINCIPLES" in prompt
 
     def test_no_json_schema(self, prompt):

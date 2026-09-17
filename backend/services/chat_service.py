@@ -141,12 +141,13 @@ def chat_stream(
         yield json.dumps({"t": "error", "message": "message must not be empty"}) + "\n"
         return
 
-    # Phase B1: one trace_id per turn, generated before either LLM call path
-    # (router classify, agent turn) so both — and any tool calls the agent
-    # makes — land in llm_call_log under the same group. Chat has no existing
-    # per-turn identifier that predates the LLM calls (message_id is only
-    # assigned after the stream finishes, see _save_message below), so this is
-    # always a fresh id, never reused from anywhere else.
+    # Phase B1: one trace_id per turn, generated before every LLM-adjacent call
+    # path (router classify, the web search step chat_service runs directly
+    # below, the answer stream) so all of them land in llm_call_log under the
+    # same group. Chat has no existing per-turn identifier that predates the
+    # LLM calls (message_id is only assigned after the stream finishes, see
+    # _save_message below), so this is always a fresh id, never reused from
+    # anywhere else.
     trace_id = uuid4().hex
 
     # Chat-R6a: images stay on the existing Gemini vision/Files-API path
@@ -159,8 +160,9 @@ def chat_stream(
     document_attachments = [a for a in (attachments or []) if not (a.get("mime_type") or "").startswith("image/")]
 
     # ── Context preparation ───────────────────────────────────────────────────
-    # auto_mode is resolved after the model call now (Chat-4.1): True only when
-    # chat_mode was "normal" and the model chose to call a tool on its own.
+    # auto_mode is resolved once the turn's own search step (below) is known:
+    # True only when chat_mode was "normal" and the classifier's own judgment
+    # (not the Web Search toggle) is what triggered the search.
     auto_mode = False
 
     try:
@@ -249,8 +251,7 @@ def chat_stream(
         context["intent_profile"]  = intent.get("intent_profile", {})
         context["current_message"] = message
         # Chat identity pass: threaded through for _build_persona_section's
-        # "use their name naturally" instruction — natural mode only reads this;
-        # structured mode's persona (_PERSONA) never looks at it.
+        # "use their name naturally" instruction.
         context["user_name"]       = (user_name or "").strip()
         # Phase K: the browser's IANA timezone for this turn — the app's only
         # locale signal, and the one crisis_support_service resolves to a country
@@ -356,12 +357,9 @@ def chat_stream(
 
         # Inject feed context note first (background knowledge)
         #
-        # Structured-mode fix (Task 1, was a KNOWN BUG): build_feed_context_note() used
-        # to append its own second LEARNING SYSTEM-labeled note here, on top of the one
-        # _build_structured_prompt's composer already adds — double injection. Fixed at
-        # the source: context["feed_action"]/["feed_topic"] (set above) feed the
-        # composer's own "learning_system" section the real action, and
-        # build_feed_context_note() no longer appends a second copy.
+        # build_feed_context_note() is the only place a Feed card's context becomes
+        # a system note — the system prompt's own composer (build_system_prompt) has
+        # no competing section for it, so there is no double-injection to guard against.
         if feed_context:
             from .chat_modes_service import build_feed_context_note
             feed_note = build_feed_context_note(feed_context)

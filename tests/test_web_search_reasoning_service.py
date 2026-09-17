@@ -230,7 +230,7 @@ class TestComplexityScaledCaps:
 
 class TestRunChatSearch:
     """The chat turn's whole search step: fetch, note, sources. Replaces the
-    model-invoked chat_tools.web_search tool (and its extra LLM round-trip)."""
+    old model-invoked search tool (and its extra LLM round-trip)."""
 
     def test_note_and_sources_line_up(self, monkeypatch):
         _fake_search(monkeypatch, "q", [_article("https://a", "A")], [_article("https://b", "B")])
@@ -263,9 +263,9 @@ class TestRunChatSearch:
 class TestPhaseECitationAlignmentIsCountAgnostic:
     """
     Phase E numbers sources by enumerate(supporting, 1) then
-    enumerate(complicating, len(supporting) + 1), and chat_tools builds
-    `artifact` from supporting + complicating in that same order. Nothing in
-    that mechanism references a count, so artifact[N-1] must be the article
+    enumerate(complicating, len(supporting) + 1), and run_chat_search builds
+    `sources` from supporting + complicating in that same order. Nothing in
+    that mechanism references a count, so sources[N-1] must be the article
     the note labelled [N] at ANY total — asserted here at the two totals this
     phase actually introduces, plus the degenerate ends.
     """
