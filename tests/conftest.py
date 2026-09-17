@@ -3,6 +3,7 @@ Shared pytest fixtures for all test modules.
 """
 
 import sqlite3
+from contextlib import contextmanager
 
 import pytest
 import sqlite_vec
@@ -26,6 +27,23 @@ def _connect_with_vec(*args, **kwargs):
 
 
 sqlite3.connect = _connect_with_vec
+
+
+# -- llm_call_log isolation (M14) ---------------------------------------------
+# The network guard below stops a provider call from succeeding, but every
+# writer that logs the resulting failure (LLMCallLogger's callback, and every
+# direct write_call_row() caller: tinyfish_service, translate_service,
+# tts_service, unpack_service, web_search_reasoning_service, main.py's explain
+# logging) still goes through backend.llm.call_logger.write_call_row(), which
+# opens its own connection via the module-level get_connection() lazy
+# delegate. Left alone, that still lands is_test=0 failure rows in the real
+# data/curivio.db. Captured at import time, before any test can monkeypatch
+# it, so block_provider_network below can tell "nobody touched
+# db.get_connection this test" apart from "a test already pointed it at its
+# own connection".
+import backend.utils.db as _db_module
+
+_REAL_DB_GET_CONNECTION = _db_module.get_connection
 
 
 @pytest.fixture(autouse=True)
@@ -111,4 +129,56 @@ def block_provider_network(request, monkeypatch):
     monkeypatch.setattr(httpx.Client, "build_request", _wrap_build_request(httpx.Client.build_request))
     monkeypatch.setattr(httpx.AsyncClient, "build_request", _wrap_build_request(httpx.AsyncClient.build_request))
     monkeypatch.setattr(_requests.Session, "send", _wrap_send(_requests.Session.send))
+
+    # M14: a blocked provider call above still gets logged — LLMCallLogger's
+    # on_llm_error, or a service's own write_call_row(success=False) — and that
+    # write must not land in the real data/curivio.db. Both paths share
+    # backend.llm.call_logger.write_call_row(), which resolves get_connection()
+    # as a module-level name at call time, so patching it here is the one
+    # place that covers every writer (see the grep in the review: tinyfish_
+    # service, translate_service, tts_service, unpack_service,
+    # web_search_reasoning_service, main.py's explain logging, plus the
+    # LangChain callback). Guarded rather than unconditional: a test that
+    # points backend.utils.db.get_connection at its own connection
+    # (test_call_log_route.py's `db` fixture) still reaches that connection —
+    # this only redirects the default case nobody isolated themselves.
+    import backend.llm.call_logger as call_logger
+    from backend.database.schema import ALL_TABLES, MIGRATIONS
+
+    _lazy_conn: list[sqlite3.Connection] = []
+
+    def _throwaway_connection() -> sqlite3.Connection:
+        if not _lazy_conn:
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            for statement in ALL_TABLES:
+                conn.execute(statement)
+            for migration in MIGRATIONS:
+                for stmt in migration if isinstance(migration, (list, tuple)) else [migration]:
+                    try:
+                        conn.execute(stmt)
+                    except sqlite3.OperationalError:
+                        pass  # additive migration already applied by ALL_TABLES — expected
+            conn.commit()
+            _lazy_conn.append(conn)
+        return _lazy_conn[0]
+
+    @contextmanager
+    def _throwaway_get_connection():
+        conn = _throwaway_connection()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def _guarded_get_connection():
+        if _db_module.get_connection is _REAL_DB_GET_CONNECTION:
+            return _throwaway_get_connection()
+        # A test already pointed backend.utils.db.get_connection at its own
+        # connection — respect it, same as call_logger's real lazy delegate would.
+        return _db_module.get_connection()
+
+    monkeypatch.setattr(call_logger, "get_connection", _guarded_get_connection)
     yield
