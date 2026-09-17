@@ -1058,14 +1058,13 @@ function SurfaceBreakdown({ bySurface, loading }) {
 // today vs feed_legacy's 484) an admin would want to tell apart, not blend.
 //
 // D-recon-fix-2: 'intelligence_feed' (backend/services/intelligence_service.py
-// + industry_intelligence_service.py — the older interests-based/industry-brief
-// pipeline, no project_id, no day_ref) is its OWN option, not folded into
+// — the older interests-based pipeline, no project_id, no day_ref) is its OWN option, not folded into
 // "Daily Feed Generation (Legacy)" — same reasoning as feed_legacy/feed_v2
 // above, plus it isn't even the same kind of "feed" (no project). Labeled
 // "Intelligence Feed" (not "Recommendation Feed" or "Interest Feed") because
-// it mirrors the surface value itself and covers BOTH real sub-pipelines
-// tagged with it — the personalized /generate-feed AND the industry-brief
-// path — where "Recommendation"/"Interest" only reads naturally for the former.
+// it mirrors the surface value itself. It still matches older industry-brief
+// rows, whose generator was removed in chat routing v2; the live path is the
+// personalized /generate-feed.
 // Phase Q: 'chat_upload' (backend/services/document_extraction_service.py +
 // main.py's /chat/upload, Phase P) placed next to 'chat' — same "chat
 // surface family" grouping intelligence_feed/feed_legacy/feed_v2 already use

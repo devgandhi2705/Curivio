@@ -660,33 +660,6 @@ class TestIntelligencePrompt:
         assert "Hard rules" in prompt or "hard" in prompt.lower()
 
 
-class TestIndustryIntelligencePrompt:
-    def test_health_and_content(self):
-        from backend.prompts.industry_intelligence_prompt import build_industry_intelligence_prompt
-        prompt = build_industry_intelligence_prompt(
-            industry_display_name = "Indian Pharmaceuticals",
-            business_lens         = "generic drug export competitiveness",
-            focus_areas           = "API supply chain, regulatory compliance, biosimilars",
-            article_count         = 4,
-            articles              = "\n\n".join(
-                f"[{i}]\nTitle: {a['title']}\nURL: {a['url']}\nContent: {a['content']}"
-                for i, a in enumerate(_CORE_ARTICLES, 1)
-            ),
-        )
-        _assert_prompt_health(prompt, min_tokens=300, label="IndustryIntelligence")
-        assert "Indian Pharmaceuticals" in prompt
-        assert "market_developments" in prompt
-        assert "emerging_opportunities" in prompt
-        assert "near-term" in prompt
-
-    def test_industry_name_in_schema(self):
-        from backend.prompts.industry_intelligence_prompt import build_industry_intelligence_prompt
-        prompt = build_industry_intelligence_prompt(
-            "Fintech India", "payments regulation", "UPI, NBFC", 2, "articles here"
-        )
-        assert "Fintech India" in prompt
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # generate_report() — metadata surface-area validation
 # ═══════════════════════════════════════════════════════════════════════════════
