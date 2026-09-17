@@ -1,4 +1,16 @@
 import { useState } from "react"
+import katex from "katex"
+import "katex/dist/katex.min.css"
+import { matchInlineMath, matchMathBlock } from "../../utils/mathText.js"
+
+// LaTeX span. throwOnError:false renders bad TeX as red source text instead
+// of crashing the message.
+function MathSpan({ tex, display }) {
+  const html = katex.renderToString(tex, { displayMode: display, throwOnError: false })
+  return display
+    ? <span className="block overflow-x-scroll-touch my-2" dangerouslySetInnerHTML={{ __html: html }} />
+    : <span dangerouslySetInnerHTML={{ __html: html }} />
+}
 
 // Copy icon component
 function CopyIcon() {
@@ -39,7 +51,7 @@ function CodeBlockCopyButton({ code }) {
 // format_reasoning_search_note assign server-side.
 //
 // Branch ORDER below is load-bearing, not incidental:
-//   link -> citation -> bold -> code -> italic
+//   link -> bold -> math -> citation -> code -> italic
 // Bold before italic so "**x**" is consumed as bold and never seen by the
 // italic branch. Code before italic so a backticked "`a *b* c`" keeps its
 // asterisks literal instead of emphasising inside code.
@@ -75,6 +87,27 @@ export function renderInline(text, sources = []) {
       continue
     }
 
+    // Bold runs before math so "**$x$**" stays bold, and its content goes
+    // through renderInline so the math (or a citation) inside still renders.
+    const boldMatch = remaining.match(/^(.*?)\*\*(.+?)\*\*(.*)$/)
+    if (boldMatch) {
+      if (boldMatch[1]) parts.push(<span key={key++}>{renderInline(boldMatch[1], sources)}</span>)
+      parts.push(<strong key={key++} className="font-semibold text-slate-100">{renderInline(boldMatch[2], sources)}</strong>)
+      remaining = boldMatch[3]
+      continue
+    }
+
+    // Math before citation (a "[2]" inside TeX is not a citation) and before
+    // italic (a "*" inside TeX is not emphasis). matchInlineMath skips code
+    // spans itself, so the code branch below still owns backticked text.
+    const mathMatch = matchInlineMath(remaining)
+    if (mathMatch) {
+      if (mathMatch.before) parts.push(<span key={key++}>{renderInline(mathMatch.before, sources)}</span>)
+      parts.push(<MathSpan key={key++} tex={mathMatch.tex} display={mathMatch.display} />)
+      remaining = mathMatch.after
+      continue
+    }
+
     // Citation marker [N] — checked after linkMatch above, so a real
     // "[1](https://...)" markdown link is already consumed as a link before
     // this branch ever sees it; a bare "[1]" with no following "(url)" never
@@ -101,14 +134,6 @@ export function renderInline(text, sources = []) {
         )
       )
       remaining = citeMatch[3]
-      continue
-    }
-
-    const boldMatch = remaining.match(/^(.*?)\*\*(.+?)\*\*(.*)$/)
-    if (boldMatch) {
-      if (boldMatch[1]) parts.push(<span key={key++}>{renderInline(boldMatch[1], sources)}</span>)
-      parts.push(<strong key={key++} className="font-semibold text-slate-100">{boldMatch[2]}</strong>)
-      remaining = boldMatch[3]
       continue
     }
 
@@ -307,6 +332,14 @@ export default function MarkdownText({ text, variant = "default", className = ""
         </div>
       )
       i++
+      continue
+    }
+
+    // Multi-line display math (\[ ... \] or $$ ... $$ on their own lines).
+    const mathBlock = matchMathBlock(lines, i)
+    if (mathBlock) {
+      elements.push(<MathSpan key={i} tex={mathBlock.tex} display />)
+      i = mathBlock.nextIndex
       continue
     }
 
