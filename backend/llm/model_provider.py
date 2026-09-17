@@ -389,6 +389,18 @@ def registry_model_name(spec: LegSpec) -> str:
     return spec.model
 
 
+# Gemini forwards `timeout` as a server-side request deadline and rejects anything
+# under 10s outright ("Manually set deadline 5s is too short. Minimum allowed
+# deadline is 10s.") - a 400 on every call, not an occasional timeout. Groq and
+# OpenRouter treat their timeout as a client-side limit and honour short values,
+# so only Gemini legs are raised to the floor.
+_GEMINI_MIN_DEADLINE_SEC = 10
+
+
+def _gemini_deadline(timeout_seconds: float) -> float:
+    return max(timeout_seconds, _GEMINI_MIN_DEADLINE_SEC)
+
+
 def build_leg(spec: LegSpec, *, streaming: bool = False, thinking: bool = False,
               temperature: float = _TEMPERATURE):
     """One bare chat model for this leg. Bare on purpose: callers attach
@@ -404,7 +416,7 @@ def build_leg(spec: LegSpec, *, streaming: bool = False, thinking: bool = False,
         if thinking:
             kwargs["include_thoughts"] = True
         if config.timeout_seconds:
-            kwargs["timeout"] = config.timeout_seconds
+            kwargs["timeout"] = _gemini_deadline(config.timeout_seconds)
         return ChatGoogleGenerativeAI(**kwargs)
 
     if spec.provider == "groq":

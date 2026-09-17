@@ -263,3 +263,16 @@ class TestBuildLeg:
         assert model.max_tokens == 200
         assert model.request_timeout == 5
         assert model.temperature == 0.3
+
+    def test_gemini_leg_never_gets_a_deadline_below_ten_seconds(self, monkeypatch):
+        # Gemini rejects a request deadline under 10s ("Manually set deadline 5s is
+        # too short. Minimum allowed deadline is 10s.") - a 400 on every call, not
+        # an occasional timeout. [explain] asks for 5s, which Groq honours as-is.
+        monkeypatch.setattr(mp, "_keys_for_provider", lambda provider: ["k1"])
+        spec = mp.LegSpec("explain", 2, "gemini", "gemini-flash-lite-latest", 0)
+        model = mp.build_leg(spec, streaming=True, temperature=0.3)
+        assert model.timeout == 10
+
+    def test_the_floor_only_raises_a_short_deadline(self):
+        assert mp._gemini_deadline(5.0) == 10
+        assert mp._gemini_deadline(30.0) == 30.0
