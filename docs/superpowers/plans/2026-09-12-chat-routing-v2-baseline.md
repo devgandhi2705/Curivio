@@ -26,12 +26,16 @@ nothing to this list.
 |---|---|
 | a-d | 46 failed, 1080 passed, 1 skipped (110s) |
 | e-f (excluding feed_v2) | 9 failed, 146 passed (16s) |
-| g-l | **hangs** — see below; the other 6 files: 33 failed, 227 passed |
+| g-l | `tests/test_generation_orchestrator.py` **hangs** and is excluded (see below); the other 6 files: 33 failed, 216 passed, 4 deselected — itemized below (M15) |
 | m-r | 11 failed, 619 passed, 22 errors (40s) |
 | s-z | 79 failed, 648 passed, 2 errors (36s) |
 | feed_v2 | 8 failed, 105 passed (82s) |
 
 **187 failing/erroring test ids**, plus 2 collection errors and 1 hanging module.
+(M15: the g-l chunk's 33 were already counted in the total above, but were
+originally recorded only as a count — every one is now itemized by test id
+in "Failing test ids by file" and the full list below. `tests/test_generation_orchestrator.py`
+is excluded from every g-l run in this doc because it hangs — see item 2 below.)
 
 ## Three things that block a clean run
 
@@ -82,6 +86,11 @@ this repo was relying on a real provider call to pass — the guard's value is s
 - `tests/test_feed_v2_ranker_offline.py` — 1
 - `tests/test_feed_v2_section_writer.py` — 1
 - `tests/test_feed_v2_visual_graph.py` — 2
+- `tests/test_github_service.py` — 11 (M15: g-l chunk, itemized below)
+- `tests/test_industry_intelligence_service.py` — 1 (M15: `TestAnalyzeIndustryErrors::test_partial_search_failure_continues_with_remaining_articles` —
+  confirmed failing identically at `2eaaa97` in a temp worktree; its mock has no `meta` kwarg, which comes from `aa1a550`, not this refactor)
+- `tests/test_intelligence_feed.py` — 7 (M15: g-l chunk, itemized below)
+- `tests/test_learning_path.py` — 14 (M15: g-l chunk, itemized below)
 - `tests/test_model_priority.py` — 1
 - `tests/test_phase2_regression.py` — 31
 - `tests/test_r19a_embedding_robustness.py` — 1
@@ -197,6 +206,39 @@ this repo was relying on a real provider call to pass — the guard's value is s
 - `tests/test_feed_v2_section_writer.py::test_full_graph_real_writer`
 - `tests/test_feed_v2_visual_graph.py::test_full_graph_real_visuals_attached_to_real_beats`
 - `tests/test_feed_v2_visual_graph.py::test_full_graph_visual_nodes_stay_stubbed_offline`
+- `tests/test_github_service.py::TestStoreAndRetrieve::test_retrieve_returns_stored_repos`
+- `tests/test_github_service.py::TestStoreAndRetrieve::test_retrieve_is_case_insensitive`
+- `tests/test_github_service.py::TestGetTopicRepos::test_returns_cached_without_github_call`
+- `tests/test_github_service.py::TestEndpointPost::test_returns_200`
+- `tests/test_github_service.py::TestEndpointPost::test_blank_topic_returns_422`
+- `tests/test_github_service.py::TestEndpointPost::test_missing_topic_returns_422`
+- `tests/test_github_service.py::TestEndpointPost::test_response_has_topic_and_repositories`
+- `tests/test_github_service.py::TestEndpointPost::test_repositories_is_list`
+- `tests/test_github_service.py::TestEndpointPost::test_repo_entry_has_required_fields`
+- `tests/test_github_service.py::TestEndpointPost::test_empty_repo_list_returns_200`
+- `tests/test_github_service.py::TestEndpointPost::test_topic_echoed_in_response`
+- `tests/test_industry_intelligence_service.py::TestAnalyzeIndustryErrors::test_partial_search_failure_continues_with_remaining_articles`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_returns_intelligence_brief`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_returns_three_sections`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_sections_have_two_items_each`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_returns_four_learning_track_items`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_returns_three_action_items`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_backward_compat_fields_present`
+- `tests/test_intelligence_feed.py::TestGenerateIntelligenceFeed::test_persistence_failure_is_non_fatal`
+- `tests/test_learning_path.py::TestStoreAndRetrieve::test_retrieve_returns_stored_result`
+- `tests/test_learning_path.py::TestStoreAndRetrieve::test_retrieve_is_case_insensitive`
+- `tests/test_learning_path.py::TestStoreAndRetrieve::test_retrieve_strips_whitespace`
+- `tests/test_learning_path.py::TestGetLearningPath::test_returns_cached_without_calling_grok`
+- `tests/test_learning_path.py::TestEndpointPost::test_returns_200`
+- `tests/test_learning_path.py::TestEndpointPost::test_blank_topic_returns_422`
+- `tests/test_learning_path.py::TestEndpointPost::test_missing_topic_returns_422`
+- `tests/test_learning_path.py::TestEndpointPost::test_response_has_all_fields`
+- `tests/test_learning_path.py::TestEndpointPost::test_repositories_is_list`
+- `tests/test_learning_path.py::TestEndpointPost::test_beginner_tier_is_list`
+- `tests/test_learning_path.py::TestEndpointPost::test_step_has_concept_field`
+- `tests/test_learning_path.py::TestEndpointPost::test_resources_is_list`
+- `tests/test_learning_path.py::TestEndpointPost::test_topic_trimmed_before_lookup`
+- `tests/test_learning_path.py::TestEndpointPost::test_repos_included_in_response`
 - `tests/test_model_priority.py::test_get_model_priority_list_returns_correct_order_per_task_type`
 - `tests/test_phase2_regression.py::TestBudgetAllocatorIntegration::test_day1_feed_fits_groq_budget`
 - `tests/test_phase2_regression.py::TestCompareMode::test_json_schema_present`
