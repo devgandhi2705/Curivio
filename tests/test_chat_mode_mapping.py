@@ -182,6 +182,45 @@ class TestStreamReflectsThePlan:
         _, done = self._run("hello", "normal", None)
         assert done["chat_mode"] == "normal"
 
+    def test_text_only_turn_with_image_in_history_routes_to_image(self):
+        # M10: a live "media" part still sits in recent history within 48h of
+        # an image turn. If routing missed that, this turn would land on the
+        # "simple" list, whose first model is Groq — Groq 400s on media parts.
+        history_with_image = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "media", "file_uri": "gs://x", "mime_type": "image/png"},
+            ]},
+            {"role": "assistant", "content": "It is a red square."},
+        ]
+        captured = {}
+
+        def fake_ask_chat_stream(messages, *args, **kwargs):
+            captured["route"] = kwargs.get("route")
+            yield {"type": "text", "text": "answer"}
+
+        from backend.llm.chat_router import RoutingDecision
+        from backend.services.chat_service import chat_stream
+
+        with patch("backend.services.chat_service._detect_topic_hint", return_value=None), \
+             patch("backend.services.chat_service._load_history_messages", return_value=history_with_image), \
+             patch("backend.services.chat_service._save_message", return_value=1), \
+             patch("backend.services.memory_injection_service.inject_memory", return_value={}), \
+             patch("backend.services.domain_classifier_service.get_domain_context", return_value={}), \
+             patch("backend.services.chat_prompt_service.build_messages",
+                   return_value=[{"role": "user", "content": "what colour is it?"}]), \
+             patch("backend.llm.chat_router.classify_message",
+                   return_value=RoutingDecision(**self._NO_SEARCH)) as mock_classify, \
+             patch("backend.services.follow_up_service.get_recommendations",
+                   return_value={"based_on_topic": None, "source": "empty",
+                                 "next_topics": [], "prerequisites": [], "advanced_topics": []}), \
+             patch("backend.llm.chat_agent.ask_chat_stream", side_effect=fake_ask_chat_stream):
+            for line in chat_stream("sess", "what colour is it?", chat_mode="normal"):
+                pass
+
+        assert captured["route"] == "image"
+        assert mock_classify.call_args.kwargs["has_image"] is True
+
     def test_search_block_and_text_do_not_share_a_block_id(self):
         events, _ = self._run("who won yesterday", "normal",
                               {**self._NO_SEARCH, "needs_web_search": True, "search_query": "q"})

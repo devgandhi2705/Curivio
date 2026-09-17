@@ -8,9 +8,12 @@
 # (median 0.52s), 10/10 on gemini/gemini-3.1-flash-lite — order and
 # max_tokens below match what was measured, unchanged.
 [classifier]      # every turn: search? simple tone? code? crisis?
-models     = ["groq/openai/gpt-oss-20b", "gemini/gemini-3.1-flash-lite"]
-max_tokens = 400
-reasoning  = "low"          # low | off (ignored where unsupported)
+models          = ["groq/openai/gpt-oss-20b", "gemini/gemini-3.1-flash-lite"]
+max_tokens      = 400
+reasoning       = "low"          # low | off (ignored where unsupported)
+# The classifier is joined before the prompt is built, so a hung call would
+# otherwise stall the whole turn.
+timeout_seconds = 10
 
 [simple]
 models     = ["groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash"]

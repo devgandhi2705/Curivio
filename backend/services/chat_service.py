@@ -73,6 +73,21 @@ def _requests_layman_exit(message: str) -> bool:
     return bool(_LAYMAN_EXIT_RE.search(message))
 
 
+# M10: a follow-up within 48h of an image turn still carries that image as a
+# live Gemini "media" part in history (_load_history_messages). If routing
+# doesn't know that, a text-only follow-up can land on the "simple" list,
+# whose first model is Groq — Groq rejects media parts with a fatal 400. This
+# checks the same history slice the classifier and prompt builder use, so a
+# turn with an image anywhere in its recent context routes to "image"
+# (Gemini-only) instead.
+def _history_has_media(history: list[dict]) -> bool:
+    return any(
+        isinstance(turn.get("content"), list)
+        and any(isinstance(part, dict) and part.get("type") == "media" for part in turn["content"])
+        for turn in history
+    )
+
+
 # Document persistence: real minimal-excerpt size for the budget gate — one
 # document_memory_service chunk (_CHUNK_CHARS=800) at the project's 4-chars/
 # token heuristic. If less than this remains in the real prompt budget, a
@@ -207,6 +222,12 @@ def chat_stream(
         # built (its crisis field decides whether a prompt section goes in).
         from ..llm.chat_router import classify_message, plan_turn
         from .chat_prompt_service import MAX_HISTORY_TURNS
+        _recent_history = history[-(MAX_HISTORY_TURNS * 2):]
+        # M10: an image attached this turn, or a live image part still carried
+        # in recent history — either way the answer must route to the
+        # image-only (Gemini) list, and the classifier must be told so it
+        # doesn't spend a search on it (I2).
+        has_image = bool(image_attachments) or _history_has_media(_recent_history)
         _router_metadata = {"trace_id": trace_id, "surface": "chat", "is_test": is_test}
         if user_id:
             _router_metadata["user_id"] = user_id
@@ -214,8 +235,9 @@ def chat_stream(
             _router_metadata["agent_name"] = feed_agent_name
         router_future = _ROUTER_EXECUTOR.submit(
             classify_message, message,
-            history=history[-(MAX_HISTORY_TURNS * 2):],
+            history=_recent_history,
             card_title=card_title,
+            has_image=has_image,
             metadata=_router_metadata,
         )
 
@@ -296,7 +318,7 @@ def chat_stream(
         plan = plan_turn(
             decision,
             message=message,
-            has_image=bool(image_attachments),
+            has_image=has_image,
             toggle_web_search=toggle_web_search,
             toggle_simple=toggle_simple,
             feed_action=feed_action,
@@ -573,7 +595,17 @@ def chat_stream(
             yield json.dumps({"t": "chunk", "v": chunk, "seq": seq, "block_id": block_id}) + "\n"
     except Exception as exc:
         logger.exception("chat_stream: AI generation failed")
-        yield json.dumps({"t": "error", "message": str(exc)}) + "\n"
+        # M2: AllLegsFailed's message is internal detail ("[simple] every model
+        # failed: skipped groq/... (budget); ..."), never meant for a user's
+        # screen — swap it for a friendly one but keep the full detail in the
+        # log above. chat_agent.VisionUnavailableError already carries its own
+        # user-facing message, and every other exception is unchanged.
+        from ..llm.model_provider import AllLegsFailed
+        if isinstance(exc, AllLegsFailed):
+            error_message = "The AI models are busy right now — please try again in a moment."
+        else:
+            error_message = str(exc)
+        yield json.dumps({"t": "error", "message": error_message}) + "\n"
         return
 
     response_text = "".join(collected)

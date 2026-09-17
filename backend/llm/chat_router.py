@@ -21,7 +21,7 @@ Public API
 ----------
 RoutingDecision                                  the JSON the classifier fills
 TurnPlan                                         what the rest of the turn reads
-classify_message(message, *, history, card_title, metadata) -> RoutingDecision | None
+classify_message(message, *, history, card_title, has_image, metadata) -> RoutingDecision | None
 plan_turn(decision, *, message, ...) -> TurnPlan
 """
 from __future__ import annotations
@@ -109,7 +109,7 @@ def _history_text(turn: dict) -> str:
 
 def classify_message(
     message: str, *, history: list[dict] | None = None,
-    card_title: str = "", metadata: dict | None = None,
+    card_title: str = "", has_image: bool = False, metadata: dict | None = None,
 ) -> RoutingDecision | None:
     """Classify one turn. Returns None (never raises) when every model in the
     [classifier] list fails — the caller treats that as crisis=True."""
@@ -118,6 +118,10 @@ def classify_message(
         messages.append({"role": "system", "content": (
             f'This chat is about a Feed card titled "{card_title}". Its text is already in front '
             "of the answering model, so seeing the card itself is not a reason to search.")})
+    if has_image:
+        messages.append({"role": "system", "content": (
+            "An image is attached to this turn and the answering model can see it. The image "
+            "itself is not a reason to search.")})
     for turn in history or []:
         text = _history_text(turn)
         if text:

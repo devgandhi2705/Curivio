@@ -160,6 +160,20 @@ class TestClassifyMessage:
         monkeypatch.setattr("backend.llm.chat_router.build_leg", boom)
         assert classify_message("hi") is None
 
+    def test_image_note_sent_when_has_image(self, monkeypatch):
+        model = _FakeModel({"parsed": _decision(), "raw": None, "parsing_error": None})
+        monkeypatch.setattr("backend.llm.chat_router.build_leg", lambda spec, **kw: model)
+        classify_message("what colour is this?", has_image=True)
+        sent = "\n".join(m["content"] for m in model.structured.calls[0][0])
+        assert "image is attached" in sent.lower()
+
+    def test_no_image_note_by_default(self, monkeypatch):
+        model = _FakeModel({"parsed": _decision(), "raw": None, "parsing_error": None})
+        monkeypatch.setattr("backend.llm.chat_router.build_leg", lambda spec, **kw: model)
+        classify_message("hello")
+        sent = "\n".join(m["content"] for m in model.structured.calls[0][0])
+        assert "image is attached" not in sent.lower()
+
     def test_history_multipart_content_is_flattened_to_text(self, monkeypatch):
         model = _FakeModel({"parsed": _decision(), "raw": None, "parsing_error": None})
         monkeypatch.setattr("backend.llm.chat_router.build_leg", lambda spec, **kw: model)

@@ -163,6 +163,21 @@ class TestChatStreamGenerator:
         events = self._collect("sess1", "Hello")
         assert events[-1]["t"] == "error"
 
+    def test_all_legs_failed_gets_a_friendly_message(self, monkeypatch, patched_chat_stream):
+        # M2: AllLegsFailed's own message is internal detail ("[simple] every
+        # model failed: skipped ... (budget); ...") — never meant for a user's
+        # screen. The full detail still reaches logger.exception (not asserted
+        # here, only the swap the user sees).
+        import backend.llm.chat_agent as chat_agent
+        from backend.llm.model_provider import AllLegsFailed
+
+        def boom(*a, **kw):
+            raise AllLegsFailed("simple", ["skipped groq/openai/gpt-oss-120b (budget)"])
+        monkeypatch.setattr(chat_agent, "ask_chat_stream", boom)
+        events = self._collect("sess1", "Hello")
+        assert events[-1]["t"] == "error"
+        assert events[-1]["message"] == "The AI models are busy right now — please try again in a moment."
+
     def test_partial_chunks_then_error(self, monkeypatch, patched_chat_stream):
         import backend.llm.chat_agent as chat_agent
         def partial_stream(*a, **kw):
