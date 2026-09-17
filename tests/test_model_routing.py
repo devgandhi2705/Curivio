@@ -234,6 +234,10 @@ class TestReasoningMapping:
         ("gemini", "gemini-3.1-flash-lite", "off", {"thinking_level": "low"}),
         ("gemini", "gemini-2.5-flash", "low", {"thinking_budget": 1024}),
         ("gemini", "gemini-2.5-flash", "off", {"thinking_budget": 0}),
+        # M16: live-verified — gemini-flash-lite-latest now resolves to gemini-3.5-flash-lite
+        # server-side, and thinking_budget 400s on it. A "-latest" alias only ever resolves
+        # forward, so it is treated as Gemini 3+ regardless of what the name says today.
+        ("gemini", "gemini-flash-lite-latest", "off", {"thinking_level": "low"}),
         ("groq", "openai/gpt-oss-120b", "low", {"reasoning_effort": "low"}),
         ("groq", "llama-3.3-70b", "low", {}),
         ("openrouter", "z-ai/glm-5.3-flash", "low", {"reasoning": {"effort": "low"}}),

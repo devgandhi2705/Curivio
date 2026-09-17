@@ -181,8 +181,16 @@ def upload_attachment(file_bytes: bytes, mime_type: str, filename: str) -> dict:
 
 
 def _is_gemini_3_plus(model_name: str) -> bool:
-    """Gemini 3+ models use thinking_level; Gemini 2.5 uses thinking_budget (verified live, see chat_agent.py)."""
-    return "gemini-3" in (model_name or "").lower().replace("models/", "")
+    """Gemini 3+ models use thinking_level; Gemini 2.5 uses thinking_budget (verified live, see chat_agent.py).
+
+    A "-latest" alias resolves server-side and only ever moves forward: M16 live-verified
+    that gemini-flash-lite-latest now answers as gemini-3.5-flash-lite, and thinking_budget
+    on it 400s ("Request contains an invalid argument") — thinking_level is required instead.
+    Once an alias has moved past 2.5 it cannot move back, so treating any "-latest" model as
+    3+ is safe going forward, not just for this one name.
+    """
+    name = (model_name or "").lower().replace("models/", "")
+    return "gemini-3" in name or name.endswith("-latest")
 
 
 # ── chat_models.toml — the editable chat model lists ──────────────────────────
