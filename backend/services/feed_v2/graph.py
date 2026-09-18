@@ -6,8 +6,11 @@ This phase proves the shared infrastructure works before Phase 8+ swaps stubs fo
 real agents ONE AT A TIME:
   * a single typed state (FeedState) — the contract every later phase reads/writes;
   * the graph: lesson_planner -> [web_researcher, corpus_researcher] (parallel) ->
-    source_ranker -> section_writer -> claim_validator -> assembler, with THREE
-    real, capped feedback loops;
+    source_ranker -> section_writer -> visual_director -> visual_sourcing ->
+    claim_validator -> assembler, with THREE real, capped feedback loops. Phase 12
+    inserted visual_director/visual_sourcing after section_writer: a rewrite
+    (claim_validator -> section_writer) naturally re-flows through both, so the
+    loop caps below are unchanged;
   * SqliteSaver checkpointing on the SAME curivio.db file (resume-after-crash);
   * the concurrency lease enforced by mas_runs' unique partial index (Phase 3);
   * the reaper (startup sweep of expired 'running' leases);
@@ -44,6 +47,8 @@ from .agents import web_researcher as web_agent        # Phase 9: real search no
 from .agents import source_ranker as ranker_agent      # Phase 10: real origin-aware ranking
 from .agents import lesson_planner as lesson_agent      # Phase 11: real decision-layer node body
 from .agents import section_writer as writer_agent      # Phase 11: real four-group writer node body
+from .agents import visual_director as visual_director_agent  # Phase 12: per-beat visual need+type
+from .agents import visual_sourcing as visual_sourcing_agent  # Phase 12: three-tier sourcing
 from .db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -81,6 +86,11 @@ USE_REAL_WEB_RESEARCHER = True
 # (no key needed; exec order/counts + the rewrite loop driven by section_writer_runs unchanged).
 USE_REAL_LESSON_PLANNER = True
 USE_REAL_SECTION_WRITER = True
+# Phase 12: visual_director + visual_sourcing are real now (module default True = production).
+# _reset_rig() flips both False so the Phase-7 offline mechanics tests keep the canned empty
+# stubs (no key / no headless browser needed for loop-cap/barrier/resume assertions).
+USE_REAL_VISUAL_DIRECTOR = True
+USE_REAL_VISUAL_SOURCING = True
 _CRASH_ONCE: set[str] = set() # node names that raise once then succeed (resume test)
 _EXEC_LOG: list[str] = []     # every node appends its name (resume/loop assertions)
 
@@ -90,6 +100,7 @@ def _reset_rig() -> None:
     global STUB_EVIDENCE_THIN, STUB_WRITING_WEAK, STUB_EVIDENCE_WEAK
     global STUB_SLEEP_SECONDS, USE_REAL_SOURCE_RANKER, USE_REAL_CORPUS_RESEARCHER
     global USE_REAL_WEB_RESEARCHER, USE_REAL_LESSON_PLANNER, USE_REAL_SECTION_WRITER
+    global USE_REAL_VISUAL_DIRECTOR, USE_REAL_VISUAL_SOURCING
     STUB_EVIDENCE_THIN = STUB_WRITING_WEAK = STUB_EVIDENCE_WEAK = False
     STUB_SLEEP_SECONDS = 0.0
     USE_REAL_SOURCE_RANKER = True
@@ -97,6 +108,8 @@ def _reset_rig() -> None:
     USE_REAL_WEB_RESEARCHER = False      # offline default: canned stub, STUB_EVIDENCE_THIN drives the loop
     USE_REAL_LESSON_PLANNER = False      # offline default: canned lesson_plan stub (no key)
     USE_REAL_SECTION_WRITER = False      # offline default: canned draft stub, rewrite loop via section_writer_runs
+    USE_REAL_VISUAL_DIRECTOR = False     # offline default: canned empty specs (no key)
+    USE_REAL_VISUAL_SOURCING = False     # offline default: canned empty assets (no DB/browser)
     _CRASH_ONCE.clear()
     _EXEC_LOG.clear()
 
@@ -117,6 +130,8 @@ class FeedState(TypedDict, total=False):
     corpus_findings: list
     ranked_sources: list
     section_drafts: list
+    visual_specs: list
+    visual_assets: list
     verdicts: list
     assembled: dict
     # loop counters + condition flags
@@ -253,6 +268,40 @@ def section_writer(state: FeedState) -> dict:
               "project_id": state.get("project_id"), "day_number": state.get("day_number")})
 
 
+def visual_director(state: FeedState) -> dict:
+    """Phase 12 Task 1: REAL per-beat visual need+type decision, one call over the
+    whole day's beats. Writes visual_specs (list, possibly empty — most beats need no
+    visual). A rewrite (claim_validator -> section_writer) naturally re-flows through
+    here with the new draft, same as every other node section_writer feeds. Offline
+    mechanics tests set USE_REAL_VISUAL_DIRECTOR=False (via _reset_rig) to keep a
+    canned empty list (no key needed)."""
+    _EXEC_LOG.append("visual_director")
+    _crash_if_rigged("visual_director")
+    if not USE_REAL_VISUAL_DIRECTOR:
+        return {"visual_specs": []}
+    return visual_director_agent.run_visual_director(
+        section_drafts=state.get("section_drafts") or [],
+        meta={"trace_id": state.get("trace_id"), "user_id": state.get("user_id"),
+              "project_id": state.get("project_id"), "day_number": state.get("day_number")})
+
+
+def visual_sourcing(state: FeedState) -> dict:
+    """Phase 12 Tasks 2-4: REAL three-tier sourcing (own figures -> cited web images ->
+    template generation) + validation for every visual_spec. Writes visual_assets.
+    Offline mechanics tests set USE_REAL_VISUAL_SOURCING=False (via _reset_rig) to keep
+    a canned empty list (no DB/headless browser needed)."""
+    _EXEC_LOG.append("visual_sourcing")
+    _crash_if_rigged("visual_sourcing")
+    if not USE_REAL_VISUAL_SOURCING:
+        return {"visual_assets": []}
+    return visual_sourcing_agent.run_visual_sourcing(
+        visual_specs=state.get("visual_specs") or [],
+        project_id=state.get("project_id"),
+        ranked_sources=state.get("ranked_sources") or [],
+        meta={"trace_id": state.get("trace_id"), "user_id": state.get("user_id"),
+              "project_id": state.get("project_id"), "day_number": state.get("day_number")})
+
+
 def claim_validator(state: FeedState) -> dict:
     _EXEC_LOG.append("claim_validator")
     _crash_if_rigged("claim_validator")
@@ -309,6 +358,7 @@ def build_graph() -> StateGraph:
     for name, fn in (("lesson_planner", lesson_planner), ("web_researcher", web_researcher),
                      ("web_gate", web_gate), ("corpus_researcher", corpus_researcher),
                      ("source_ranker", source_ranker), ("section_writer", section_writer),
+                     ("visual_director", visual_director), ("visual_sourcing", visual_sourcing),
                      ("claim_validator", claim_validator), ("research_reentry", research_reentry),
                      ("assembler", assembler)):
         g.add_node(name, fn)
@@ -321,7 +371,9 @@ def build_graph() -> StateGraph:
     # corpus — a plain fan-in would fire early on corpus while web still loops.
     g.add_edge(["web_gate", "corpus_researcher"], "source_ranker")
     g.add_edge("source_ranker", "section_writer")
-    g.add_edge("section_writer", "claim_validator")
+    g.add_edge("section_writer", "visual_director")
+    g.add_edge("visual_director", "visual_sourcing")
+    g.add_edge("visual_sourcing", "claim_validator")
     g.add_conditional_edges("claim_validator", _validate_route,
                             {"section_writer": "section_writer", "research_reentry": "research_reentry",
                              "assembler": "assembler"})

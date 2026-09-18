@@ -77,7 +77,7 @@ def test_extraction_reads_full_content_not_snippet(monkeypatch, capsys):
 
     # NEW: fetch returns full page content → extraction sees it.
     new_prompts: list[str] = []
-    monkeypatch.setattr(W, "_fetch", lambda urls: {u: _FULL for u in urls})
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": _FULL, "images": []} for u in urls})
     monkeypatch.setattr(W, "call_agent", _capture_call_agent(new_prompts))
     W.run_web_research(project_id="p", journey_entry={"focus": "backprop"}, coverage_mode="open")
 
@@ -99,11 +99,14 @@ def test_fetch_batches_at_ten(monkeypatch, capsys):
     class _Resp:
         def __init__(self, urls): self._urls = urls
         def raise_for_status(self): pass
-        def json(self): return {"results": [{"url": u, "text": f"content {u}"} for u in self._urls]}
+        def json(self):
+            return {"results": [{"url": u, "text": f"content {u}", "image_links": [f"{u}/img.png"]}
+                                for u in self._urls]}
 
     def fake_post(url, headers=None, json=None, timeout=None):
         urls = json["urls"]
         batch_sizes.append(len(urls))
+        assert json["image_links"] is True    # Phase 12: image capture must be requested
         return _Resp(urls)
     monkeypatch.setattr(W.requests, "post", fake_post)
 
@@ -112,7 +115,8 @@ def test_fetch_batches_at_ten(monkeypatch, capsys):
     with capsys.disabled():
         print(f"\n12 urls -> POST batch sizes {batch_sizes}; fetched {len(out)}")
     assert batch_sizes == [10, 2]                        # batched at the 10-cap, remainder in a 2nd call
-    assert len(out) == 12 and all(out[u] for u in urls)
+    assert len(out) == 12 and all(out[u]["text"] for u in urls)
+    assert all(out[u]["images"] == [f"{u}/img.png"] for u in urls)
 
 
 # ── 3. fetch failure degrades cleanly to the snippet (non-fatal) ──────────────
@@ -122,7 +126,7 @@ def test_fetch_failure_falls_back_to_snippet(monkeypatch, capsys):
         {"title": "Unfetched", "url": "https://bad.com/2", "snippet": "snippet-2 fallback text"}])
     monkeypatch.setattr(W, "_material_text", lambda pid, limit=12: "")
     monkeypatch.setattr(W, "_user_link_urls", lambda pid: set())
-    monkeypatch.setattr(W, "_fetch", lambda urls: {"https://ok.com/1": "FULL content for one only"})
+    monkeypatch.setattr(W, "_fetch", lambda urls: {"https://ok.com/1": {"text": "FULL content for one only", "images": []}})
 
     prompts: list[str] = []
     monkeypatch.setattr(W, "call_agent", _capture_call_agent(prompts))
@@ -210,7 +214,7 @@ def test_full_content_retained_in_state(monkeypatch, capsys):
         {"title": "Backprop", "url": "https://deep.com/bp", "snippet": "short snippet"}])
     monkeypatch.setattr(W, "_material_text", lambda pid, limit=12: "")
     monkeypatch.setattr(W, "_user_link_urls", lambda pid: set())
-    monkeypatch.setattr(W, "_fetch", lambda urls: {u: full for u in urls})
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": full, "images": []} for u in urls})
     monkeypatch.setattr(W, "call_agent", _capture_call_agent([]))
 
     out = W.run_web_research(project_id="p", journey_entry={"focus": "backprop"}, coverage_mode="open")
@@ -220,6 +224,41 @@ def test_full_content_retained_in_state(monkeypatch, capsys):
     assert f["content"] == full                             # full page retained in state
     assert f["text"] == "backprop uses the chain rule"      # claim still present (cheap summary)
     assert len(f["content"]) > len(f["text"])               # content is the richer field
+
+
+# ══ Phase 12: image URLs from the same fetched page, retained on the finding ══
+
+def test_image_urls_retained_on_finding(monkeypatch, capsys):
+    """The finding now also carries `images` — the same fetched page's image URLs,
+    consumed later by visual_sourcing's Tier 2 (ranked web images)."""
+    monkeypatch.setattr(W, "_search", lambda q: [
+        {"title": "Backprop", "url": "https://deep.com/bp", "snippet": "short snippet"}])
+    monkeypatch.setattr(W, "_material_text", lambda pid, limit=12: "")
+    monkeypatch.setattr(W, "_user_link_urls", lambda pid: set())
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": "full page text about backprop",
+                                                        "images": ["https://deep.com/diagram.png"]}
+                                                   for u in urls})
+    monkeypatch.setattr(W, "call_agent", _capture_call_agent([]))
+
+    out = W.run_web_research(project_id="p", journey_entry={"focus": "backprop"}, coverage_mode="open")
+    f = out["web_findings"][0]
+    with capsys.disabled():
+        print(f"\nfinding images: {f['images']}")
+    assert f["images"] == ["https://deep.com/diagram.png"]
+
+
+def test_image_urls_default_empty_when_fetch_carries_none(monkeypatch):
+    """A fetched page with no images (the common case) leaves `images` an empty list,
+    never missing/None — visual_sourcing can iterate it unconditionally."""
+    monkeypatch.setattr(W, "_search", lambda q: [
+        {"title": "Backprop", "url": "https://deep.com/bp", "snippet": "short snippet"}])
+    monkeypatch.setattr(W, "_material_text", lambda pid, limit=12: "")
+    monkeypatch.setattr(W, "_user_link_urls", lambda pid: set())
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": "full page text", "images": []} for u in urls})
+    monkeypatch.setattr(W, "call_agent", _capture_call_agent([]))
+
+    out = W.run_web_research(project_id="p", journey_entry={"focus": "backprop"}, coverage_mode="open")
+    assert out["web_findings"][0]["images"] == []
 
 
 @pytest.mark.integration
@@ -232,7 +271,7 @@ def test_real_page_dedup_before_after(monkeypatch, capsys):
     i.e. only duplicate lines were removed, every unique line survived."""
     fetched = W._fetch(["https://en.wikipedia.org/wiki/Backpropagation"])
     assert fetched, "real fetch returned nothing"
-    raw = next(iter(fetched.values()))
+    raw = next(iter(fetched.values()))["text"]
 
     # independent reference: same exact-line dedup, keeping first occurrence + order
     seen, ref = set(), []

@@ -200,7 +200,7 @@ def test_full_graph_real_ranker(db, monkeypatch, capsys):
                   (json.dumps([1.0] + [0.0] * (_DIM - 1)), "c1", "m1", pid, "u1", "Backprop chain rule"))
     # web
     monkeypatch.setattr(W, "_search", lambda q: [{"title": "Guide", "url": "https://w.com/1", "snippet": "backprop"}])
-    monkeypatch.setattr(W, "_fetch", lambda urls: {u: "Backpropagation uses the chain rule." for u in urls})
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": "Backpropagation uses the chain rule.", "images": []} for u in urls})
     monkeypatch.setattr(W, "call_agent", lambda agent, messages, **k: (
         {"passages": [{"index": 0, "claim": "backprop uses the chain rule", "why_relevant": "core"}]}
         if "WEB RESULTS" in messages[0]["content"] else {"queries": ["backprop"]}))

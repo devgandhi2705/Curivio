@@ -21,6 +21,9 @@ FOUR steps per research pass:
      claim (`text`) — the claim is a cheap summary, not the only thing downstream sees.
      An oversized page is first shrunk by own-code dedup (`_dedup_content`, no LLM): exact-
      duplicate boilerplate lines removed, then hard-capped only if still oversized.
+     Phase 12: the same fetched page's image URLs are RETAINED too (`images`) — TinyFish's
+     Fetch response already carries them (image_links=True), no extra request. Consumed by
+     visual_sourcing's Tier 2 (ranked web images), not by extraction.
   4. COVERAGE ASSESSMENT (heuristic, no LLM) — evidence_thin = too few relevant claims
      accumulated. A full "did I find enough?" LLM call each loop is overkill; the count
      of claims that survived extraction is a direct, robust coverage signal and gives
@@ -169,20 +172,25 @@ def _search(query: str) -> list[dict]:
     return out
 
 
-def _fetch(urls: list[str]) -> dict[str, str]:
-    """Full page content (markdown) for URLs, batched at TinyFish's 10-per-request cap
-    (multiple POSTs for larger sets). Same v2-owned direct Fetch API links.py uses.
-    Returns {url: full_text} keyed by the returned url. Non-fatal: a per-batch failure
-    is logged and omitted (extraction falls back to that source's snippet)."""
+def _fetch(urls: list[str]) -> dict[str, dict]:
+    """Full page content (markdown) + image URLs for URLs, batched at TinyFish's
+    10-per-request cap (multiple POSTs for larger sets). Same v2-owned direct Fetch
+    API links.py uses. Returns {url: {"text": full_text, "images": [url, ...]}} keyed
+    by the returned url. Non-fatal: a per-batch failure is logged and omitted
+    (extraction falls back to that source's snippet, images stay empty).
+
+    Phase 12: image_links=True (Phase 9 had it off — no consumer existed yet). Same
+    Fetch response TinyFish already returns; no extra request. Consumed by
+    visual_sourcing's Tier 2 (ranked web images) via each finding's `images` field."""
     if not urls:
         return {}
     if _MOCK:
-        return {u: f"Mock full page content for {u}. " * 20 for u in urls}
+        return {u: {"text": f"Mock full page content for {u}. " * 20, "images": []} for u in urls}
     api_key = os.getenv("TINYFISH_API_KEY", "")
     if not api_key:
         logger.warning("[feed_v2.web] TINYFISH_API_KEY not set — no fetch, snippet-only extraction")
         return {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     batches = 0
     for start in range(0, len(urls), _MAX_FETCH_URLS):
         batch = urls[start:start + _MAX_FETCH_URLS]
@@ -191,7 +199,7 @@ def _fetch(urls: list[str]) -> dict[str, str]:
             resp = requests.post(
                 _FETCH_URL,
                 headers={"X-API-Key": api_key, "Content-Type": "application/json"},
-                json={"urls": batch, "format": "markdown", "image_links": False, "ttl": 0},
+                json={"urls": batch, "format": "markdown", "image_links": True, "ttl": 0},
                 timeout=_FETCH_TIMEOUT_S,
             )
             resp.raise_for_status()
@@ -203,7 +211,8 @@ def _fetch(urls: list[str]) -> dict[str, str]:
             u = (r.get("url") or "").strip()
             text = (r.get("text") or "").strip()
             if u and text:
-                out[u] = text
+                images = [img for img in (r.get("image_links") or []) if img]
+                out[u] = {"text": text, "images": images}
         for err in data.get("errors", []):
             logger.info("[feed_v2.web] fetch failed for %s: %s", err.get("url"), err.get("error"))
     logger.info("[feed_v2.web] fetched %d/%d url(s) in %d batch(es)", len(out), len(urls), batches)
@@ -308,6 +317,7 @@ def _extract_claims(candidates: list[dict], focus: str, meta: dict | None) -> li
             "title": c["title"],        # from the raw search result, NOT the model
             "text": (p.get("claim") or "").strip() or c["snippet"],
             "content": c.get("content") or "",   # Phase 9c: FULL (deduped) page retained, not only the claim
+            "images": c.get("images") or [],     # Phase 12: image URLs from the same fetched page
             "why_relevant": (p.get("why_relevant") or "").strip(),
         })
     return out
@@ -343,11 +353,13 @@ def run_web_research(*, project_id: str, journey_entry: dict, coverage_mode: str
     # Phase 9b: fetch full page content for every candidate (uncapped, batched at 10),
     # so extraction reads real content instead of the thin search snippet.
     fetched = _fetch([c["url"] for c in candidates])
-    fetched_norm = {_norm_url(u): t for u, t in fetched.items()}
+    fetched_norm = {_norm_url(u): v for u, v in fetched.items()}
     for c in candidates:
+        fv = fetched_norm.get(_norm_url(c["url"])) or {}
         # Phase 9c: dedup oversized pages here so BOTH extraction and the retained state
         # content are the cleaned full page (normal pages pass through untouched).
-        c["content"] = _dedup_content(fetched_norm.get(_norm_url(c["url"]), ""))
+        c["content"] = _dedup_content(fv.get("text") or "")
+        c["images"] = fv.get("images") or []   # Phase 12: for visual_sourcing's Tier 2
 
     new_findings = _extract_claims(candidates, focus, meta) if candidates else []
     for f in new_findings:

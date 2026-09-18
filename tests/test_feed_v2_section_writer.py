@@ -223,7 +223,7 @@ def test_full_graph_real_writer(db, monkeypatch, capsys):
     # lesson_planner + web + corpus + ranker + section_writer LLM boundaries mocked
     monkeypatch.setattr(LP, "call_agent", lambda *a, **k: {"objectives": ["understand backprop"], "prerequisite_gap": False})
     monkeypatch.setattr(W, "_search", lambda q: [{"title": "Guide", "url": "https://w.com/1", "snippet": "backprop"}])
-    monkeypatch.setattr(W, "_fetch", lambda urls: {u: "Backpropagation uses the chain rule across layers." for u in urls})
+    monkeypatch.setattr(W, "_fetch", lambda urls: {u: {"text": "Backpropagation uses the chain rule across layers.", "images": []} for u in urls})
     monkeypatch.setattr(W, "call_agent", lambda agent, messages, **k: (
         {"passages": [{"index": 0, "claim": "backprop uses the chain rule", "why_relevant": "core"}]}
         if "WEB RESULTS" in messages[0]["content"] else {"queries": ["backprop"]}))
