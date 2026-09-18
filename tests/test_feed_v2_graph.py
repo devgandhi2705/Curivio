@@ -229,3 +229,22 @@ def test_real_source_ranker_writes_log_row_with_all_four_columns(db, capsys):
     assert r["step_index"] == 3
     assert r["surface"] == "feed_v2"
     assert run["total_calls"] >= 1   # finalize summed the real call
+
+
+# ── security: resuming a run by trace_id checks ownership ─────────────────────
+def test_resume_requires_owning_the_project_and_the_run(db):
+    """start_feed_stream used to look the checkpoint up by trace_id alone, so any caller
+    holding another user's trace_id could reattach to (resume) their run."""
+    with v2db.get_connection() as c:
+        c.execute("INSERT OR IGNORE INTO users(user_id,email,name,hashed_pw) VALUES('u2','u2@t.com','u2','x')")
+    pid = _ready_project()
+    lines = [json.loads(x) for x in G.start_feed_stream("u1", pid, 1)]
+    u1_trace = lines[0]["trace_id"]
+    u2_pid = P.create_project("u2", "Other", "x", "intermediate")["project_id"]
+
+    with pytest.raises(ValueError):                 # u2 on u1's project
+        G.start_feed_stream("u2", pid, 1, trace_id=u1_trace)
+    with pytest.raises(ValueError):                 # u2's own project, u1's run
+        G.start_feed_stream("u2", u2_pid, 1, trace_id=u1_trace)
+    resumed = [json.loads(x) for x in G.start_feed_stream("u1", pid, 1, trace_id=u1_trace)]
+    assert resumed[0]["resumed"] is True            # the owner can still reattach

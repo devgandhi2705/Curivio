@@ -576,14 +576,20 @@ def start_feed_stream(user_id: str, project_id: str, day_number: int,
     is yielded) so ConcurrentRunError surfaces to the route as a 409 rather than mid
     stream. If trace_id names an existing checkpoint, RESUME it (reattach) with no new
     lease. Returns a generator of NDJSON lines."""
+    # Ownership FIRST: reattaching used to look the checkpoint up by trace_id alone, so
+    # any caller holding someone else's trace_id could resume their run.
+    if projects.get_project(user_id, project_id) is None:   # eager -> route can 404
+        raise ValueError(f"project {project_id} not found for user {user_id}")
     if trace_id:
+        with get_connection() as conn:
+            run = conn.execute("SELECT user_id, project_id FROM mas_runs WHERE trace_id = ?",
+                               (trace_id,)).fetchone()
+        if run is not None and (run["user_id"], run["project_id"]) != (user_id, project_id):
+            raise ValueError(f"run {trace_id} not found for project {project_id}")
         with _saver() as saver:
             existing = compile_graph(saver).get_state({"configurable": {"thread_id": trace_id}})
         if existing.created_at is not None:          # a checkpoint exists — reattach
             return stream_events(trace_id, None)
-
-    if projects.get_project(user_id, project_id) is None:   # eager -> route can 404
-        raise ValueError(f"project {project_id} not found for user {user_id}")
     tid = trace_id or uuid4().hex
     acquire_lease(tid, user_id, project_id, day_number)   # eager: may raise ConcurrentRunError
 
