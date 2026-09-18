@@ -68,6 +68,7 @@ from .services.auth_service import (
     get_current_user,
     get_current_admin_user,
     is_admin,
+    new_project_feed_version,
     get_current_token,
     revoke_token,
     check_current_password,
@@ -530,17 +531,16 @@ async def auth_set_feed_version(
 
 @app.get("/v2/projects")
 async def v2_projects(current_user: dict = Depends(get_current_user)):
-    """Placeholder gated behind the v2 toggle. Phase 7 extends this; for now it
-    only proves the gate works (403 for legacy users, 200 stub for v2 users)."""
-    _require_v2(current_user)
+    """Placeholder listing route (no v2 project listing yet). It reveals nothing, so it
+    has no gate. Feed v2 access is decided per project (see v2_create_project)."""
     return {"status": "not_yet_implemented"}
 
 
 # ── Feed v2 (Phase 5) — project creation + profile agent + coverage override ──
-
-def _require_v2(current_user: dict) -> None:
-    if current_user.get("feed_version") != "v2":
-        raise HTTPException(status_code=403, detail="Feed v2 is not enabled for this account")
+# feed_version belongs to the PROJECT, fixed at creation: a v2_projects row IS a Feed
+# v2 project. Creation is gated by new_project_feed_version (NEW_PROJECTS_FEED_VERSION,
+# plus the admin opt-in). The per-project routes below need no user-level gate: each
+# service 404s a project the caller doesn't own.
 
 
 class CreateV2ProjectRequest(BaseModel):
@@ -561,7 +561,8 @@ async def v2_create_project(
 ):
     """Create a v2 project. The profile is NOT generated here — materials are
     attached first, then POST /v2/projects/{id}/profile runs the agent."""
-    _require_v2(current_user)
+    if new_project_feed_version(current_user) != "v2":
+        raise HTTPException(status_code=403, detail="New projects use the legacy feed")
     return v2_projects_service.create_project(
         current_user["user_id"], data.name, data.description, data.difficulty)
 
@@ -574,7 +575,6 @@ async def v2_generate_profile(
     """Run the profile agent over the project's materials. On agent failure the
     project is left with profile_status='failed' (visible + retryable) and NO fake
     profile — re-POST this endpoint to retry."""
-    _require_v2(current_user)
     try:
         return v2_projects_service.generate_profile(current_user["user_id"], project_id)
     except ValueError as exc:
@@ -590,7 +590,6 @@ async def v2_set_coverage(
     current_user: dict = Depends(get_current_user),
 ):
     """User override of the inferred coverage_mode (one write) + confirm."""
-    _require_v2(current_user)
     try:
         return v2_projects_service.set_coverage_mode(
             current_user["user_id"], project_id, data.coverage_mode, data.confirmed)
@@ -606,7 +605,6 @@ async def v2_plan_journey(
     """Plan + append the next journey batch (7-20 days, or the document's chapter
     count in material_bound mode). On planner failure the project is left with
     journey_status='failed' (visible) and NO fake plan row — re-POST to retry."""
-    _require_v2(current_user)
     try:
         return v2_journeys_service.plan_next_batch(current_user["user_id"], project_id)
     except ValueError as exc:
@@ -631,7 +629,6 @@ async def v2_generate_stream(
     existing trace_id reattaches to that run via the checkpointer instead of starting
     a new one. The concurrency lease is acquired eagerly, so a second run for the same
     (project, day) is rejected here with 409 by mas_runs' unique index."""
-    _require_v2(current_user)
     try:
         gen = v2_graph.start_feed_stream(
             current_user["user_id"], project_id, data.day_number, data.trace_id)

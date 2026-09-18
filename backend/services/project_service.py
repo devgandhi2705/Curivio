@@ -64,8 +64,8 @@ def create_project(
     with get_connection() as conn:
         conn.execute(
             """INSERT INTO learning_projects
-               (project_id, name, description, keywords, difficulty, color, daily_core_article_count, created_at, updated_at, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (project_id, name, description, keywords, difficulty, color, daily_core_article_count, created_at, updated_at, user_id, feed_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy')""",
             (project_id, name, description,
              json.dumps(keywords or []), difficulty, color,
              count, now, now, user_id),

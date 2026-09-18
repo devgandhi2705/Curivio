@@ -290,6 +290,10 @@ MIGRATE_V2_PROJECTS_ADD_PROFILE_STATUS      = "ALTER TABLE v2_projects ADD COLUM
 # journey_plans.shape did); description_hash powers the shape-lock freshness check.
 MIGRATE_V2_PROJECTS_ADD_JOURNEY_SHAPE       = "ALTER TABLE v2_projects ADD COLUMN journey_shape TEXT"
 MIGRATE_V2_PROJECTS_ADD_JOURNEY_STATUS      = "ALTER TABLE v2_projects ADD COLUMN journey_status TEXT"
+# Pre-Phase-13: explicit per-project feed_version. Every v2_projects row is a Feed v2
+# project (learning_projects rows are the legacy ones), so the column is constant.
+MIGRATE_V2_PROJECTS_ADD_FEED_VERSION = (
+    "ALTER TABLE v2_projects ADD COLUMN feed_version TEXT NOT NULL DEFAULT 'v2' CHECK(feed_version = 'v2')")
 MIGRATE_V2_JOURNEY_PLANS_ADD_SHAPE          = "ALTER TABLE v2_journey_plans ADD COLUMN shape TEXT"
 MIGRATE_V2_JOURNEY_PLANS_ADD_DESC_HASH      = "ALTER TABLE v2_journey_plans ADD COLUMN description_hash TEXT"
 
@@ -307,6 +311,7 @@ V2_MIGRATIONS: list[str] = [
     MIGRATE_V2_PROJECTS_ADD_JOURNEY_STATUS,
     MIGRATE_V2_JOURNEY_PLANS_ADD_SHAPE,
     MIGRATE_V2_JOURNEY_PLANS_ADD_DESC_HASH,
+    MIGRATE_V2_PROJECTS_ADD_FEED_VERSION,
 ]
 
 

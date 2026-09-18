@@ -67,8 +67,8 @@ def create_project(user_id: str, name: str, description: str = "",
         conn.execute(
             """INSERT INTO v2_projects
                    (project_id, user_id, name, description, difficulty,
-                    intent_confirmed, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 0, ?, ?)""",
+                    intent_confirmed, feed_version, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 0, 'v2', ?, ?)""",
             (project_id, user_id, name, description, difficulty or "intermediate", now, now),
         )
     logger.info("[feed_v2.projects] created %s for user %s", project_id, user_id)

@@ -24,7 +24,7 @@ from ..utils.db import get_connection
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me-in-production-use-a-long-random-string")
 ALGORITHM  = "HS256"
 from ..config import AUTH_TOKEN_EXPIRE_DAYS as TOKEN_EXPIRE_DAYS
-from ..config import ADMIN_EMAILS
+from ..config import ADMIN_EMAILS, NEW_PROJECTS_FEED_VERSION
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -191,7 +191,12 @@ def update_profile(user_id: str, name: str | None, email: str | None) -> dict:
 # ── Feed v2 toggle (Phase 1) ──────────────────────────────────────────────────
 
 def set_feed_version(user_id: str, feed_version: str) -> dict:
-    """Write side of the Feed v2 toggle. Sets users.feed_version for one user.
+    """Write side of the admin's Feed v2 opt-in. Sets users.feed_version for one user.
+
+    Since pre-Phase-13 this does NOT decide any existing project's feed: a project's
+    feed_version is fixed at creation. It only lets an admin's own NEW projects be
+    created as v2 while NEW_PROJECTS_FEED_VERSION is still 'legacy' (dev/test). See
+    new_project_feed_version.
 
     Returns the refreshed user dict (same shape as get_current_user) so callers
     can hand it straight back to the frontend.
@@ -729,6 +734,21 @@ def is_admin(user: dict) -> bool:
     """True if the user's email is in ADMIN_EMAILS (comma-separated, case-insensitive)."""
     admin_emails = {e.strip().lower() for e in ADMIN_EMAILS.split(",") if e.strip()}
     return user["email"].lower() in admin_emails
+
+
+def new_project_feed_version(user: dict) -> str:
+    """The feed a NEW project created by `user` belongs to, decided once at creation.
+
+    NEW_PROJECTS_FEED_VERSION is the default for everyone; going live with Feed v2 means
+    setting it to 'v2'. Before then, an admin who opted in via the admin-only
+    PATCH /auth/me/feed-version gets v2 for their own new projects (dev/test).
+    Existing projects never change.
+    """
+    if NEW_PROJECTS_FEED_VERSION not in ("legacy", "v2"):
+        raise ValueError(f"NEW_PROJECTS_FEED_VERSION must be 'legacy' or 'v2', got {NEW_PROJECTS_FEED_VERSION!r}")
+    if NEW_PROJECTS_FEED_VERSION == "v2":
+        return "v2"
+    return "v2" if is_admin(user) and user.get("feed_version") == "v2" else "legacy"
 
 
 def get_current_admin_user(current_user: dict = Depends(get_current_user)) -> dict:

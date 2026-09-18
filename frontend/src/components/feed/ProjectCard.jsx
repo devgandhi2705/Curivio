@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react"
-import { useAuth } from "../../contexts/AuthContext.jsx"
 
 const COLOR_GRAD = {
   blue:    "from-blue-500 to-blue-600",
@@ -32,8 +31,8 @@ function DotsIcon() {
 }
 
 export default function ProjectCard({ project, progression, isActive, onSelect, onRename, onEdit, onDelete }) {
-  const { user } = useAuth()
-  const isLegacyFeed = (user?.feed_version || "legacy") === "legacy"
+  // feed_version belongs to the project, fixed at creation (not the user's setting)
+  const isLegacyFeed = (project.feed_version || "legacy") === "legacy"
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 

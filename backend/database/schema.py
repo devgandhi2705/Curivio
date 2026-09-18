@@ -972,6 +972,14 @@ MIGRATE_ADD_USER_FEED_VERSION = (
     "CHECK(feed_version IN ('legacy','v2'))"
 )
 
+# Pre-Phase-13: feed_version lives on the PROJECT, fixed at creation. Every
+# learning_projects row is a legacy-feed project; NOT NULL DEFAULT 'legacy' gives every
+# existing row an explicit 'legacy', with no NULLs and nothing inferred later.
+MIGRATE_ADD_PROJECT_FEED_VERSION = (
+    "ALTER TABLE learning_projects ADD COLUMN feed_version TEXT NOT NULL DEFAULT 'legacy' "
+    "CHECK(feed_version IN ('legacy','v2'))"
+)
+
 # Feed v2 (Phase 3) — trace_id/agent_name/step_index/surface on llm_call_log so
 # a v2 multi-agent run's child calls can be grouped by trace_id and every row
 # tagged with its surface. Additive + nullable — legacy call_logger never sets
@@ -1208,6 +1216,7 @@ MIGRATIONS = [
     MIGRATE_ADD_CHAT_MESSAGES_THINKING,
     MIGRATE_ADD_CHAT_MESSAGES_BLOCKS,
     MIGRATE_ADD_USER_FEED_VERSION,
+    MIGRATE_ADD_PROJECT_FEED_VERSION,
     MIGRATE_ADD_LLM_CALL_LOG_TRACE_ID,
     MIGRATE_ADD_LLM_CALL_LOG_AGENT_NAME,
     MIGRATE_ADD_LLM_CALL_LOG_STEP_INDEX,

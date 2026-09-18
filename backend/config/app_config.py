@@ -98,6 +98,12 @@ AUTH_TOKEN_EXPIRE_DAYS = 30
 # Comma-separated allowlist of admin emails. Same shape as CORS_ORIGINS below.
 ADMIN_EMAILS = os.getenv("ADMIN_EMAILS", "")
 
+# ── Feed version for NEW projects ────────────────────────────────────────────
+# "legacy" | "v2". Decides once, at creation, which feed system a new project
+# belongs to. Existing projects never change. See
+# auth_service.new_project_feed_version.
+NEW_PROJECTS_FEED_VERSION = os.getenv("NEW_PROJECTS_FEED_VERSION", "legacy")
+
 # ── Feature flags ────────────────────────────────────────────────────────────
 # Phase 9.3.4C: replace single LLM call with N writer calls + merge.
 # Default False — single-call path unchanged until explicitly enabled.
