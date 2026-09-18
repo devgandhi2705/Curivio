@@ -113,9 +113,11 @@ def test_resume_after_crash(db, capsys):
     cfg = {"configurable": {"thread_id": "run1"}}
     G._CRASH_ONCE = {"source_ranker"}
     with pytest.raises(RuntimeError):
-        G.compile_graph(G._saver()).invoke(_base("run1"), cfg)
+        with G._saver() as saver:
+            G.compile_graph(saver).invoke(_base("run1"), cfg)
     before = list(G._EXEC_LOG)
-    final = G.compile_graph(G._saver()).invoke(None, cfg)   # None -> resume from checkpoint
+    with G._saver() as saver:                                 # a NEW connection, like a restart
+        final = G.compile_graph(saver).invoke(None, cfg)      # None -> resume from checkpoint
     with capsys.disabled():
         print(f"\nexec before crash: {before}\nexec after resume: {G._EXEC_LOG}")
     assert G._EXEC_LOG.count("lesson_planner") == 1          # NOT restarted from node 1
@@ -182,7 +184,8 @@ def test_sse_reconnect_resumes_not_restarts(db, capsys):
     cfg = {"configurable": {"thread_id": "recon"}}
     G._CRASH_ONCE = {"source_ranker"}
     with pytest.raises(RuntimeError):
-        G.compile_graph(G._saver()).invoke(_base("recon"), cfg)   # partial checkpoint
+        with G._saver() as saver:
+            G.compile_graph(saver).invoke(_base("recon"), cfg)   # partial checkpoint
     # reconnect with the same trace_id -> resume from the checkpoint
     events = [json.loads(e) for e in G.stream_events("recon", None)]
     agents = [e.get("agent") for e in events if e["t"] in ("node", "loop")]

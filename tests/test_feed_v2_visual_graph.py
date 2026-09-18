@@ -156,3 +156,44 @@ def test_full_graph_visual_nodes_stay_stubbed_offline(db, monkeypatch, capsys):
     assert final.get("visual_specs") == []
     assert final.get("visual_assets") == []
     assert "visual_director" in G._EXEC_LOG and "visual_sourcing" in G._EXEC_LOG
+
+
+def test_render_unavailable_run_completes_and_is_recorded(db, monkeypatch, capsys):
+    """Phase 12b: headless Chromium can't launch (REAL launch failure — browser path
+    pointed at nothing). The day still runs through claim_validator -> assembler, the
+    beats are visual-less, and the reason is queryable in mas_runs.degraded_reason.
+    Real SqliteSaver checkpointer (Phase 12c fixed the WAL lock that needed a workaround)."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/nonexistent-phase12b")
+    G.USE_REAL_VISUAL_DIRECTOR = True
+    G.USE_REAL_VISUAL_SOURCING = True
+    monkeypatch.setattr(G.visual_director_agent, "run_visual_director", lambda **k: {"visual_specs": [
+        {"section_n": 1, "beat_index": i, "visual_type": "process", "topic": "t", "citations": []}
+        for i in range(2)]})
+    monkeypatch.setattr(VS, "call_agent", lambda *a, **k: {"title": "x", "steps": ["a", "b"]})
+    monkeypatch.setattr(VS, "_try_tier1", lambda spec, project_id: None)
+
+    proj = P.create_project("u1", "X", "y", "intermediate")
+    pid = proj["project_id"]
+    with v2db.get_connection() as c:
+        c.execute("UPDATE v2_projects SET coverage_mode='open', profile_status='ready' WHERE project_id=?", (pid,))
+
+    trace_id, final = G.run_graph("u1", pid, 1)
+    with v2db.get_connection() as c:
+        row = dict(c.execute("SELECT status, degraded_reason FROM mas_runs WHERE trace_id=?", (trace_id,)).fetchone())
+
+    # the SSE route's real path (start_feed_stream -> stream_events) must record it too
+    lines = list(G.start_feed_stream("u1", pid, 2))
+    stream_tid = json.loads(lines[0])["trace_id"]
+    with v2db.get_connection() as c:
+        srow = dict(c.execute("SELECT status, degraded_reason FROM mas_runs WHERE trace_id=?", (stream_tid,)).fetchone())
+    with capsys.disabled():
+        print(f"\nstream mas_runs={srow}")
+    assert srow["status"] == "done" and "render unavailable" in (srow["degraded_reason"] or "")
+    with capsys.disabled():
+        print(f"\nassets={[(a['validated'], a['reason'][:60]) for a in final['visual_assets']]}"
+              f"\nassembled={bool(final.get('assembled'))} exec_tail={G._EXEC_LOG[-3:]}\nmas_runs={row}")
+    assert final.get("assembled")
+    assert G._EXEC_LOG[-3:] == ["visual_sourcing", "claim_validator", "assembler"]
+    assert [a["validated"] for a in final["visual_assets"]] == [False, False]
+    assert row["status"] == "done"
+    assert "render unavailable" in (row["degraded_reason"] or "")

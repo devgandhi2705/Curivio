@@ -21,6 +21,11 @@ _db_path_env = os.getenv("DB_PATH", "")
 DB_PATH = Path(_db_path_env) if _db_path_env else Path(__file__).resolve().parents[3] / "data" / "curivio.db"
 
 
+# Rollback-journal writers queue behind each other; under concurrent feed_v2 runs + app
+# traffic sqlite3's 5s default expired (measured 5.18s). A writer waits its turn instead.
+_BUSY_TIMEOUT_S = 30.0
+
+
 @contextmanager
 def get_connection():
     """Yield a sqlite3 connection that auto-commits on success and rolls back on error.
@@ -28,17 +33,23 @@ def get_connection():
     Mirrors backend/utils/db.py's get_connection (WAL, foreign keys, sqlite-vec)
     but is a standalone function — v2 does not import the legacy db module.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # DELETE, not WAL: WAL needs a memory-mapped -shm file shared between
-    # connections, which doesn't work on network-backed storage (HF Spaces'
-    # persistent /data volume) and was corrupting curivio.db's schema catalog.
-    # Matches backend/utils/db.py's get_connection — same shared file.
-    conn.execute("PRAGMA journal_mode=DELETE")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+    conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_S)
+    try:
+        conn.row_factory = sqlite3.Row
+        # DELETE, not WAL: WAL needs a memory-mapped -shm file shared between
+        # connections, which doesn't work on network-backed storage (HF Spaces'
+        # persistent /data volume) and was corrupting curivio.db's schema catalog.
+        # Matches backend/utils/db.py's get_connection — same shared file.
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+    except Exception:
+        # A connection that failed its setup must not outlive this call: if the file is
+        # in WAL, it stays attached and keeps every later journal_mode switch locked.
+        conn.close()
+        raise
     try:
         yield conn
         conn.commit()

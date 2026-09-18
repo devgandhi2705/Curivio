@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 from uuid import uuid4
@@ -294,12 +296,18 @@ def visual_sourcing(state: FeedState) -> dict:
     _crash_if_rigged("visual_sourcing")
     if not USE_REAL_VISUAL_SOURCING:
         return {"visual_assets": []}
-    return visual_sourcing_agent.run_visual_sourcing(
+    out = visual_sourcing_agent.run_visual_sourcing(
         visual_specs=state.get("visual_specs") or [],
         project_id=state.get("project_id"),
         ranked_sources=state.get("ranked_sources") or [],
         meta={"trace_id": state.get("trace_id"), "user_id": state.get("user_id"),
               "project_id": state.get("project_id"), "day_number": state.get("day_number")})
+    # Phase 12b: a render-unavailable note is APPENDED to any earlier degraded_reason
+    # (source_ranker's) instead of overwriting it; skipped if a rewrite loop re-adds it.
+    note, prior = out.pop("degraded_reason", None), state.get("degraded_reason")
+    if note and note not in (prior or ""):
+        out["degraded_reason"] = f"{prior}; {note}" if prior else note
+    return out
 
 
 def claim_validator(state: FeedState) -> dict:
@@ -385,18 +393,43 @@ def build_graph() -> StateGraph:
 
 
 # ── Checkpointer: SqliteSaver on the SAME curivio.db (its own connection) ──────
-def _saver() -> SqliteSaver:
-    """A SqliteSaver over a dedicated connection to v2db.DB_PATH — the SAME file the
-    rest of v2 uses (its checkpoints/writes tables just coexist with the v2 tables).
-    Separate connection on purpose: the saver doesn't need sqlite-vec/FK, and v2's
-    get_connection stays untouched. Reads DB_PATH at call time so tests' monkeypatch
-    of v2db.DB_PATH is honored."""
-    conn = sqlite3.connect(str(v2db.DB_PATH), check_same_thread=False)
-    # DELETE, not WAL — see v2db.get_connection's comment: WAL doesn't work on
-    # HF Spaces' network-backed persistent volume and was corrupting this
-    # shared curivio.db file's schema catalog.
-    conn.execute("PRAGMA journal_mode=DELETE")
-    return SqliteSaver(conn)
+# SqliteSaver.setup() runs `PRAGMA journal_mode=WAL`. On the SHARED curivio.db that
+# (a) is the mode that corrupted it on HF's network-backed /data volume, and (b) while
+# the saver's connection is open, every other connection's per-connect
+# `PRAGMA journal_mode=DELETE` (feed_v2's AND the legacy app's get_connection) fails
+# instantly with "database is locked". The WAL->DELETE switch needs exclusive access and
+# skips the busy handler, so no busy_timeout helps. Only that one statement is dropped,
+# on this connection; the checkpoint tables themselves are unchanged.
+_WAL_PRAGMA_RE = re.compile(r"PRAGMA\s+journal_mode\s*=\s*WAL\s*;?", re.IGNORECASE)
+# Rollback-journal mode: a writer waits for readers, so give checkpoint writes room to
+# wait out concurrent runs + app traffic instead of the 5s sqlite3 default.
+_SAVER_BUSY_TIMEOUT_S = 30.0
+
+
+class _NoWalConnection(sqlite3.Connection):
+    def executescript(self, sql_script):  # SqliteSaver.setup() is the only caller
+        return super().executescript(_WAL_PRAGMA_RE.sub("", sql_script))
+
+
+@contextmanager
+def _saver():
+    """A SqliteSaver over its own connection to v2db.DB_PATH (the SAME file the rest of
+    v2 uses; its checkpoints/writes tables coexist with the v2 tables), CLOSED on exit.
+    One connection per run, the from_conn_string pattern. The old version opened one
+    per call and never closed it, so the WAL-attached connection outlived the run.
+    Reads DB_PATH at call time so tests' monkeypatch of v2db.DB_PATH is honored."""
+    conn = sqlite3.connect(str(v2db.DB_PATH), check_same_thread=False,
+                           timeout=_SAVER_BUSY_TIMEOUT_S, factory=_NoWalConnection)
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")   # no-op unless an old run left the file in WAL
+        saver = SqliteSaver(conn)
+        saver.setup()
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if mode.lower() != "delete":   # a langgraph upgrade changed the pragma text — fail loudly
+            raise RuntimeError(f"checkpointer left curivio.db in journal_mode={mode!r}, expected 'delete'")
+        yield saver
+    finally:
+        conn.close()
 
 
 def compile_graph(checkpointer=None):
@@ -498,8 +531,9 @@ def run_graph(user_id: str, project_id: str, day_number: int) -> tuple[str, Feed
     acquire_lease(trace_id, user_id, project_id, day_number)
     cfg = {"configurable": {"thread_id": trace_id}}
     try:
-        final = compile_graph(_saver()).invoke(seed_state(user_id, project_id, day_number, trace_id), cfg)
-        finalize_run(trace_id, "done")
+        with _saver() as saver:
+            final = compile_graph(saver).invoke(seed_state(user_id, project_id, day_number, trace_id), cfg)
+        finalize_run(trace_id, "done", degraded_reason=final.get("degraded_reason"))
         return trace_id, final
     except Exception as exc:
         finalize_run(trace_id, "failed", error=str(exc))
@@ -513,22 +547,26 @@ _LOOP_LABELS = {
 }
 
 
-def stream_events(trace_id: str, initial: FeedState | None):
+def stream_events(trace_id: str, initial: FeedState | None, sink: dict | None = None):
     """Yield one NDJSON line per node transition. initial=None RESUMES an existing
     checkpoint for trace_id (reattach); a real seed state starts fresh. A node seen a
-    second time is labeled a loop-back event so the UI can show 'searching again'."""
-    app = compile_graph(_saver())
+    second time is labeled a loop-back event so the UI can show 'searching again'.
+    sink (optional) receives the latest degraded_reason any node wrote, for finalize_run."""
     cfg = {"configurable": {"thread_id": trace_id}}
     seen: set[str] = set()
     yield json.dumps({"t": "start", "trace_id": trace_id, "resumed": initial is None}) + "\n"
-    for chunk in app.stream(initial, cfg, stream_mode="updates"):
-        for node in chunk:
-            if node in seen and node in _LOOP_LABELS:
-                yield json.dumps({"t": "loop", "agent": node, "label": _LOOP_LABELS[node],
-                                  "trace_id": trace_id}) + "\n"
-            else:
-                yield json.dumps({"t": "node", "agent": node, "trace_id": trace_id}) + "\n"
-            seen.add(node)
+    # the connection closes when the stream ends OR the client disconnects (GeneratorExit)
+    with _saver() as saver:
+        for chunk in compile_graph(saver).stream(initial, cfg, stream_mode="updates"):
+            for node, update in chunk.items():
+                if sink is not None and isinstance(update, dict) and update.get("degraded_reason"):
+                    sink["degraded_reason"] = update["degraded_reason"]
+                if node in seen and node in _LOOP_LABELS:
+                    yield json.dumps({"t": "loop", "agent": node, "label": _LOOP_LABELS[node],
+                                      "trace_id": trace_id}) + "\n"
+                else:
+                    yield json.dumps({"t": "node", "agent": node, "trace_id": trace_id}) + "\n"
+                seen.add(node)
     yield json.dumps({"t": "done", "trace_id": trace_id}) + "\n"
 
 
@@ -539,7 +577,8 @@ def start_feed_stream(user_id: str, project_id: str, day_number: int,
     stream. If trace_id names an existing checkpoint, RESUME it (reattach) with no new
     lease. Returns a generator of NDJSON lines."""
     if trace_id:
-        existing = compile_graph(_saver()).get_state({"configurable": {"thread_id": trace_id}})
+        with _saver() as saver:
+            existing = compile_graph(saver).get_state({"configurable": {"thread_id": trace_id}})
         if existing.created_at is not None:          # a checkpoint exists — reattach
             return stream_events(trace_id, None)
 
@@ -550,8 +589,9 @@ def start_feed_stream(user_id: str, project_id: str, day_number: int,
 
     def _gen():
         try:
-            yield from stream_events(tid, seed_state(user_id, project_id, day_number, tid))
-            finalize_run(tid, "done")
+            sink: dict = {}
+            yield from stream_events(tid, seed_state(user_id, project_id, day_number, tid), sink)
+            finalize_run(tid, "done", degraded_reason=sink.get("degraded_reason"))
         except Exception as exc:  # noqa: BLE001
             finalize_run(tid, "failed", error=str(exc))
             yield json.dumps({"t": "error", "message": str(exc), "trace_id": tid}) + "\n"
