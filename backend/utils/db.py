@@ -191,6 +191,11 @@ def build_set_clause(keys) -> str:
     return ", ".join(f"{k} = ?" for k in keys)
 
 
+# Rollback-journal writers queue behind each other; under concurrent feed_v2 runs + app
+# traffic sqlite3's 5s default expired (measured 5.18s). A writer waits its turn instead.
+_BUSY_TIMEOUT_S = 30.0
+
+
 @contextmanager
 def get_connection():
     """Yield a sqlite3 connection that auto-commits on success and rolls back on error."""
@@ -200,7 +205,7 @@ def get_connection():
     # to a concurrent rebuild (a plain connect racing a mid-flight recovery
     # in another process/thread and seeing a half-built db).
     with _cross_process_lock():
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_S)
         conn.row_factory = sqlite3.Row          # rows accessible as dicts
         try:
             # DELETE (rollback journal), not WAL: WAL needs a memory-mapped -shm
@@ -212,11 +217,11 @@ def get_connection():
             # idempotent — a no-op once the on-disk file is already DELETE mode.
             conn.execute("PRAGMA journal_mode=DELETE")
         except sqlite3.DatabaseError as exc:
+            conn.close()   # never leak it: a WAL-attached leftover keeps later pragmas locked
             if not any(marker in str(exc).lower() for marker in _CORRUPTION_MARKERS):
                 raise
-            conn.close()
             _recover_from_corruption()
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=_BUSY_TIMEOUT_S)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA foreign_keys=ON")
