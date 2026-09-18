@@ -6,12 +6,13 @@ TWO paths:
     reject an obvious logo/ad/tracking pixel. NOT a full vision judgment (image_ingestor
     elsewhere already owns vision+OCR; re-running that per candidate image would be a
     second LLM call per beat for a cheap mechanical check this handles directly).
-  - Generated (tier 3): rendered HEADLESS (Playwright/Chromium — already an installed
-    dependency, first real consumer in this codebase) and checked programmatically for
-    out-of-bounds elements and overlapping boxes.
+  - Generated (tier 3): rendered HEADLESS (Playwright/Chromium — pinned in
+    requiremnts.txt, browser + system libs installed by the Dockerfile since Phase 12b)
+    and checked programmatically for out-of-bounds elements and overlapping boxes. If
+    the browser can't start, RenderUnavailable is raised and the caller degrades.
 
 No headless SVG rendering wrapper existed before this phase (confirmed absent
-repo-wide); this module is that wrapper — no new dependency added.
+repo-wide); this module is that wrapper.
 
 Isolation: feed_v2's own modules + stdlib/third-party only. Never
 backend.services.* / backend.llm.*.
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import io
 import logging
-from functools import lru_cache
+from contextlib import contextmanager
 
 import requests
 
@@ -29,17 +30,49 @@ logger = logging.getLogger(__name__)
 _MIN_DIM_PX = 80          # below this on either side: almost certainly an icon/tracking pixel
 _MAX_ASPECT_RATIO = 6.0   # a real figure isn't a 1x1000 banner strip
 _FETCH_TIMEOUT_S = 15
+# Wikimedia 403s requests' default UA ("Please set a user-agent"). Contact = the public Space.
+_FETCH_HEADERS = {"User-Agent": "Curivio/1.0 (+https://huggingface.co/spaces/Devg-01/Curivio)"}
 
 _BOUNDS_TOLERANCE_PX = 1.0   # sub-pixel rounding slack in the out-of-bounds check
 
 
-@lru_cache(maxsize=1)
+class RenderUnavailable(Exception):
+    """The headless browser can't START (playwright not installed, browser binary or
+    shared libs missing). An ENVIRONMENT failure, not a verdict on the SVG — raised only
+    from import/launch, never from rendering or checking, so a broken SVG still comes
+    back as (False, reason)."""
+
+
+def _launch_error_line(exc: Exception) -> str:
+    """Playwright's launch error is a multi-KB launch log; keep the line that names the
+    cause (e.g. '... libglib-2.0.so.0: cannot open shared object file')."""
+    lines = [ln.strip() for ln in str(exc).splitlines() if ln.strip()] or [type(exc).__name__]
+    return next((ln for ln in lines if "[err]" in ln or "doesn't exist" in ln), lines[0])[:300]
+
+
+@contextmanager
 def _browser():
-    """One headless Chromium instance, reused for the process lifetime — same
-    lazy-singleton shape as embeddings.py's _client() / figures.py's _r2_client()."""
-    from playwright.sync_api import sync_playwright
-    pw = sync_playwright().start()
-    return pw.chromium.launch()
+    """A fresh headless Chromium per use. NOT a process-wide singleton: sync Playwright
+    objects are bound to the thread that created them, and FastAPI iterates the feed
+    stream on threadpool workers — a cached browser raised 'cannot switch to a
+    different thread' on the next run.
+    ponytail: launch per validation; a per-thread cache only if launch cost shows up."""
+    try:
+        from playwright.sync_api import sync_playwright
+        pw = sync_playwright().start()
+    except Exception as exc:  # noqa: BLE001 — any failure to start is environmental
+        raise RenderUnavailable(f"playwright unavailable: {_launch_error_line(exc)}") from exc
+    try:
+        try:
+            browser = pw.chromium.launch()
+        except Exception as exc:  # noqa: BLE001
+            raise RenderUnavailable(f"chromium launch failed: {_launch_error_line(exc)}") from exc
+        try:
+            yield browser      # render/check errors propagate as-is — NOT RenderUnavailable
+        finally:
+            browser.close()
+    finally:
+        pw.stop()
 
 
 # ── sourced image path (tier 1 / tier 2) ──────────────────────────────────────
@@ -64,7 +97,7 @@ def fetch_web_image_bytes(url: str) -> bytes | None:
     logged and treated as an unvalidatable candidate (caller moves on), same pattern
     web_researcher._fetch uses for a failed page fetch."""
     try:
-        resp = requests.get(url, timeout=_FETCH_TIMEOUT_S)
+        resp = requests.get(url, timeout=_FETCH_TIMEOUT_S, headers=_FETCH_HEADERS)
         resp.raise_for_status()
         return resp.content
     except Exception as exc:
@@ -107,12 +140,10 @@ _CHECK_JS = """
 def validate_generated_svg(svg_markup: str) -> tuple[bool, str]:
     """Render svg_markup headless, check for out-of-bounds elements and overlapping
     boxes. Returns (ok, reason)."""
-    page = _browser().new_page()
-    try:
+    with _browser() as browser:
+        page = browser.new_page()
         page.set_content(f"<!DOCTYPE html><html><body style='margin:0'>{svg_markup}</body></html>")
         result = page.evaluate(_CHECK_JS)
-    finally:
-        page.close()
     problems = []
     if result["out_of_bounds"]:
         problems.append(f"{result['out_of_bounds']} element(s) out of bounds")
@@ -130,7 +161,8 @@ def _demo() -> None:
     from . import svg_templates
 
     try:
-        _browser()
+        with _browser():
+            pass
     except Exception as exc:
         print(f"visual_validator._demo SKIPPED (no headless browser available: {exc})")
         return

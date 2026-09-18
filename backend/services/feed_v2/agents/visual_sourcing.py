@@ -8,7 +8,8 @@ into a real asset, three tiers in order:
           search, figures.py's own caption embed).
   Tier 2: images from the beat's OWN cited ranked web sources (Phase 9c
           `images` on each web finding). The beat's citations are the join key
-          — deterministic, never re-guessed by similarity.
+          — deterministic, never re-guessed by similarity. Logos/icons and SVG
+          are skipped unfetched; up to TIER2_MAX_FETCHES candidates are tried.
   Tier 3: generate from a fixed template (svg_templates) — the model fills
           CONTENT into the template's schema; svg_templates owns all layout.
 
@@ -30,6 +31,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from itertools import islice
+from urllib.parse import urlsplit
 
 from . import svg_templates, visual_validator
 from .section_writer import _assign_ids
@@ -41,8 +45,25 @@ logger = logging.getLogger(__name__)
 
 # Cosine similarity floor for a tier-1 caption match to count as "real" — below this,
 # nearest-neighbour is nearest, not relevant (matches corpus_researcher's stance that
-# a vector NN is only ever a candidate, not a guarantee).
-TIER1_MIN_SIMILARITY = 0.5
+# a vector NN is only ever a candidate, not a guarantee). Calibrated on real
+# gemini-embedding-001 scores (2026-09-18): unrelated text ~0.49, same-domain WRONG
+# figure 0.55-0.62, true match 0.64-0.85. 0.5 was the noise floor and took every
+# near-miss. A missed true match still gets a tier-2/3 visual; a wrong figure doesn't.
+TIER1_MIN_SIMILARITY = 0.65
+
+# Tier 2: at most this many candidate images fetched per beat. Real pages carry ~20-66
+# image links; most early ones are site chrome, so a few tries find the first real figure
+# (Wikipedia: 3rd fetch) without fetching the whole page's worth.
+TIER2_MAX_FETCHES = 5
+
+# Skipped WITHOUT fetching. SVG: Pillow can't open it, so it can only fail validation.
+# The check is on the URL path's own extension, so Wikimedia's rasterised thumbnails
+# ('.../500px-Photosynthesis_en.svg.png') are kept. Logo/icon: a path segment or
+# filename token (delimited by / _ - . =) naming site chrome, so 'silicon' doesn't match.
+_SVG_EXTS = (".svg", ".svgz")
+_CHROME_IMAGE_RE = re.compile(
+    r"(?:^|[/_\-.=])(?:logos?|icons?|favicon|avatars?|badges?|sprites?|wordmark|tagline|emoji|spinner)"
+    r"(?=[/_\-.=0-9]|$)")
 
 _FILL_SYSTEM = (
     "You write the CONTENT for a diagram template — the layout is fixed by code, you "
@@ -88,18 +109,31 @@ def source_tier1(spec: dict, project_id: str) -> dict | None:
 
 
 # ── Tier 2: images from the beat's own cited web sources ───────────────────────
-def source_tier2(spec: dict, ranked_sources: list[dict]) -> dict | None:
-    """The first image from the first cited web source that has one. citations are
-    the beat's own s1..sN — reproduced deterministically, never re-guessed."""
+def _skip_image_url(url: str) -> bool:
+    """True for an SVG or a logo/icon/avatar/badge-style URL — never worth a fetch."""
+    path = urlsplit(url).path.lower()
+    return (path.endswith(_SVG_EXTS) or url.lower().startswith("data:image/svg")
+            or bool(_CHROME_IMAGE_RE.search(path)))
+
+
+def _tier2_candidates(spec: dict, ranked_sources: list[dict]):
+    """Every non-skipped image of the beat's cited web sources, in citation then page
+    order. citations are the beat's own s1..sN — reproduced deterministically, never
+    re-guessed."""
     ided = _assign_ids(ranked_sources or [])
     by_id = {s["source_id"]: s for s in ided}
     for cid in spec.get("citations") or []:
         s = by_id.get(cid)
         if s and s.get("src") == "web":
             for img_url in (s.get("images") or []):
-                return {"tier": 2, "kind": "web_image", "url": img_url, "source_id": cid,
-                       "source_url": s.get("url")}
-    return None
+                if img_url and not _skip_image_url(img_url):
+                    yield {"tier": 2, "kind": "web_image", "url": img_url, "source_id": cid,
+                           "source_url": s.get("url")}
+
+
+def source_tier2(spec: dict, ranked_sources: list[dict]) -> dict | None:
+    """The first candidate image (logos/icons/SVG already skipped), unvalidated."""
+    return next(_tier2_candidates(spec, ranked_sources), None)
 
 
 # ── Tier 3: template-constrained generation ─────────────────────────────────────
@@ -134,17 +168,18 @@ def _try_tier1(spec: dict, project_id: str) -> dict | None:
 
 
 def _try_tier2(spec: dict, ranked_sources: list[dict]) -> dict | None:
-    cand = source_tier2(spec, ranked_sources)
-    if cand is None:
-        return None
-    data = visual_validator.fetch_web_image_bytes(cand["url"])
-    if data is None:
-        return None
-    ok, reason = visual_validator.validate_sourced_image(data)
-    if not ok:
-        logger.info("[feed_v2.visual] tier2 candidate rejected (%s): %s", cand["url"], reason)
-        return None
-    return {**cand, "validation_reason": reason}
+    """First candidate that fetches AND validates; a failed one moves on to the next,
+    up to TIER2_MAX_FETCHES. None -> the caller falls through to tier 3."""
+    for cand in islice(_tier2_candidates(spec, ranked_sources), TIER2_MAX_FETCHES):
+        data = visual_validator.fetch_web_image_bytes(cand["url"])
+        if data is None:
+            continue
+        ok, reason = visual_validator.validate_sourced_image(data)
+        if not ok:
+            logger.info("[feed_v2.visual] tier2 candidate rejected (%s): %s", cand["url"], reason)
+            continue
+        return {**cand, "validation_reason": reason}
+    return None
 
 
 def _try_tier3(spec: dict, meta: dict | None) -> dict | None:
@@ -168,17 +203,29 @@ def run_visual_sourcing(*, visual_specs: list[dict], project_id: str, ranked_sou
     section_n/beat_index plus tier/kind/validated (+ the asset payload), or
     tier=None/validated=False when nothing usable was found."""
     assets = []
+    render_down: str | None = None   # set once the headless browser can't start; tier 3 skipped after
     for spec in visual_specs or []:
         asset = _try_tier1(spec, project_id) or _try_tier2(spec, ranked_sources)
-        if asset is None:
-            asset = _try_tier3(spec, meta)
+        if asset is None and render_down is None:
+            try:
+                asset = _try_tier3(spec, meta)
+            except visual_validator.RenderUnavailable as exc:
+                # Environment failure, not a verdict: this beat goes visual-less and the
+                # run carries on. A broken SVG never lands here (it's a (False, reason)).
+                render_down = str(exc)
+                logger.warning("[feed_v2.visual] headless render unavailable, tier 3 off for this run: %s", exc)
         if asset is None:
             asset = _try_tier2(spec, ranked_sources)   # last resort after generation fails twice
         if asset is not None:
             assets.append({**spec, **asset, "validated": True})
         else:
-            assets.append({**spec, "tier": None, "validated": False, "reason": "no visual available"})
+            reason = f"render unavailable: {render_down}" if render_down else "no visual available"
+            assets.append({**spec, "tier": None, "validated": False, "reason": reason})
     logger.info("[feed_v2.visual] sourced %d/%d beat(s) (tiers: %s)",
                sum(1 for a in assets if a["validated"]), len(assets),
                [a.get("tier") for a in assets])
-    return {"visual_assets": assets}
+    out: dict = {"visual_assets": assets}
+    if render_down:
+        missed = sum(1 for a in assets if not a["validated"])
+        out["degraded_reason"] = f"visuals: render unavailable, {missed} beat(s) without a visual ({render_down})"
+    return out

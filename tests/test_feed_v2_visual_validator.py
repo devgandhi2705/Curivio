@@ -49,7 +49,7 @@ def test_unreadable_bytes_rejected():
 
 
 def test_web_image_fetch_failure_is_non_fatal(monkeypatch):
-    def boom(url, timeout=None):
+    def boom(url, timeout=None, headers=None):
         raise ConnectionError("dns failure")
     monkeypatch.setattr(V.requests, "get", boom)
     assert V.fetch_web_image_bytes("https://bad.example/x.png") is None
@@ -58,8 +58,8 @@ def test_web_image_fetch_failure_is_non_fatal(monkeypatch):
 # ── generated SVG path (headless render) ────────────────────────────────────────
 def _has_chromium() -> bool:
     try:
-        V._browser()
-        return True
+        with V._browser():
+            return True
     except Exception:
         return False
 
@@ -120,6 +120,29 @@ def test_forced_broken_svg_is_caught(capsys):
 
 
 @pytestmark_browser
+def test_validate_works_from_a_second_thread():
+    """FastAPI iterates the feed stream's sync generator on threadpool workers, so two
+    runs (or two nodes) can validate from different threads. Sync Playwright objects
+    are bound to the thread that created them — a browser cached across threads raises
+    'cannot switch to a different thread'."""
+    import threading
+    svg = T.render("process", {"title": "T", "steps": ["one", "two"]})
+    results = []
+
+    def run():
+        try:
+            results.append(V.validate_generated_svg(svg))
+        except Exception as exc:  # noqa: BLE001
+            results.append(exc)
+
+    for _ in range(2):
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+    assert [r[0] if isinstance(r, tuple) else repr(r) for r in results] == [True, True]
+
+
+@pytestmark_browser
 def test_background_rect_itself_is_not_a_false_positive(capsys):
     """The template's own full-canvas background rect must never trip the overlap
     check just by existing under every other box."""
@@ -128,3 +151,38 @@ def test_background_rect_itself_is_not_a_false_positive(capsys):
     with capsys.disabled():
         print(f"\nbackground-only sanity: ok={ok} ({reason})")
     assert ok
+
+
+# ── Phase 12b: launch failure degrades; a real validation failure does not ────
+def test_launch_failure_raises_render_unavailable(monkeypatch):
+    """A real Chromium launch failure (browser path pointed at nothing — the same
+    'Executable doesn't exist' a container without the browser gets) is an
+    ENVIRONMENT failure: RenderUnavailable, never a (False, reason) verdict."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/nonexistent-phase12b")
+    svg = T.render("process", {"title": "T", "steps": ["one", "two"]})
+    with pytest.raises(V.RenderUnavailable) as ei:
+        V.validate_generated_svg(svg)
+    print(f"\nRenderUnavailable: {ei.value}")
+
+
+def test_missing_playwright_raises_render_unavailable(monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def no_playwright(name, *a, **k):
+        if name.startswith("playwright"):
+            raise ModuleNotFoundError("No module named 'playwright'")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_playwright)
+    with pytest.raises(V.RenderUnavailable):
+        V.validate_generated_svg("<svg/>")
+
+
+@pytestmark_browser
+def test_broken_svg_is_a_verdict_not_render_unavailable():
+    """The degrade path must NOT swallow a real validation failure: a rendered-but-
+    broken SVG still returns (False, reason) so the tier chain regenerates/falls through."""
+    broken = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200' width='400' height='200'>"
+             "<text x='5000' y='20' font-size='14'>way off canvas</text></svg>")
+    ok, reason = V.validate_generated_svg(broken)     # must not raise
+    assert ok is False and "out of bounds" in reason

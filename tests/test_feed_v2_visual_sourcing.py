@@ -119,6 +119,18 @@ def test_tier1_returns_none_below_similarity_floor(db, monkeypatch):
     assert VS.source_tier1(spec, "proj") is None    # bucket 0 vs bucket 1 -> cosine 0.0, below floor
 
 
+def test_tier1_same_domain_near_miss_falls_through(db, monkeypatch):
+    """gemini-embedding-001 scores unrelated text ~0.49 and a same-domain WRONG figure
+    0.55-0.62 (measured). A 0.6 cosine is a near-miss, not a match — must fall through."""
+    monkeypatch.setattr(figures, "embed_query", _fake_embed_by_topic)
+    figures.extract_figures("mA", "u1", "proj",
+                            _pdf_with_figure("Figure 1: Photosynthesis light reactions"), "a.pdf", ".pdf")
+    near = [0.0] * _DIM
+    near[1], near[0] = 0.6, 0.8                          # cosine 0.6 against the bucket-1 caption
+    monkeypatch.setattr(VS, "embed_query", lambda text: near)
+    assert VS.source_tier1({"topic": "the Calvin cycle", "citations": []}, "proj") is None
+
+
 def test_tier1_none_when_project_has_no_figures(db, monkeypatch):
     monkeypatch.setattr(VS, "embed_query", _fake_embed_by_topic)
     spec = {"topic": "anything", "citations": []}
@@ -245,3 +257,116 @@ def test_no_visual_available_when_every_tier_fails(monkeypatch, capsys):
         print(f"\nno visual case -> {asset}")
     assert asset["validated"] is False
     assert asset["tier"] is None
+
+
+# ── Phase 12b: headless render unavailable -> that beat is visual-less, run goes on ──
+def test_render_unavailable_degrades_to_no_visual(monkeypatch, capsys):
+    """REAL Chromium launch failure (browser path pointed at nothing). The beat gets no
+    visual, tier 3 is not retried for later beats (no wasted fill calls), and the reason
+    comes back as degraded_reason for the run record — never an exception."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/nonexistent-phase12b")
+    fills = []
+    monkeypatch.setattr(VS, "call_agent", lambda *a, **k: fills.append(1) or {"title": "x", "steps": ["a", "b"]})
+    monkeypatch.setattr(VS, "_try_tier1", lambda spec, project_id: None)
+    specs = [{"section_n": 1, "beat_index": i, "visual_type": "process", "topic": "t", "citations": []}
+             for i in range(2)]
+    out = VS.run_visual_sourcing(visual_specs=specs, project_id="p", ranked_sources=[])
+    with capsys.disabled():
+        print(f"\nassets={[{k: a[k] for k in ('tier', 'validated', 'reason')} for a in out['visual_assets']]}"
+              f"\ndegraded_reason={out.get('degraded_reason')!r} fill_calls={len(fills)}")
+    assert [a["validated"] for a in out["visual_assets"]] == [False, False]
+    assert all("render unavailable" in a["reason"] for a in out["visual_assets"])
+    assert len(fills) == 1                     # tier 3 skipped once the browser is known down
+    assert "render unavailable" in out["degraded_reason"]
+
+
+def test_real_validation_failure_is_not_reported_as_degraded(monkeypatch):
+    """The degrade path must not absorb a genuine broken-SVG verdict: no degraded_reason,
+    the plain 'no visual available' outcome of the tier chain."""
+    monkeypatch.setattr(VS, "call_agent", lambda *a, **k: {"title": "x", "steps": ["a"]})
+    monkeypatch.setattr(V, "validate_generated_svg", lambda svg: (False, "1 element(s) out of bounds"))
+    out = VS.run_visual_sourcing(visual_specs=[{"section_n": 1, "beat_index": 0, "visual_type": "process",
+                                               "topic": "t", "citations": []}],
+                                 project_id="no-such-project", ranked_sources=[])
+    assert "degraded_reason" not in out
+    assert out["visual_assets"][0]["reason"] == "no visual available"
+
+
+# ── Phase 12b: tier 2 skips logos/icons and SVG, tries the next candidate ─────
+@pytest.mark.parametrize("url,skip", [
+    # real image_links from the Phase 12 cost check (Wikipedia / GeeksforGeeks / MDN)
+    ("https://en.wikipedia.org/static/images/icons/enwiki-25.svg", True),
+    ("https://en.wikipedia.org/static/images/mobile/copyright/wikipedia-wordmark-en-25.svg", True),
+    ("https://media.geeksforgeeks.org/gfg-gg-logo.svg", True),
+    ("https://media.geeksforgeeks.org/auth-dashboard-uploads/Property=Light---Default.svg", True),
+    ("https://mdn.github.io/shared-assets/images/diagrams/http/overview/http-layers.svg", True),
+    ("https://example.com/assets/avatar_42.png", True),
+    ("https://example.com/img/badge-new.png", True),
+    ("https://example.com/favicon.ico", True),
+    # real content images must survive the filter
+    ("https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/Photosynthesis_en.svg/"
+     "500px-Photosynthesis_en.svg.png?utm_source=en.wikipedia.org", False),
+    ("https://media.geeksforgeeks.org/wp-content/uploads/20240925173636/quick-sort--images.webp", False),
+    ("https://example.com/silicon-wafer.jpg", False),          # 'icon' inside a word is not a logo
+])
+def test_tier2_skip_filter_on_real_urls(url, skip):
+    assert VS._skip_image_url(url) is skip
+
+
+def test_tier2_skips_logo_and_svg_then_uses_next_real_image(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(V, "fetch_web_image_bytes", lambda url: fetched.append(url) or _png_bytes())
+    ranked = [{"src": "web", "url": "https://a.com/1", "title": "A", "content": "x",
+               "images": ["https://a.com/logo.svg", "https://a.com/static/icons/x.png",
+                          "https://a.com/diagram.svg", "https://a.com/figure-1.png"]}]
+    asset = VS._try_tier2({"citations": ["s1"]}, ranked)
+    assert fetched == ["https://a.com/figure-1.png"]       # logo/icon/SVG never fetched
+    assert asset["url"] == "https://a.com/figure-1.png"
+
+
+def test_tier2_moves_to_next_candidate_after_validation_reject(monkeypatch):
+    sizes = {"https://a.com/shackle-20px.png": (20, 20), "https://a.com/content.png": (500, 380)}
+    monkeypatch.setattr(V, "fetch_web_image_bytes", lambda url: _png_bytes(*sizes[url]))
+    ranked = [{"src": "web", "url": "https://a.com/1", "title": "A", "content": "x",
+               "images": list(sizes)}]
+    asset = VS._try_tier2({"citations": ["s1"]}, ranked)
+    assert asset["url"] == "https://a.com/content.png"
+
+
+def test_tier2_fetch_attempts_are_capped(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(V, "fetch_web_image_bytes", lambda url: fetched.append(url) or _png_bytes(10, 10))
+    ranked = [{"src": "web", "url": "https://a.com/1", "title": "A", "content": "x",
+               "images": [f"https://a.com/p{i}.png" for i in range(20)]}]
+    assert VS._try_tier2({"citations": ["s1"]}, ranked) is None
+    assert len(fetched) == VS.TIER2_MAX_FETCHES
+
+
+def test_all_svg_source_falls_through_to_tier3(monkeypatch):
+    """MDN's real image list is all SVG: tier 2 must skip every one WITHOUT fetching and
+    the beat must land on tier 3 (a generated diagram), not 'no visual'."""
+    fetched = []
+    monkeypatch.setattr(V, "fetch_web_image_bytes", lambda url: fetched.append(url))
+    monkeypatch.setattr(VS, "_try_tier1", lambda spec, project_id: None)
+    monkeypatch.setattr(VS, "call_agent", lambda *a, **k: {"title": "HTTP", "steps": ["request", "response"]})
+    monkeypatch.setattr(V, "validate_generated_svg", lambda svg: (True, "ok"))
+    mdn = [f"https://mdn.github.io/shared-assets/images/diagrams/http/overview/{n}.svg"
+           for n in ("fetching-a-page", "http-layers", "client-server-chain", "http-request", "http-response")]
+    ranked = [{"src": "web", "url": "https://developer.mozilla.org/x", "title": "MDN", "content": "x", "images": mdn}]
+    out = VS.run_visual_sourcing(visual_specs=[{"section_n": 1, "beat_index": 0, "visual_type": "process",
+                                               "topic": "http", "citations": ["s1"]}],
+                                 project_id="p", ranked_sources=ranked)
+    assert fetched == []
+    assert out["visual_assets"][0]["tier"] == 3
+
+
+def test_web_image_fetch_sends_a_user_agent(monkeypatch):
+    """Wikimedia 403s requests' default UA ('Please set a user-agent')."""
+    seen = {}
+
+    class _R:
+        content = b"x"
+        def raise_for_status(self): pass
+    monkeypatch.setattr(V.requests, "get", lambda url, timeout=None, headers=None: seen.update(headers or {}) or _R())
+    V.fetch_web_image_bytes("https://thumb.wikimedia.org/x.png")
+    assert seen.get("User-Agent", "").startswith("Curivio/")
