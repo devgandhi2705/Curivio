@@ -67,6 +67,7 @@ from .services.auth_service import (
     delete_account,
     get_current_user,
     get_current_admin_user,
+    is_admin,
     get_current_token,
     revoke_token,
     check_current_password,
@@ -517,7 +518,13 @@ async def auth_set_feed_version(
     current_user: dict = Depends(get_current_user),
 ):
     """Read/write the per-user Feed v2 toggle. Read side is /auth/me; this is
-    the write side, returning the refreshed user dict."""
+    the write side, returning the refreshed user dict.
+
+    Admin-only: Feed v2 is unfinished (claim_validator is still a stub), and any
+    signed-in user could otherwise switch themselves into it with one API call.
+    403, not the /admin routes' 404: the frontend already names this route."""
+    if not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Only admins can change the feed version")
     return set_feed_version(current_user["user_id"], data.feed_version)
 
 

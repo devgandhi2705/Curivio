@@ -725,6 +725,12 @@ def get_current_token(
     return _valid_payload(credentials)
 
 
+def is_admin(user: dict) -> bool:
+    """True if the user's email is in ADMIN_EMAILS (comma-separated, case-insensitive)."""
+    admin_emails = {e.strip().lower() for e in ADMIN_EMAILS.split(",") if e.strip()}
+    return user["email"].lower() in admin_emails
+
+
 def get_current_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
     """
     FastAPI dependency. Inject with `user: dict = Depends(get_current_admin_user)`.
@@ -732,7 +738,6 @@ def get_current_admin_user(current_user: dict = Depends(get_current_user)) -> di
     (401). A valid JWT for a non-admin email raises 404 instead of 403 — it must
     not reveal that a restricted area exists.
     """
-    admin_emails = {e.strip().lower() for e in ADMIN_EMAILS.split(",") if e.strip()}
-    if current_user["email"].lower() not in admin_emails:
+    if not is_admin(current_user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return current_user
