@@ -12,9 +12,8 @@ UNCAPPED list; tiering into primary/secondary/other is the assembler's job (Phas
 
 BATCHING is budget-driven, not a guessed count: budget.py's input_budget(model) gives
 the per-call token ceiling and count_tokens() the per-source cost, so a pool that would
-overflow one call is split into as few batches as fit. Sized by the source_ranker
-PRIMARY model (nemotron-nano-30b, the smaller 128k window) so either provider leg is
-safe. In practice input_budget is ~107k tokens, so typical pools rank in ONE batch per
+overflow one call is split into as few batches as fit. Sized by the route's smaller
+leg (the :free nemotron fallback, 128k window) so either provider leg is safe. In practice input_budget is ~107k tokens, so typical pools rank in ONE batch per
 origin; batching is exercised (and tested) by forcing a small budget.
 
 material_bound PROTECTION (Phase 10c): corpus-origin findings carry protected=True in
@@ -24,9 +23,9 @@ is never dropped on the basis of its score. (No cut exists yet — the merge is 
 so today the flag is the forward contract the assembler/tiering phase will read.)
 
 FLOOR: fewer than 6 valid sources across the MERGED output sets a degraded signal in
-state (degraded_reason). Writing that through to mas_runs.degraded_reason is DEFERRED —
-run finalization (finalize_run) doesn't read state's degraded_reason yet; no phase has
-wired it. The state field is the contract the assembler/finalization phase will read.
+state (degraded_reason). Since Phase 12b, run finalization writes state's
+degraded_reason through to mas_runs.degraded_reason (run_graph and the SSE stream path);
+visual_sourcing appends its own render-unavailable note to it rather than overwriting.
 
 Isolation: imports only feed_v2's own provider + budget. Never backend.services.* /
 backend.llm.*.
@@ -40,7 +39,10 @@ from ..llm.provider import AllLegsFailed, call_agent  # noqa: F401  (re-exported
 
 logger = logging.getLogger(__name__)
 
-PRIMARY_MODEL = "nemotron-nano-30b"     # source_ranker primary; batches sized by its budget
+# Batches are sized by the route's SMALLER leg so either leg can take the same batch:
+# the :free nemotron fallback (128k) binds before the Gemini primary (1M). Same numbers
+# as the old nemotron-nano primary, so batching is unchanged.
+PRIMARY_MODEL = "nemotron-super-120b-free"
 _RANK_OVERHEAD_TOKENS = 2000            # reserve for the prompt scaffold + JSON scores output
 FLOOR_MIN_SOURCES = 6                   # < this many merged valid sources ⇒ degraded signal
 _FAILED_CALL_SCORE = 0.5                # a scoring outage → neutral score, sources RETAINED not dropped

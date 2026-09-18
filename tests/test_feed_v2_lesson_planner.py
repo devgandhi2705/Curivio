@@ -98,14 +98,16 @@ def test_worked_example_mode_by_difficulty(db, monkeypatch, capsys):
 # ── fallback leg serves ───────────────────────────────────────────────────────
 def test_lesson_planner_fallback_leg(db, monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
-    fb_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]   # lesson_planner fallback (openrouter)
+    fb_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["lesson_planner"][1]][1]   # :free nemotron fallback
+    ceilings: list = []
     served: list[str] = []
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
     def fake_google(*a, **k):
         raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_openrouter(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
+        ceilings.append(max_tokens)
         served.append(api_model_id)
         return {"text": json.dumps({"objectives": ["o1"], "prerequisite_gap": False}),
                 "in_tokens": 1, "out_tokens": 1, "latency_ms": 1, "model_used": api_model_id}
@@ -121,6 +123,7 @@ def test_lesson_planner_fallback_leg(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\nfallback served: {served}")
     assert served and all(s == fb_id for s in served)
+    assert set(ceilings) == {provider.OPENROUTER_MAX_TOKENS["lesson_planner"]}
     assert plan["objectives"] == ["o1"]
 
 

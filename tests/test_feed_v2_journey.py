@@ -159,22 +159,22 @@ def test_rotating_theme_is_reachable(db, capsys):
 
 
 def test_journey_fallback_leg_serves(db, monkeypatch, capsys):
-    """Force the primary journey_planner leg (nemotron/OpenRouter) to fail; confirm
-    the gemini fallback serves a real plan."""
-    primary_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]
-    fallback_id = provider.MODEL_REGISTRY["gemini-3-flash-preview"][1]
-    real_google = provider._call_google
+    """Force the primary journey_planner leg (Gemini, since Phase 12c) to fail; confirm
+    the :free nemotron fallback serves a real plan."""
+    primary, fallback = provider.AGENT_ROUTING["journey_planner"]
+    primary_id, fallback_id = provider.MODEL_REGISTRY[primary][1], provider.MODEL_REGISTRY[fallback][1]
+    real_or = provider._call_openrouter
     served = []
 
-    def fake_openrouter(api_model_id, *a, **k):
-        raise RuntimeError("simulated primary (nemotron) outage")
+    def fake_google(api_model_id, *a, **k):
+        raise RuntimeError("simulated primary (gemini) outage")
 
-    def rec_google(api_model_id, messages, system, schema, key, images=None):
+    def rec_openrouter(api_model_id, messages, system, schema, key, images=None, **kw):
         served.append(api_model_id)
-        return real_google(api_model_id, messages, system, schema, key, images)
+        return real_or(api_model_id, messages, system, schema, key, images, **kw)
 
-    monkeypatch.setitem(provider._SDK_FOR_PROVIDER, "openrouter", fake_openrouter)
-    monkeypatch.setitem(provider._SDK_FOR_PROVIDER, "google", rec_google)
+    monkeypatch.setitem(provider._SDK_FOR_PROVIDER, "google", fake_google)
+    monkeypatch.setitem(provider._SDK_FOR_PROVIDER, "openrouter", rec_openrouter)
 
     pid = _ready_project("open", description="learn graph theory")
     batch = J.plan_next_batch("u1", pid)

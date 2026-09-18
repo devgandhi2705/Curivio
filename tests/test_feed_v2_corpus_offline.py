@@ -178,7 +178,8 @@ def test_zero_materials_noop_flows_into_source_ranker(db, monkeypatch, capsys):
 def test_fallback_leg_serves_through_routing(db, monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
     primary_id = provider.MODEL_REGISTRY["gemini-3.1-flash-lite"][1]   # corpus primary (google)
-    fallback_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]      # corpus fallback (OR)
+    fallback_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["corpus_researcher"][1]][1]   # :free nemotron fallback
+    ceilings: list = []
     served: list[str] = []
 
     pid = _ready_project()
@@ -190,7 +191,8 @@ def test_fallback_leg_serves_through_routing(db, monkeypatch, capsys):
     def fake_google(api_model_id, *a, **k):
         raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_openrouter(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
+        ceilings.append(max_tokens)
         served.append(api_model_id)
         return {"text": json.dumps({"passages": [{"index": 0, "quote": "Backprop", "why_relevant": "x"}]}),
                 "in_tokens": 1, "out_tokens": 1, "latency_ms": 1, "model_used": api_model_id}
@@ -204,6 +206,7 @@ def test_fallback_leg_serves_through_routing(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\nfallback (offline): primary {primary_id} failed -> served {served}")
     assert served == [fallback_id]                 # fallback leg served through routing
+    assert set(ceilings) == {provider.OPENROUTER_MAX_TOKENS["corpus_researcher"]}
     assert out["corpus_findings"] and out["corpus_findings"][0]["material_id"] == "mpdf"
 
 

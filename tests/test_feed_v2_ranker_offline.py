@@ -159,15 +159,17 @@ def test_floor_sets_degraded_below_six(monkeypatch, capsys):
 # ── 5. fallback provider leg serves ───────────────────────────────────────────
 def test_fallback_leg_serves(db, monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
-    fallback_id = provider.MODEL_REGISTRY["gemini-3.1-flash-lite"][1]   # source_ranker fallback (google)
+    fallback_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["source_ranker"][1]][1]   # :free nemotron
     served: list[str] = []
+    ceilings: list = []
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
-    def fake_openrouter(api_model_id, *a, **k):
-        raise RuntimeError("simulated primary (nemotron) outage")
+    def fake_google(api_model_id, *a, **k):
+        raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_google(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
         served.append(api_model_id)
+        ceilings.append(max_tokens)
         return {"text": json.dumps({"scores": [{"index": 0, "score": 0.7}]}),
                 "in_tokens": 1, "out_tokens": 1, "latency_ms": 1, "model_used": api_model_id}
 
@@ -181,6 +183,7 @@ def test_fallback_leg_serves(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\nfallback served: {served}")
     assert served and all(s == fallback_id for s in served)             # both origin calls hit the fallback
+    assert set(ceilings) == {provider.OPENROUTER_MAX_TOKENS["source_ranker"]}
     assert all("rank_score" in s for s in out["ranked_sources"])
     assert out["ranked_sources"][0]["rank_score"] == 0.7                # fallback's score parsed through
 

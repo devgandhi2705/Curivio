@@ -178,14 +178,16 @@ def test_crash_after_group_b_resumes_only_c_d(db, monkeypatch, capsys):
 # ── 5. fallback leg serves ────────────────────────────────────────────────────
 def test_section_writer_fallback_leg(db, monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
-    fb_id = provider.MODEL_REGISTRY["nemotron-super-120b"][1]   # section_writer fallback (openrouter)
+    fb_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["section_writer"][1]][1]   # :free nemotron fallback
+    ceilings: list = []
     served: list[str] = []
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
     def fake_google(*a, **k):
         raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_openrouter(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
+        ceilings.append(max_tokens)
         served.append(api_model_id)
         return {"text": json.dumps({"sections": [{"n": 1, "title": "T", "beats": [
                     {"heading": "h", "body": "b", "citations": []}]}]}),
@@ -202,6 +204,7 @@ def test_section_writer_fallback_leg(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\nfallback served {len(served)} group calls: all fallback={all(s == fb_id for s in served)}")
     assert served and all(s == fb_id for s in served)   # all 4 group calls hit the fallback
+    assert set(ceilings) == {provider.OPENROUTER_MAX_TOKENS["section_writer"]}
     assert out["section_drafts"]
 
 

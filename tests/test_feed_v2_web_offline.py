@@ -224,18 +224,20 @@ def test_real_loop_caps_at_three(db, monkeypatch, capsys):
 # ── 6. fallback provider leg serves ───────────────────────────────────────────
 def test_fallback_leg_serves(db, monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
-    primary_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]        # web primary (OR)
-    fallback_id = provider.MODEL_REGISTRY["gemini-3-flash-preview"][1]  # web fallback (google)
+    primary, fallback = provider.AGENT_ROUTING["web_researcher"]      # gemini primary, :free fallback
+    primary_id, fallback_id = provider.MODEL_REGISTRY[primary][1], provider.MODEL_REGISTRY[fallback][1]
     served: list[str] = []
+    ceilings: list = []
     pid = _ready_project("open")
     monkeypatch.setattr(W, "_search", lambda q: [{"title": "t", "url": "https://z.com/1", "snippet": "s"}])
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
-    def fake_openrouter(api_model_id, *a, **k):
-        raise RuntimeError("simulated primary (nemotron) outage")
+    def fake_google(api_model_id, *a, **k):
+        raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_google(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
         served.append(api_model_id)
+        ceilings.append(max_tokens)
         body = {"queries": ["q"]} if "queries" in (schema.get("properties") or {}) else \
                {"passages": [{"index": 0, "claim": "c", "why_relevant": "r"}]}
         return {"text": json.dumps(body), "in_tokens": 1, "out_tokens": 1,
@@ -249,6 +251,7 @@ def test_fallback_leg_serves(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\nfallback: primary {primary_id} failed -> served {served}")
     assert served and all(s == fallback_id for s in served)   # both LLM calls served by the fallback leg
+    assert set(ceilings) == {provider.OPENROUTER_MAX_TOKENS["web_researcher"]}
     assert out["web_findings"] and out["web_findings"][0]["url"] == "https://z.com/1"
 
 

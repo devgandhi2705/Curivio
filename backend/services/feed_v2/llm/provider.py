@@ -54,35 +54,67 @@ MODEL_REGISTRY: dict[str, tuple[str, str]] = {
     "gemini-3.1-flash-lite":  ("google",     "gemini-3.1-flash-lite"),
     "nemotron-nano-30b":      ("openrouter", "nvidia/nemotron-3-nano-30b-a3b"),
     "nemotron-super-120b":    ("openrouter", "nvidia/nemotron-3-super-120b-a12b"),
+    # Phase 12b: the :free variant. The paid nemotron legs 402 on this unfunded account
+    # (total_credits=0; OpenRouter lets it reserve only ~200 output tokens per request).
+    "nemotron-super-120b-free": ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
 }
 
 # ── Per-agent routing: agent -> (primary short name, fallback short name) ──────
 # Fallback is ALWAYS on a different provider than primary (verified against the
 # registry in AGENT_ROUTING's module-load self-check below).
 AGENT_ROUTING: dict[str, tuple[str, str]] = {
+    # Phase 12c: EVERY OpenRouter leg is the :free model and always the FALLBACK. Both paid
+    # nemotron models 402 on this unfunded account (total_credits=0), so the old
+    # nemotron-PRIMARY agents (journey_planner, web_researcher, source_ranker,
+    # claim_validator) were really Gemini-only with a wasted 402 first. Flipped to Gemini
+    # primary: the free quota (20/min, 50/day per account) is spent only when Gemini fails,
+    # and Gemini load is unchanged (it already served 100% of those calls). Restore the
+    # bake-off's nemotron-primary split once OpenRouter is funded.
     # Phase 5: persona + coverage_mode inference from project + material signals.
-    # Cross-provider (Gemini primary / nemotron fallback) — the normal rule; no
-    # vision needed here, so no _SAME_PROVIDER_OK exception.
-    "profile":           ("gemini-3-flash-preview", "nemotron-nano-30b"),
-    # Phase 6: batch curriculum planner. Runs ONCE PER BATCH (7-20 days), far less
-    # often than the daily lesson_planner/section_writer — so its primary sits on
-    # OpenRouter (nemotron) to balance load away from Gemini, which the daily agents
-    # already lean on. Fallback hops to Gemini (cross-provider). Documented exception
-    # to the "primary usually Gemini" habit, same as image_ingestor's note.
-    "journey_planner":   ("nemotron-nano-30b",      "gemini-3-flash-preview"),
-    "lesson_planner":    ("gemini-3-flash-preview", "nemotron-nano-30b"),
-    "web_researcher":    ("nemotron-nano-30b",      "gemini-3-flash-preview"),
-    "corpus_researcher": ("gemini-3.1-flash-lite",  "nemotron-nano-30b"),
-    "source_ranker":     ("nemotron-nano-30b",      "gemini-3.1-flash-lite"),
-    "section_writer":    ("gemini-3-flash-preview", "nemotron-super-120b"),
-    "visual_director":   ("gemini-3-flash-preview", "nemotron-nano-30b"),
-    "claim_validator":   ("nemotron-nano-30b",      "gemini-3.1-flash-lite"),
+    "profile":           ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    # Phase 6: batch curriculum planner (once per 7-20 day batch).
+    "journey_planner":   ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    "lesson_planner":    ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    "web_researcher":    ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    "corpus_researcher": ("gemini-3.1-flash-lite",  "nemotron-super-120b-free"),
+    "source_ranker":     ("gemini-3.1-flash-lite",  "nemotron-super-120b-free"),
+    "section_writer":    ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    "visual_director":   ("gemini-3-flash-preview", "nemotron-super-120b-free"),
+    "claim_validator":   ("gemini-3.1-flash-lite",  "nemotron-super-120b-free"),
     # Phase 4: standalone image ingestion (vision + OCR). DELIBERATE same-provider
     # exception to the cross-provider fallback rule — no model in MODEL_REGISTRY on
     # the OpenRouter side is vision-capable (nemotron is text-only), so both legs
     # are vision-capable Gemini models on separate key pools + model tiers. Add a
     # vision-capable OpenRouter model here later to restore cross-provider fallback.
     "image_ingestor":    ("gemini-3-flash-preview", "gemini-3.1-flash-lite"),
+}
+
+# Per-agent max_tokens on the OpenRouter leg. Without one OpenRouter reserves the model's
+# whole output window (32k-131k). Sized per agent from REAL completion tokens (nemotron's
+# reasoning tokens count toward completion, ~3x Gemini's for the same JSON). Too few
+# samples anywhere for a real p95; re-size from llm_call_log once it has real traffic.
+# claim_validator is absent on purpose: still a graph stub, it makes no LLM call.
+OPENROUTER_MAX_TOKENS: dict[str, int] = {
+    # nemotron-super:free real forced calls: 626, 933, 1131, 1184 (nano earlier: 769). ~3.5x.
+    "profile": 4096,
+    # nemotron-super:free 2039 for a 10-day batch; nano 4044 earlier. Batches run to 20
+    # days and output grows with them, so ~4x the 20-day estimate.
+    "journey_planner": 16384,
+    # Gemini 66-86 (n=3); nemotron-super:free 246 (n=1). Tiny JSON; floor is reasoning room.
+    "lesson_planner": 2048,
+    # Gemini: queries 51-59, extraction 449-474. nemotron-super:free (real forced run):
+    # queries 193, extraction 3343. 4096 left 1.2x headroom, so 12288 (~3.7x).
+    "web_researcher": 12288,
+    # Gemini 50 (n=1); nemotron-super:free 216 (n=1). Tiny JSON, reasoning room.
+    "corpus_researcher": 2048,
+    # Gemini 150-173 per batch; nemotron-super:free corpus 112, web 660. Grows with pool size.
+    "source_ranker": 4096,
+    # Gemini 366-885 per group (n=8); nemotron-super:free groups A-D 931/3907/3690/2572.
+    # A truncated beats JSON fails the whole group, so ~4x the largest.
+    "section_writer": 16384,
+    # nemotron-super:free: real 19-beat spec call 2924 (synthetic 20-beat 849-1014),
+    # fills 200-1092. ~4x the spec call.
+    "visual_director": 12288,
 }
 
 # Agents exempt from the "fallback on a different provider" rule (see above).
@@ -339,7 +371,8 @@ def _call_google(api_model_id: str, messages: list[dict], system: str,
 
 
 def _call_openrouter(api_model_id: str, messages: list[dict], system: str,
-                    schema: dict, key: str, images: list[tuple[bytes, str]] | None = None) -> dict:
+                    schema: dict, key: str, images: list[tuple[bytes, str]] | None = None,
+                    max_tokens: int | None = None) -> dict:
     # images ignored: OpenRouter legs in this registry are text-only. image_ingestor
     # never routes here (both its legs are Gemini). Param kept for a uniform sdk signature.
     from openai import OpenAI
@@ -358,10 +391,18 @@ def _call_openrouter(api_model_id: str, messages: list[dict], system: str,
     # tolerant-parse path above (structure is enforced there for every OpenRouter
     # role), and some OpenRouter upstreams for these models (e.g. DeepInfra for
     # nemotron) reject it with a 405 — Phase 5b removed it provider-wide.
+    extra = {"max_tokens": max_tokens} if max_tokens else {}
     resp = client.chat.completions.create(
-        model=api_model_id, messages=payload, temperature=_TEMPERATURE,
+        model=api_model_id, messages=payload, temperature=_TEMPERATURE, **extra,
     )
     latency_ms = int((time.monotonic() - t0) * 1000)
+    # OpenRouter can answer HTTP 200 with no choices and an `error` body (seen: the :free
+    # model's "Upstream error from Nvidia: Service temporarily overloaded", 503). Raise it
+    # as that error instead of letting it read as an empty response.
+    upstream_err = (getattr(resp, "model_extra", None) or {}).get("error")
+    if not resp.choices and upstream_err:
+        raise RuntimeError(f"OpenRouter upstream error {upstream_err.get('code')}: "
+                           f"{upstream_err.get('message')} ({(upstream_err.get('metadata') or {}).get('error_type')})")
     text = (resp.choices[0].message.content or "") if resp.choices else ""
     usage = getattr(resp, "usage", None)
     return {
@@ -374,6 +415,29 @@ def _call_openrouter(api_model_id: str, messages: list[dict], system: str,
 
 
 _SDK_FOR_PROVIDER = {"google": _call_google, "openrouter": _call_openrouter}
+
+# The :free nemotron's only upstream (Nvidia) answered "503 Service temporarily
+# overloaded" on 3 of 12 real calls (2026-09-18). It's the LAST leg, so one blip killed
+# the run. Retry just that error, twice with backoff (per-call failure ~25% -> ~1.6%).
+# Each retry costs one request against the 50/day free cap.
+_UPSTREAM_RETRY_DELAYS_S = (2.0, 6.0)
+_sleep = time.sleep   # tests swap this out
+
+
+def _is_upstream_overload(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "overloaded" in text or "upstream error 503" in text
+
+
+def _with_upstream_retry(fn):
+    for delay in (*_UPSTREAM_RETRY_DELAYS_S, None):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            if delay is None or not _is_upstream_overload(exc):
+                raise
+            logger.warning("[feed_v2.provider] OpenRouter upstream overloaded, retrying in %.0fs: %s", delay, exc)
+            _sleep(delay)
 
 
 def call_agent(agent: str, messages: list[dict], system: str = "", *,
@@ -407,8 +471,12 @@ def call_agent(agent: str, messages: list[dict], system: str = "", *,
             reasons.append(f"{leg_short}: {exc}")
             continue
 
-        def make_call(key: str, _pmi=provider, _mid=api_model_id, _sdk=sdk):
-            return _sdk(_mid, messages, system, schema, key, images)
+        ceiling = OPENROUTER_MAX_TOKENS.get(agent) if provider == "openrouter" else None
+        extra = {"max_tokens": ceiling} if ceiling else {}
+
+        def make_call(key: str, _pmi=provider, _mid=api_model_id, _sdk=sdk, _extra=extra):
+            call = lambda: _sdk(_mid, messages, system, schema, key, images, **_extra)  # noqa: E731
+            return _with_upstream_retry(call) if _pmi == "openrouter" else call()
 
         try:
             result, key, attempt = _rotate_call(keys, make_call)

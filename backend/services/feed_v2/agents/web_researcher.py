@@ -84,9 +84,9 @@ _EXTRACT_CHARS = 2500      # per-source full-page content fed to extraction (Pha
 
 # Phase 9c: the FULL fetched page is retained in state (not just the extracted claim). A page
 # that alone exceeds a QUARTER of one ranking call's input budget starves the other sources
-# downstream — that's when own-code dedup runs. web_researcher's primary is nemotron-nano-30b,
-# so its (smaller) budget sizes the threshold. Tests override this to force dedup cheaply.
-_DEDUP_THRESHOLD_TOKENS = input_budget("nemotron-nano-30b") // 4   # ≈ 26.9k tokens ≈ 108KB
+# downstream — that's when own-code dedup runs. The smaller leg on the ranking route (the
+# :free nemotron fallback) sizes the threshold. Tests override this to force dedup cheaply.
+_DEDUP_THRESHOLD_TOKENS = input_budget("nemotron-super-120b-free") // 4   # ≈ 26.9k tokens ≈ 108KB
 
 _STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "from", "what", "how", "why",

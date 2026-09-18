@@ -94,3 +94,156 @@ def test_tolerant_parser_handles_fenced_and_bare_json():
     assert provider.parse_json_tolerant('prose {"b": 2} trailing') == {"b": 2}
     with pytest.raises(ValueError):
         provider.parse_json_tolerant("no json here")
+
+
+# ── Phase 12b: visual_director's OpenRouter fallback ─────────────────────────
+def test_visual_director_fallback_is_the_free_openrouter_model():
+    """The paid nemotron leg 402s on an unfunded account (can afford ~200 tokens); the
+    :free variant is what actually serves. Still cross-provider."""
+    _, fallback = provider.AGENT_ROUTING["visual_director"]
+    assert provider.MODEL_REGISTRY[fallback] == ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free")
+
+
+def _capture_openrouter_kwargs(monkeypatch, agent):
+    sent = {}
+
+    class _Completions:
+        def create(self, **kw):
+            sent.update(kw)
+            raise RuntimeError("stop after capture")
+
+    class _Client:
+        def __init__(self, **kw):
+            self.chat = type("C", (), {"completions": _Completions()})()
+
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    monkeypatch.setattr(provider, "_openrouter_keys", lambda: ["k"])
+    monkeypatch.setattr(provider, "_gemini_keys", lambda: (_ for _ in ()).throw(provider.ProviderKeyMissing("no")))
+    monkeypatch.setattr(provider.call_logger, "write_call_row", lambda **kw: None)
+    with pytest.raises(provider.AllLegsFailed):
+        provider.call_agent(agent, [{"role": "user", "content": "x"}], meta={"is_test": True})
+    return sent
+
+
+def test_visual_director_openrouter_leg_sends_max_tokens_ceiling(monkeypatch):
+    sent = _capture_openrouter_kwargs(monkeypatch, "visual_director")
+    assert sent["max_tokens"] == provider.OPENROUTER_MAX_TOKENS["visual_director"]
+
+
+# ── Phase 12c: every feed_v2 OpenRouter leg is the :free fallback, Gemini primary ──
+FREE = ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free")
+
+
+def test_every_text_agent_is_gemini_primary_free_fallback():
+    """Both paid nemotron models 402 on this unfunded account, so every OpenRouter leg is
+    the :free model, and always as the FALLBACK: the 50/day free quota is spent only when
+    Gemini fails. The 4 former OpenRouter primaries (journey_planner, web_researcher,
+    source_ranker, claim_validator) are flipped."""
+    for agent, (primary, fallback) in provider.AGENT_ROUTING.items():
+        if agent in provider._SAME_PROVIDER_OK:
+            continue
+        assert provider.MODEL_REGISTRY[primary][0] == "google", agent
+        assert provider.MODEL_REGISTRY[fallback] == FREE, agent
+
+
+def test_no_route_uses_a_paid_openrouter_model():
+    for agent, legs in provider.AGENT_ROUTING.items():
+        for leg in legs:
+            prov, model_id = provider.MODEL_REGISTRY[leg]
+            assert prov != "openrouter" or model_id.endswith(":free"), (agent, model_id)
+
+
+@pytest.mark.parametrize("agent", sorted(provider.OPENROUTER_MAX_TOKENS))
+def test_each_agent_sends_its_own_ceiling(monkeypatch, agent):
+    sent = _capture_openrouter_kwargs(monkeypatch, agent)
+    assert sent["max_tokens"] == provider.OPENROUTER_MAX_TOKENS[agent]
+
+
+def test_ceilings_cover_every_agent_that_makes_llm_calls():
+    """claim_validator is still a graph stub (no LLM call, nothing to size);
+    image_ingestor has no OpenRouter leg."""
+    assert set(provider.OPENROUTER_MAX_TOKENS) == set(provider.AGENT_ROUTING) - {"claim_validator", "image_ingestor"}
+
+
+def test_claim_validator_sends_no_ceiling(monkeypatch):
+    sent = _capture_openrouter_kwargs(monkeypatch, "claim_validator")
+    assert "max_tokens" not in sent
+
+
+def test_openrouter_200_with_embedded_upstream_error_is_reported_as_that_error(monkeypatch):
+    """Real response seen 2026-09-18 from the :free model: HTTP 200, choices=None, and an
+    `error` body ('Upstream error from Nvidia: Service temporarily overloaded', 503). It
+    was logged as 'empty response'; it must surface as the upstream error it is."""
+    class _Resp:
+        choices = None
+        usage = None
+        model_extra = {"error": {"message": "Upstream error from Nvidia: Service temporarily overloaded",
+                                 "code": 503, "metadata": {"error_type": "provider_overloaded"}}}
+
+    class _Client:
+        def __init__(self, **kw):
+            self.chat = type("C", (), {"completions": type("X", (), {"create": staticmethod(lambda **k: _Resp())})()})()
+
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    with pytest.raises(RuntimeError, match=r"503.*overloaded"):
+        provider._call_openrouter("nvidia/nemotron-3-super-120b-a12b:free",
+                                  [{"role": "user", "content": "x"}], "", {}, "k")
+
+
+# ── Phase 12c: bounded retry on the :free upstream's 503 overload ─────────────
+_OVERLOAD = "OpenRouter upstream error 503: Upstream error from Nvidia: Service temporarily overloaded (provider_overloaded)"
+
+
+def _route_to_openrouter_only(monkeypatch, sdk):
+    monkeypatch.setattr(provider, "_openrouter_keys", lambda: ["k"])
+    monkeypatch.setattr(provider, "_gemini_keys", lambda: (_ for _ in ()).throw(provider.ProviderKeyMissing("no")))
+    monkeypatch.setattr(provider.call_logger, "write_call_row", lambda **kw: None)
+    monkeypatch.setitem(provider._SDK_FOR_PROVIDER, "openrouter", sdk)
+    slept = []
+    monkeypatch.setattr(provider, "_sleep", slept.append)
+    return slept
+
+
+def _ok(api_model_id):
+    return {"text": '{"objectives": ["x"]}', "in_tokens": 1, "out_tokens": 1, "latency_ms": 1, "model_used": api_model_id}
+
+
+def test_upstream_overload_is_retried_twice_with_backoff(monkeypatch):
+    calls = []
+
+    def sdk(api_model_id, *a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError(_OVERLOAD)
+        return _ok(api_model_id)
+    slept = _route_to_openrouter_only(monkeypatch, sdk)
+    out = provider.call_agent("lesson_planner", [{"role": "user", "content": "x"}],
+                              schema={"required": ["objectives"]}, meta={"is_test": True})
+    assert out == {"objectives": ["x"]}
+    assert len(calls) == 3 and slept == [2.0, 6.0]
+
+
+def test_upstream_overload_gives_up_after_two_retries(monkeypatch):
+    calls = []
+
+    def sdk(api_model_id, *a, **k):
+        calls.append(1)
+        raise RuntimeError(_OVERLOAD)
+    slept = _route_to_openrouter_only(monkeypatch, sdk)
+    with pytest.raises(provider.AllLegsFailed, match="overloaded"):
+        provider.call_agent("lesson_planner", [{"role": "user", "content": "x"}], meta={"is_test": True})
+    assert len(calls) == 3 and slept == [2.0, 6.0]
+
+
+def test_other_openrouter_errors_are_not_retried(monkeypatch):
+    calls = []
+
+    def sdk(api_model_id, *a, **k):
+        calls.append(1)
+        raise RuntimeError("Error code: 400 - bad request")
+    slept = _route_to_openrouter_only(monkeypatch, sdk)
+    with pytest.raises(provider.AllLegsFailed):
+        provider.call_agent("lesson_planner", [{"role": "user", "content": "x"}], meta={"is_test": True})
+    assert len(calls) == 1 and slept == []

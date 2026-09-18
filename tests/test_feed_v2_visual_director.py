@@ -90,15 +90,17 @@ def test_topic_falls_back_to_writer_hint(monkeypatch, capsys):
 # ── 5. fallback leg serves (gemini primary down -> nemotron-nano-30b fallback) ─
 def test_fallback_leg_serves(monkeypatch, capsys):
     from backend.services.feed_v2.llm import provider
-    fallback_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]
+    fallback_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["visual_director"][1]][1]
     served: list[str] = []
+    ceilings: list[int | None] = []
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
     def fake_google(api_model_id, *a, **k):
         raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_openrouter(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
         served.append(api_model_id)
+        ceilings.append(max_tokens)
         body = {"specs": [{"index": 0, "needs_visual": True, "visual_type": "process", "topic": "t"}]}
         return {"text": json.dumps(body), "in_tokens": 1, "out_tokens": 1,
                 "latency_ms": 1, "model_used": api_model_id}
@@ -112,5 +114,6 @@ def test_fallback_leg_serves(monkeypatch, capsys):
                               system="sys", schema=VD._SPECS_SCHEMA)
     with capsys.disabled():
         print(f"\nfallback: primary gemini-3-flash-preview failed -> served {served}")
-    assert served == [fallback_id]
+    assert served == [fallback_id] == ["nvidia/nemotron-3-super-120b-a12b:free"]
+    assert ceilings == [provider.OPENROUTER_MAX_TOKENS["visual_director"]]   # ceiling reaches the OpenRouter leg
     assert out["specs"][0]["needs_visual"] is True

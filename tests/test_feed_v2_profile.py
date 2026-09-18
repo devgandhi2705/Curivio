@@ -183,7 +183,7 @@ def test_profile_fallback_leg_serves(db, monkeypatch, capsys):
     provider-layer issue, out of Phase 5 scope), so a 405/rate-limit run skips the
     serve half rather than flaking the suite."""
     primary_id = provider.MODEL_REGISTRY["gemini-3-flash-preview"][1]
-    fallback_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]
+    fallback_id = provider.MODEL_REGISTRY[provider.AGENT_ROUTING["profile"][1]][1]   # :free nemotron
     real_or = provider._call_openrouter
     attempted: list[str] = []   # recorded BEFORE the API call -> routing reached the leg
     served: list[str] = []      # recorded AFTER success -> upstream actually served
@@ -191,9 +191,9 @@ def test_profile_fallback_leg_serves(db, monkeypatch, capsys):
     def fake_google(api_model_id, messages, system, schema, key, images=None):
         raise RuntimeError("simulated primary (gemini) outage")  # non-429 -> immediate leg abort
 
-    def rec_openrouter(api_model_id, messages, system, schema, key, images=None):
+    def rec_openrouter(api_model_id, messages, system, schema, key, images=None, **kw):
         attempted.append(api_model_id)
-        r = real_or(api_model_id, messages, system, schema, key, images)
+        r = real_or(api_model_id, messages, system, schema, key, images, **kw)
         served.append(api_model_id)
         return r
 

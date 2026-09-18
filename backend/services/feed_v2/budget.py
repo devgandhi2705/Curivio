@@ -51,6 +51,7 @@ MODEL_BUDGETS: dict[str, ModelBudget] = {
     "gemini-3.1-flash-lite":  ModelBudget(context_window=1_000_000, tpm_ceiling=250_000, max_output=8_192, safety_margin=0.9),
     "nemotron-nano-30b":      ModelBudget(context_window=128_000,   tpm_ceiling=200_000, max_output=8_192, safety_margin=0.9),
     "nemotron-super-120b":    ModelBudget(context_window=128_000,   tpm_ceiling=200_000, max_output=8_192, safety_margin=0.9),
+    "nemotron-super-120b-free": ModelBudget(context_window=128_000, tpm_ceiling=200_000, max_output=8_192, safety_margin=0.9),
 }
 
 

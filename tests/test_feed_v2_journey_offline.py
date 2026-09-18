@@ -222,19 +222,20 @@ def test_anchored_open_under_emission_still_repeats(db, monkeypatch):
 
 def test_journey_fallback_leg_serves_through_routing(db, monkeypatch, capsys):
     """Deterministic (no network/keys): force the primary journey_planner leg
-    (nemotron) to fail; prove call_agent routes to the gemini fallback and its
-    payload flows back into the saved plan."""
+    (Gemini, since Phase 12c) to fail; prove call_agent routes to the :free nemotron
+    fallback with its own max_tokens ceiling, and its payload flows into the saved plan."""
     from backend.services.feed_v2.llm import provider
-    primary_id = provider.MODEL_REGISTRY["nemotron-nano-30b"][1]
-    fallback_id = provider.MODEL_REGISTRY["gemini-3-flash-preview"][1]
-    served = []
+    primary, fallback = provider.AGENT_ROUTING["journey_planner"]
+    primary_id, fallback_id = provider.MODEL_REGISTRY[primary][1], provider.MODEL_REGISTRY[fallback][1]
+    served, ceilings = [], []
     monkeypatch.setattr(provider, "_keys_for_provider", lambda p: ["fake-key"])
 
-    def fake_openrouter(api_model_id, *a, **k):
-        raise RuntimeError("simulated primary (nemotron) outage")
+    def fake_google(api_model_id, *a, **k):
+        raise RuntimeError("simulated primary (gemini) outage")
 
-    def fake_google(api_model_id, messages, system, schema, key, images=None):
+    def fake_openrouter(api_model_id, messages, system, schema, key, images=None, max_tokens=None):
         served.append(api_model_id)
+        ceilings.append(max_tokens)
         return {"text": json.dumps(_fixed_days(8)), "in_tokens": 1, "out_tokens": 1,
                 "latency_ms": 1, "model_used": api_model_id}
 
@@ -247,4 +248,5 @@ def test_journey_fallback_leg_serves_through_routing(db, monkeypatch, capsys):
     with capsys.disabled():
         print(f"\njourney fallback routing (offline): primary {primary_id} failed -> served {served}")
     assert served == [fallback_id]
+    assert ceilings == [provider.OPENROUTER_MAX_TOKENS["journey_planner"]]
     assert batch["shape"] == "fixed_sequence" and batch["day_count"] == 8
