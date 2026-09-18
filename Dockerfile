@@ -35,6 +35,14 @@ WORKDIR /app
 COPY requiremnts.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Headless Chromium for feed_v2's visual validator (tier-3 diagram render check).
+# --with-deps pulls the shared libs python:3.11-slim lacks (libglib, libnss3, ...);
+# --only-shell skips full Chrome. Browsers live outside /root so a non-root runtime
+# user (HF Spaces runs uid 1000) can read them. Adds ~766 MB (362 MB apt + 267 MB
+# browser + 137 MB pip package, measured 2026-09-18).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps --only-shell chromium
+
 # Backend source
 COPY backend/ ./backend/
 

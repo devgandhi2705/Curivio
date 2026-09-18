@@ -60,6 +60,7 @@ packaging==26.2
 pandas==3.0.3
 passlib==1.7.4
 pillow==12.2.0
+playwright==1.62.0
 pluggy==1.6.0
 proto-plus==1.28.0
 protobuf==5.29.6
