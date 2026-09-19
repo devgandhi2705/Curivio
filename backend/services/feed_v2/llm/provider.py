@@ -380,7 +380,11 @@ def _call_google(api_model_id: str, messages: list[dict], system: str,
     return {
         "text": getattr(resp, "text", None) or "",
         "in_tokens": getattr(usage, "prompt_token_count", 0) or 0,
-        "out_tokens": getattr(usage, "candidates_token_count", 0) or 0,
+        # Billed output = visible + thinking tokens (Gemini's output price includes thinking;
+        # gemini-3-flash-preview thinks ~10x its visible output). Same convention as legacy's
+        # LangChain usage_metadata and OpenRouter's completion_tokens (reasoning included).
+        "out_tokens": (getattr(usage, "candidates_token_count", 0) or 0)
+                      + (getattr(usage, "thoughts_token_count", 0) or 0),
         "latency_ms": latency_ms,
         "model_used": api_model_id,
     }

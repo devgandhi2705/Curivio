@@ -242,3 +242,28 @@ def test_other_openrouter_errors_are_not_retried(monkeypatch):
     with pytest.raises(provider.AllLegsFailed):
         provider.call_agent("lesson_planner", [{"role": "user", "content": "x"}], meta={"is_test": True})
     assert len(calls) == 1 and slept == []
+
+
+# ── Gemini thinking tokens are billed output: log them as output ───────────────
+def test_gemini_leg_counts_thinking_tokens_as_output(monkeypatch):
+    """Gemini bills output INCLUDING thinking. _call_google logged only candidates_token_count,
+    so a gemini-3-flash-preview call that thought 400 tokens and wrote 50 was logged as 50."""
+    from google import genai
+
+    class _Usage:
+        prompt_token_count, candidates_token_count, thoughts_token_count, total_token_count = 100, 50, 400, 550
+
+    class _Resp:
+        text, usage_metadata = '{"ok": true}', _Usage()
+
+    class _Client:
+        def __init__(self, api_key):
+            self.models = self
+
+        def generate_content(self, **kw):
+            return _Resp()
+
+    monkeypatch.setattr(genai, "Client", _Client)
+    out = provider._call_google("gemini-3-flash-preview", [{"role": "user", "content": "x"}], "", {}, "k")
+    assert (out["in_tokens"], out["out_tokens"]) == (100, 450)
+    assert out["in_tokens"] + out["out_tokens"] == _Usage.total_token_count
