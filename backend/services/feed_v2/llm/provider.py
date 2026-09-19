@@ -93,7 +93,6 @@ AGENT_ROUTING: dict[str, tuple[str, str]] = {
 # whole output window (32k-131k). Sized per agent from REAL completion tokens (nemotron's
 # reasoning tokens count toward completion, ~3x Gemini's for the same JSON). Too few
 # samples anywhere for a real p95; re-size from llm_call_log once it has real traffic.
-# claim_validator is absent on purpose: still a graph stub, it makes no LLM call.
 OPENROUTER_MAX_TOKENS: dict[str, int] = {
     # nemotron-super:free real forced calls: 626, 933, 1131, 1184 (nano earlier: 769). ~3.5x.
     "profile": 4096,
@@ -115,6 +114,11 @@ OPENROUTER_MAX_TOKENS: dict[str, int] = {
     # nemotron-super:free: real 19-beat spec call 2924 (synthetic 20-beat 849-1014),
     # fills 200-1092. ~4x the spec call.
     "visual_director": 12288,
+    # Phase 13 real run, same 20 beats: Gemini flash-lite groups A/B/C 528/1397/380 (21 claims);
+    # nemotron-super:free forced 3878/7687/2188 (30 claims, 5.5x Gemini). 12288 held B at only
+    # 1.6x, so 16384 (2.1x). Capped by context, not taste: 128k - 107,827 max input (sources are
+    # packed to fit) leaves ~20k. Truncation past it = that group 'unchecked', never a failed run.
+    "claim_validator": 16384,
 }
 
 # Agents exempt from the "fallback on a different provider" rule (see above).
@@ -192,8 +196,20 @@ AGENT_SCHEMAS: dict[str, dict] = {
                           "properties": {"sections": {"type": "array"}}},
     "visual_director":   {"type": "object", "required": ["specs"],
                           "properties": {"specs": {"type": "array"}}},
+    # Phase 13: the Phase 3 placeholder was a bare {"type": "array"}, which Gemini 400s on
+    # ("response_schema.properties[verdicts].items: missing field"). One item per claim.
     "claim_validator":   {"type": "object", "required": ["verdicts"],
-                          "properties": {"verdicts": {"type": "array"}}},
+                          "properties": {"verdicts": {"type": "array", "items": {
+                              "type": "object",
+                              "required": ["beat", "claim", "verdict", "evidence_weak", "conflict"],
+                              "properties": {
+                                  "beat": {"type": "string"},
+                                  "claim": {"type": "string"},
+                                  "cited": {"type": "array", "items": {"type": "string"}},
+                                  "verdict": {"type": "string", "enum": ["supported", "unsupported"]},
+                                  "evidence_weak": {"type": "boolean"},
+                                  "conflict": {"type": "boolean"},
+                                  "reason": {"type": "string"}}}}}},
     "image_ingestor":    {"type": "object", "required": ["description", "ocr_text"],
                           "properties": {"description": {"type": "string"},
                                          "ocr_text": {"type": "string"}}},

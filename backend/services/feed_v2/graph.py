@@ -51,6 +51,7 @@ from .agents import lesson_planner as lesson_agent      # Phase 11: real decisio
 from .agents import section_writer as writer_agent      # Phase 11: real four-group writer node body
 from .agents import visual_director as visual_director_agent  # Phase 12: per-beat visual need+type
 from .agents import visual_sourcing as visual_sourcing_agent  # Phase 12: three-tier sourcing
+from .agents import claim_validator as claim_validator_agent  # Phase 13: citation + support check
 from .db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,10 @@ USE_REAL_SECTION_WRITER = True
 # stubs (no key / no headless browser needed for loop-cap/barrier/resume assertions).
 USE_REAL_VISUAL_DIRECTOR = True
 USE_REAL_VISUAL_SOURCING = True
+# Phase 13: claim_validator is real now (module default True = production). _reset_rig() flips it
+# False so the Phase-7 loop tests keep the stub, whose STUB_WRITING_WEAK/STUB_EVIDENCE_WEAK drive the
+# rewrite/re-entry loops. The real node never sets either flag (Phase 13 computes signal only).
+USE_REAL_CLAIM_VALIDATOR = True
 _CRASH_ONCE: set[str] = set() # node names that raise once then succeed (resume test)
 _EXEC_LOG: list[str] = []     # every node appends its name (resume/loop assertions)
 
@@ -102,7 +107,7 @@ def _reset_rig() -> None:
     global STUB_EVIDENCE_THIN, STUB_WRITING_WEAK, STUB_EVIDENCE_WEAK
     global STUB_SLEEP_SECONDS, USE_REAL_SOURCE_RANKER, USE_REAL_CORPUS_RESEARCHER
     global USE_REAL_WEB_RESEARCHER, USE_REAL_LESSON_PLANNER, USE_REAL_SECTION_WRITER
-    global USE_REAL_VISUAL_DIRECTOR, USE_REAL_VISUAL_SOURCING
+    global USE_REAL_VISUAL_DIRECTOR, USE_REAL_VISUAL_SOURCING, USE_REAL_CLAIM_VALIDATOR
     STUB_EVIDENCE_THIN = STUB_WRITING_WEAK = STUB_EVIDENCE_WEAK = False
     STUB_SLEEP_SECONDS = 0.0
     USE_REAL_SOURCE_RANKER = True
@@ -112,6 +117,7 @@ def _reset_rig() -> None:
     USE_REAL_SECTION_WRITER = False      # offline default: canned draft stub, rewrite loop via section_writer_runs
     USE_REAL_VISUAL_DIRECTOR = False     # offline default: canned empty specs (no key)
     USE_REAL_VISUAL_SOURCING = False     # offline default: canned empty assets (no DB/browser)
+    USE_REAL_CLAIM_VALIDATOR = False     # offline default: stub verdict, rig flags drive the loops
     _CRASH_ONCE.clear()
     _EXEC_LOG.clear()
 
@@ -302,8 +308,12 @@ def visual_sourcing(state: FeedState) -> dict:
         ranked_sources=state.get("ranked_sources") or [],
         meta={"trace_id": state.get("trace_id"), "user_id": state.get("user_id"),
               "project_id": state.get("project_id"), "day_number": state.get("day_number")})
-    # Phase 12b: a render-unavailable note is APPENDED to any earlier degraded_reason
-    # (source_ranker's) instead of overwriting it; skipped if a rewrite loop re-adds it.
+    return _append_degraded(state, out)
+
+
+def _append_degraded(state: FeedState, out: dict) -> dict:
+    """Phase 12b: a node's degraded note is APPENDED to any earlier degraded_reason
+    (source_ranker's) instead of overwriting it; skipped if a rewrite loop re-adds it."""
     note, prior = out.pop("degraded_reason", None), state.get("degraded_reason")
     if note and note not in (prior or ""):
         out["degraded_reason"] = f"{prior}; {note}" if prior else note
@@ -311,11 +321,22 @@ def visual_sourcing(state: FeedState) -> dict:
 
 
 def claim_validator(state: FeedState) -> dict:
+    """Phase 13: REAL citation check (no LLM) + one support-check call per writer group.
+    Writes verdicts and a degraded_reason note; writing_weak/evidence_weak stay False (not
+    wired live yet). Offline mechanics tests set USE_REAL_CLAIM_VALIDATOR=False (via
+    _reset_rig) to keep the stub whose rig flags drive the loops."""
     _EXEC_LOG.append("claim_validator")
     _crash_if_rigged("claim_validator")
-    return {"verdicts": [{"claim": "stub-claim", "verdict": "supported", "stub": True}],
-            "writing_weak": bool(STUB_WRITING_WEAK),
-            "evidence_weak": bool(STUB_EVIDENCE_WEAK)}
+    if not USE_REAL_CLAIM_VALIDATOR:
+        return {"verdicts": [{"claim": "stub-claim", "verdict": "supported", "stub": True}],
+                "writing_weak": bool(STUB_WRITING_WEAK),
+                "evidence_weak": bool(STUB_EVIDENCE_WEAK)}
+    out = claim_validator_agent.run_claim_validator(
+        section_drafts=state.get("section_drafts") or [],
+        ranked_sources=state.get("ranked_sources") or [],
+        meta={"trace_id": state.get("trace_id"), "user_id": state.get("user_id"),
+              "project_id": state.get("project_id"), "day_number": state.get("day_number")})
+    return _append_degraded(state, out)
 
 
 def web_gate(state: FeedState) -> dict:

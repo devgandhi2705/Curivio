@@ -161,14 +161,9 @@ def test_each_agent_sends_its_own_ceiling(monkeypatch, agent):
 
 
 def test_ceilings_cover_every_agent_that_makes_llm_calls():
-    """claim_validator is still a graph stub (no LLM call, nothing to size);
-    image_ingestor has no OpenRouter leg."""
-    assert set(provider.OPENROUTER_MAX_TOKENS) == set(provider.AGENT_ROUTING) - {"claim_validator", "image_ingestor"}
-
-
-def test_claim_validator_sends_no_ceiling(monkeypatch):
-    sent = _capture_openrouter_kwargs(monkeypatch, "claim_validator")
-    assert "max_tokens" not in sent
+    """image_ingestor has no OpenRouter leg. claim_validator (Phase 13) is a real agent
+    now; test_each_agent_sends_its_own_ceiling covers that it sends its ceiling."""
+    assert set(provider.OPENROUTER_MAX_TOKENS) == set(provider.AGENT_ROUTING) - {"image_ingestor"}
 
 
 def test_openrouter_200_with_embedded_upstream_error_is_reported_as_that_error(monkeypatch):
