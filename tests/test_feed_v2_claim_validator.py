@@ -78,6 +78,21 @@ def test_citation_check_reads_inline_markers_too(monkeypatch):
     assert [v["ids"] for v in out["verdicts"] if v["kind"] == "invented_citation"] == [["s1"]]
 
 
+def test_uncited_beats_are_reported_as_unchecked_not_clean(monkeypatch):
+    """A beat with no citation has nothing to validate. That must read differently from a
+    beat that was checked and came back supported."""
+    llm = _FakeLLM(verdict="supported")
+    monkeypatch.setattr(CV, "call_agent", llm)
+    out = CV.run_claim_validator(section_drafts=_drafts(B=[_beat("b [s3]", ["s3"])],
+                                                        D=[_beat("no source", []), _beat("none here", [])]),
+                                 ranked_sources=RANKED)
+    assert [v for v in out["verdicts"] if v["kind"] == "no_citations"] == [
+        {"kind": "no_citations", "group": "D", "section": 8, "beat": 0, "heading": "h"},
+        {"kind": "no_citations", "group": "D", "section": 8, "beat": 1, "heading": "h"}]
+    assert out["degraded_reason"] == "claim_validator: unchecked_no_citations=2 [D:8.0, D:8.1]"
+    assert [c["meta"]["call_type"] for c in llm.calls] == ["feed_v2_claims_b"]   # D not sent
+
+
 def test_one_call_per_group_scoped_to_that_groups_cited_sources(monkeypatch):
     llm = _FakeLLM()
     monkeypatch.setattr(CV, "call_agent", llm)

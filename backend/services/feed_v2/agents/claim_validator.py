@@ -21,8 +21,10 @@ writing_weak and evidence_weak stay False (both loops are blind re-rolls today),
 section 4b stays unrendered. Degrade, never fail: a group whose call fails on every leg is
 "unchecked", not a failed run.
 
-Beats with no citation are not sent: by the writer's contract every factual claim carries
-an [id], so an uncited beat is framing/questions, not a checkable claim.
+Beats with no citation are not sent (nothing to check them against) but they are NOT
+silent: each is a "no_citations" verdict and counted as unchecked_no_citations in
+degraded_reason, so "verified fine" and "nothing here was checkable" read differently. A
+group routed zero sources (section 8-9 when the pool is small) writes only uncited beats.
 
 Isolation: imports only feed_v2's own provider/budget and the writer's routing.
 """
@@ -112,6 +114,10 @@ def run_claim_validator(*, section_drafts: list, ranked_sources: list, meta: dic
         g = sec.get("group")
         for i, beat in enumerate(sec.get("beats") or []):
             cited = _cited(beat)
+            if not cited:
+                verdicts.append({"kind": "no_citations", "group": g, "section": sec.get("n"),
+                                 "beat": i, "heading": beat.get("heading")})
+                continue
             bad = sorted(cited - shown.get(g, set()), key=lambda x: int(x[1:]))
             if bad:
                 verdicts.append({"kind": "invented_citation", "group": g, "section": sec.get("n"),
@@ -132,10 +138,11 @@ def run_claim_validator(*, section_drafts: list, ranked_sources: list, meta: dic
     claims = [v for v in verdicts if v["kind"] == "claim"]
     unsupported = [v for v in claims if v["verdict"] == "unsupported"]
     invented = [v for v in verdicts if v["kind"] == "invented_citation"]
+    uncited = [v for v in verdicts if v["kind"] == "no_citations"]
     logger.info("[feed_v2.claims] claims=%d unsupported=%d evidence_weak=%d conflict=%d "
-                "invented_citations=%d unchecked_groups=%s", len(claims), len(unsupported),
-                sum(v["evidence_weak"] for v in claims), sum(v["conflict"] for v in claims),
-                len(invented), unchecked)
+                "invented_citations=%d unchecked_no_citations=%d unchecked_groups=%s", len(claims),
+                len(unsupported), sum(v["evidence_weak"] for v in claims),
+                sum(v["conflict"] for v in claims), len(invented), len(uncited), unchecked)
 
     out: dict = {"verdicts": verdicts, "writing_weak": False, "evidence_weak": False}
     parts = []
@@ -146,6 +153,9 @@ def run_claim_validator(*, section_drafts: list, ranked_sources: list, meta: dic
         parts.append(f"invented_citations={len(invented)} ["
                      + ", ".join(f"{v['group']}:{v['section']}.{v['beat']}:{','.join(v['ids'])}"
                                  for v in invented) + "]")
+    if uncited:
+        parts.append(f"unchecked_no_citations={len(uncited)} ["
+                     + ", ".join(f"{v['group']}:{v['section']}.{v['beat']}" for v in uncited) + "]")
     if unchecked:
         parts.append("unchecked_groups=" + ",".join(unchecked))
     if parts:
