@@ -22,6 +22,7 @@ import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 import { parseOnboardingStep, onboardingStepPath } from './utils/onboardingRoute.js'
 import LogoMark from './components/shared/LogoMark.jsx'
 import { UI_MODES, UI_MODE_LABELS, getUiTheme, setUiTheme, subscribeUiTheme } from './lib/uiTheme.js'
+import VoiceSettings from './components/unpack/VoiceSettings.jsx'
 
 // ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
 // Shared between the AppLayout badge and DataLossSection's mark-as-seen, so
@@ -558,7 +559,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
   const SECTION_TITLE = {
     main: "Settings", profile: "Edit Profile",
     password: "Change Password", forgot: "Forgot Password", danger: "Delete Account",
-    dataloss: "Report Missing Data",
+    dataloss: "Report Missing Data", voice: "Read Aloud Voice",
   }
   const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
@@ -633,6 +634,17 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           <AppearanceControl />
 
           <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Read Aloud</p>
+            <button onClick={() => setSection("voice")}
+              className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors flex items-center justify-between">
+              Voice &amp; Audio
+              <svg className="w-3.5 h-3.5 text-slate-600" viewBox="0 0 16 16" fill="currentColor">
+                <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 1 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 mt-1">Support</p>
             <button onClick={() => setSection("dataloss")}
               className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors flex items-center gap-1.5">
@@ -644,6 +656,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
       )}
 
       {section === "dataloss" && <DataLossSection inputCls={inputCls} btnPrimary={btnPrimary} />}
+      {section === "voice" && <VoiceSettings inputCls={inputCls} />}
 
       {section === "profile" && (
         <form onSubmit={handleSaveProfile} className="px-4 py-4 space-y-3">

@@ -1,8 +1,15 @@
 import { useState, useRef, useEffect, useMemo } from "react"
+import { createPortal } from "react-dom"
+import { m, AnimatePresence, useDialogMotion, presets } from "../../lib/motion.jsx"
+import { useChangeCount } from "../../hooks/useChangeCount.js"
+import { isFreshMessage } from "../../lib/motionMath.js"
+import WaveDots from "../shared/WaveDots.jsx"
 import BookmarkButton from "../bookmarks/BookmarkButton.jsx"
 import MessageText from "../shared/MarkdownText.jsx"
 import { normalizeResponse, cleanContent } from "../shared/responseAdapter.js"
 import { fetchDocumentText, fetchAttachmentBlob } from "../../api/chat.js"
+import DocumentPreview, { documentKind } from "../shared/DocumentPreview.jsx"
+import OriginalDocument from "../shared/OriginalDocument.jsx"
 
 // ─── Human-paced text reveal ─────────────────────────────────────────────────
 // `text` already only grows (it's the accumulated stream buffer from
@@ -198,19 +205,22 @@ function StreamingDots({ statusMsg }) {
   if (!filler) return null
 
   return (
-    <p className="text-[14px] px-1 w-fit grid" style={{ color: "var(--dk-accent)" }}>
-      {prevRef.current ? (
+    <p className="text-[14px] px-1 w-fit flex items-center gap-2" style={{ color: "var(--dk-accent)" }}>
+      <WaveDots />
+      <span className="grid">
+        {prevRef.current ? (
+          <span
+            key={`out-${prevRef.current}`}
+            className="chat-filler-out"
+            style={{ gridArea: "1 / 1" }}
+          >{prevRef.current}…</span>
+        ) : null}
         <span
-          key={`out-${prevRef.current}`}
-          className="chat-filler-out"
+          key={`in-${filler}`}
+          className="chat-filler-in"
           style={{ gridArea: "1 / 1" }}
-        >{prevRef.current}…</span>
-      ) : null}
-      <span
-        key={`in-${filler}`}
-        className="chat-filler-in"
-        style={{ gridArea: "1 / 1" }}
-      >{filler}…</span>
+        >{filler}…</span>
+      </span>
     </p>
   )
 }
@@ -582,6 +592,7 @@ function downloadUrl(url, filename) {
 // fetch calls below to R15a/R15b's share-scoped endpoints instead of the
 // authenticated ones — see fetchAttachmentBlob/fetchDocumentText in api/chat.js.
 export function AttachmentPreviewModal({ attachment, onClose, shareToken }) {
+  const dm = useDialogMotion(onClose, { sheet: false })
   const isImage    = attachment.mime_type?.startsWith("image/")
   const isPdf      = attachment.mime_type === "application/pdf"
   const isOther    = attachment.uri?.startsWith("file://")
@@ -589,11 +600,16 @@ export function AttachmentPreviewModal({ attachment, onClose, shareToken }) {
   const isDocScheme = attachment.uri?.startsWith("doc://")
 
   const pastRetention = isAttachmentPastRetention(attachment)
+  const docKind = documentKind(attachment.filename || "")
+  const formattedDoc = ["word", "slides", "markdown"].includes(docKind)
+  // Word / PowerPoint / Markdown: the original file, drawn as itself, while it's kept.
+  const showsOriginal = formattedDoc && isDocScheme && !pastRetention
+  const [docTab, setDocTab] = useState(showsOriginal ? "original" : "text")
 
   // Blob-backed preview: image beyond the same-tab previewUrl, or a PDF's
   // native embed. Both go through fetchAttachmentBlob (Chat-R14b) since the
   // endpoint needs an Authorization header a bare src= can't send.
-  const needsBlobFetch = (isImage && !attachment.previewUrl && !!attachment.r2_attachment_id) || isPdf
+  const needsBlobFetch = (isImage && !attachment.previewUrl && !!attachment.r2_attachment_id) || isPdf || showsOriginal
   const [previewUrl, setPreviewUrl]         = useState(isImage ? attachment.previewUrl ?? null : null)
   const [previewError, setPreviewError]     = useState(null)
   const [previewLoading, setPreviewLoading] = useState(needsBlobFetch && !pastRetention)
@@ -662,10 +678,11 @@ export function AttachmentPreviewModal({ attachment, onClose, shareToken }) {
 
   const downloadDisabled = pastRetention || downloading || previewLoading
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+  // Portalled: it opens from chat messages and attachment chips, which animate.
+  return createPortal(
+    <m.div {...dm.root} className="u-motion-managed fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+      <m.div {...dm.card} className={`relative w-full ${showsOriginal && docKind !== "markdown" ? "max-w-5xl" : formattedDoc ? "max-w-3xl" : "max-w-lg"} bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-slate-200 truncate">{attachment.filename}</h2>
           <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -723,13 +740,40 @@ export function AttachmentPreviewModal({ attachment, onClose, shareToken }) {
           </div>
         )}
 
-        {isDocText && (
+        {showsOriginal && (
+          <div className="flex gap-1" role="tablist">
+            {[["original", "Original"], ["text", "Text Curivio read"]].map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={docTab === id} onClick={() => setDocTab(id)}
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${docTab === id ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {showsOriginal && docTab === "original" && (
+          <div className="px-1 max-h-[70vh] overflow-y-auto">
+            {previewLoading ? <p className="text-xs text-slate-500">Loading…</p>
+              : previewError ? <p className="text-xs text-red-400">{previewError}</p>
+              : previewUrl ? <OriginalDocument kind={docKind} url={previewUrl} /> : null}
+          </div>
+        )}
+
+        {isDocText && (!showsOriginal || docTab === "text") && (formattedDoc ? (
+          // Word / PowerPoint / Markdown: stored as Markdown, shown formatted.
+          <div className="px-1 max-h-[70vh] overflow-y-auto">
+            {docLoading ? <p className="text-xs text-slate-500">Loading…</p>
+              : docError ? <p className="text-xs text-red-400">{docError}</p>
+              : <DocumentPreview text={docText} filename={attachment.filename || ""} />}
+          </div>
+        ) : (
           <div className="px-4 py-3 bg-slate-900/30 border border-slate-800 rounded-lg text-xs text-slate-400 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">
             {docLoading ? "Loading…" : docError || docText}
           </div>
-        )}
-      </div>
-    </div>
+        ))}
+      </m.div>
+    </m.div>,
+    document.body,
   )
 }
 
@@ -785,9 +829,11 @@ function MessageAttachments({ attachments, shareToken }) {
           )
         })}
       </div>
-      {previewAttachment && (
-        <AttachmentPreviewModal attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} shareToken={shareToken} />
-      )}
+      <AnimatePresence>
+        {previewAttachment && (
+          <AttachmentPreviewModal key="preview" attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} shareToken={shareToken} />
+        )}
+      </AnimatePresence>
     </>
   )
 }
@@ -835,7 +881,7 @@ function SourcesPanel({ sources }) {
       </button>
 
       {open && (
-        <div className="mt-2 space-y-1">
+        <div className="u-stagger mt-2 space-y-1">
           {sources.map((src, i) => (
             <a
               key={i}
@@ -860,14 +906,7 @@ function SourcesPanel({ sources }) {
 
 function ThinkingIcon({ streaming = false }) {
   return streaming ? (
-    <svg className="w-3.5 h-3.5 text-slate-200 animate-spin [animation-duration:1.8s]" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2.75A9.25 9.25 0 1 0 21.25 12" />
-      <path d="M12 2.75V6.5" />
-      <path d="M12 17.5v-3.25" />
-      <path d="M2.75 12h3.75" />
-      <path d="M17.5 12h3.75" />
-    </svg>
+    <WaveDots className="text-slate-200" />
   ) : (
     <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -945,8 +984,9 @@ function ThinkingPanel({ thinking, streaming }) {
         </svg>
       </button>
 
+      <AnimatePresence initial={false}>
       {open && (
-        <div className="mt-1 pl-3 border-l border-slate-700/50">
+        <m.div key="thinking" {...presets.collapse} className="mt-1 pl-3 border-l border-slate-700/50">
           <div className="relative overflow-hidden">
             <div className={`text-[10px] sm:text-[11px] leading-[1.45] text-slate-300 ${isLong && !expanded ? "line-clamp-4" : ""}`}>
               <DrippedMessageText text={bodyThinking} streaming={streaming} variant="thinking" className="space-y-0.5" dripOptions={THINKING_DRIP} />
@@ -971,8 +1011,9 @@ function ThinkingPanel({ thinking, streaming }) {
             <StatusCheckIcon />
             <span>{statusText}</span>
           </div>
-        </div>
+        </m.div>
       )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1023,6 +1064,7 @@ function ToolCallBlock({ block, streaming }) {
   const label = _TOOL_CALL_LABELS[tool] || `Ran ${tool}`
   const hasSources = sources && sources.length > 0
   const drippedQuery = useDrip(query || "", streaming)
+  const sourceChanges = useChangeCount(hasSources)
 
   return (
     <div className="mb-3 text-sm">
@@ -1031,7 +1073,7 @@ function ToolCallBlock({ block, streaming }) {
         className="flex items-center gap-2 min-w-0 w-full text-left hover:opacity-80 transition-opacity"
         style={{ cursor: hasSources ? "pointer" : "default" }}
       >
-        <GlobeIcon />
+        <span key={sourceChanges} className={sourceChanges ? "u-pop-num" : "inline-flex"}><GlobeIcon /></span>
         <span className="text-slate-300 flex-shrink-0">{label}</span>
         {query && <span className="italic text-slate-500 truncate min-w-0">"{drippedQuery}"</span>}
         {hasSources && (
@@ -1043,11 +1085,10 @@ function ToolCallBlock({ block, streaming }) {
           </span>
         )}
       </button>
+      <AnimatePresence initial={false}>
       {open && hasSources && (
-        <div
-          className="mt-2 ml-0 sm:ml-5 p-3 border border-slate-700/50 rounded-lg bg-slate-900/30 flex flex-col gap-1.5 overflow-y-auto"
-          style={{ maxHeight: "136px" }}
-        >
+        <m.div key="sources" {...presets.collapse} className="mt-2 ml-0 sm:ml-5">
+        <div className="p-3 border border-slate-700/50 rounded-lg bg-slate-900/30 flex flex-col gap-1.5 overflow-y-auto" style={{ maxHeight: "136px" }}>
           {sources.map((src, i) => (
             <a
               key={i} href={src.url} target="_blank" rel="noopener noreferrer"
@@ -1060,7 +1101,9 @@ function ToolCallBlock({ block, streaming }) {
             </a>
           ))}
         </div>
+        </m.div>
       )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1236,6 +1279,8 @@ function MessageTimestamp({ value }) {
 
 export default function ChatMessage({ message, msgIndex, sessionId, isLastAssistant, onRetry, onEdit, shareToken }) {
   const isUser = message.role === "user"
+  // Only messages born in this session animate in; reloaded history doesn't.
+  const fresh = useRef(isFreshMessage(message.created_at)).current
   const [editing, setEditing] = useState(false)
   const [draft, setDraft]     = useState("")
   const textareaRef           = useRef(null)
@@ -1262,7 +1307,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
 
   if (isUser) {
     return (
-      <div className="flex justify-end group/msg">
+      <div className={`${fresh ? "u-msg-in u-msg-user " : ""}flex justify-end group/msg`}>
         <div className="flex flex-col items-end gap-1 max-w-[85%] sm:max-w-[70%]">
           <MessageAttachments attachments={message.attachments} shareToken={shareToken} />
           {editing ? (
@@ -1322,7 +1367,7 @@ export default function ChatMessage({ message, msgIndex, sessionId, isLastAssist
   const showStreamingCursor = message.streaming && hasVisibleContent
 
   return (
-    <div className={`flex gap-2.5 sm:gap-3 max-w-4xl group/msg ${message.streaming && !hasVisibleContent ? "items-center" : ""}`}>
+    <div className={`${fresh ? "u-msg-in " : ""}flex gap-2.5 sm:gap-3 max-w-4xl group/msg ${message.streaming && !hasVisibleContent ? "items-center" : ""}`}>
       <div className={`hidden sm:flex sm:flex-shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 items-center justify-center shadow-md shadow-violet-950/50 ${message.streaming && !hasVisibleContent ? "sm:w-9 sm:h-9" : "sm:w-7 sm:h-7 mt-0.5"}`}>
         <svg className={`w-3 h-3 text-white ${message.streaming && !hasVisibleContent ? "sm:w-[18px] sm:h-[18px]" : "sm:w-3.5 sm:h-3.5"}`} viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />

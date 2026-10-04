@@ -17,9 +17,9 @@ function _mockData(days = 365) {
     const ds = d.toISOString().slice(0, 10)
     const active = Math.random() < 0.18
     out.push({
-      date:               ds,
+      date: ds,
       packages_generated: active && Math.random() < 0.5 ? 1 : 0,
-      cards_read:         active ? Math.floor(Math.random() * 10) + 1 : 0,
+      cards_read: active ? Math.floor(Math.random() * 10) + 1 : 0,
     })
   }
   return out

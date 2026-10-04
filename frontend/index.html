@@ -15,6 +15,16 @@
         if (t) t.setAttribute('content', { light: '#EFEDDC', dark: '#211D17', legacy: '#0f1117' }[m])
       })()
     </script>
+    <!-- Lite phones, before first paint, for the same reason as the colour mode
+         above. Mirrors isLiteDevice in src/lib/motionPrefs.js — keep the two in
+         step. The app always runs full motion; there is no reduced mode. -->
+    <script>
+      (function () {
+        var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+        var mem = navigator.deviceMemory, cores = navigator.hardwareConcurrency
+        if (coarse && ((mem && mem <= 4) || (cores && cores <= 4))) document.documentElement.setAttribute('data-motion-lite', '')
+      })()
+    </script>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />

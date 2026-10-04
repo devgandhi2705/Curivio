@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { m, AnimatePresence, SPRING, presets, useDialogMotion } from '../../lib/motion.jsx'
 import {
   fetchCollections, fetchBookmarks,
   deleteBookmark, deleteCollection,
@@ -8,6 +10,8 @@ import CollectionPickerModal from './CollectionPickerModal.jsx'
 import { useSidebarSubsection } from '../../contexts/SidebarSubsection.jsx'
 import { useContextMenu } from '../../contexts/ContextMenu.jsx'
 import MarkdownText from '../shared/MarkdownText.jsx'
+import PopMenu from '../shared/PopMenu.jsx'
+import Plate from '../shared/Plate.jsx'
 
 // ── Color palette ──────────────────────────────────────────────────────────────
 
@@ -172,7 +176,7 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat, onOpenFeed }) {
   }
 
   return (
-    <div className="group relative flex flex-col gap-2 p-4 pl-5 bg-slate-900/60 border border-slate-800 rounded-xl hover:border-slate-700 transition-all">
+    <div className="u-tilt group relative flex flex-col gap-2 p-4 pl-5 bg-slate-900/60 border border-slate-800 rounded-xl hover:border-slate-700 transition-all">
       {/* Type accent - the one glance-level cue for what kind of thing this is */}
       <div className={`absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full ${type.accent}`} />
 
@@ -199,13 +203,16 @@ function BookmarkCard({ bookmark, onDelete, onOpenChat, onOpenFeed }) {
         </button>
       </div>
 
-      {confirmDelete && (
-        <DeleteConfirmModal
-          name={bookmark.title}
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setConfirmDelete(false)}
-        />
-      )}
+      <AnimatePresence>
+        {confirmDelete && (
+          <DeleteConfirmModal
+            key="delete-bookmark"
+            name={bookmark.title}
+            onConfirm={handleConfirmDelete}
+            onCancel={() => setConfirmDelete(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Title - opens whatever the card's first backlink points at */}
       <h3 className="text-sm font-semibold text-slate-100 leading-snug">
@@ -321,7 +328,7 @@ function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
   return (
     <div
       onClick={() => onClick(col.collection_id)}
-      className={`group relative flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
+      className={`u-nudge group relative flex items-start gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer ${
         menuOpen ? 'z-50' : ''
       } ${
         isActive ? 'bg-white/[0.07] text-slate-100' : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
@@ -348,8 +355,9 @@ function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
         >
           <DotsIcon />
         </button>
+        <AnimatePresence>
         {menuOpen && (
-          <div className="u-pop absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+          <PopMenu key="menu" className="origin-top-right absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onEdit?.(col) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
@@ -362,8 +370,9 @@ function CollectionItem({ col, isActive, onClick, onEdit, onDelete }) {
             >
               Delete
             </button>
-          </div>
+          </PopMenu>
         )}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -406,10 +415,12 @@ function NewCollectionModal({ onClose, onCreate }) {
     } finally { setBusy(false) }
   }
 
+  const dm = useDialogMotion(onClose)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+      <m.div {...dm.card} className="u-sheet relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <h2 className="text-sm font-semibold text-slate-100">New collection</h2>
         <input
           autoFocus value={name} onChange={e => setName(e.target.value)}
@@ -429,14 +440,14 @@ function NewCollectionModal({ onClose, onCreate }) {
           ))}
         </div>
         <div className="flex gap-2 pt-1">
-          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={onClose} className="u-btn-2 flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
           <button onClick={handleCreate} disabled={!name.trim() || busy}
             className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">
             Create
           </button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 
@@ -452,10 +463,12 @@ function EditCollectionModal({ col, onClose, onSave }) {
     try { await onSave({ name: name.trim(), description: desc.trim(), color }) } finally { setBusy(false) }
   }
 
+  const dm = useDialogMotion(onClose)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+      <m.div {...dm.card} className="u-sheet relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <h2 className="text-sm font-semibold text-slate-100">Edit collection</h2>
         <input
           autoFocus value={name} onChange={e => setName(e.target.value)}
@@ -475,23 +488,27 @@ function EditCollectionModal({ col, onClose, onSave }) {
           ))}
         </div>
         <div className="flex gap-2 pt-1">
-          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={onClose} className="u-btn-2 flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
           <button onClick={handleSave} disabled={!name.trim() || busy}
             className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">
             Save
           </button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 
 // ── Delete confirmation modal ─────────────────────────────────────────────────
 
 function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onCancel}>
-      <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6" onClick={e => e.stopPropagation()}>
+  const dm = useDialogMotion(onCancel)
+  // Portalled: it opens from inside a (tilting) bookmark card, and a
+  // transformed ancestor would trap a fixed overlay.
+  return createPortal(
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <m.div {...dm.card} className="u-sheet relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6" onClick={e => e.stopPropagation()}>
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <div className="flex items-center gap-3 mb-3">
           <div className="w-9 h-9 rounded-xl bg-red-950/60 border border-red-900/50 flex items-center justify-center flex-shrink-0">
             <svg className="w-4 h-4 text-red-400" viewBox="0 0 16 16" fill="currentColor">
@@ -505,11 +522,12 @@ function DeleteConfirmModal({ name, message, onConfirm, onCancel }) {
         </div>
         {message && <p className="text-sm text-slate-400 mb-5 leading-relaxed">{message}</p>}
         <div className="flex gap-3">
-          <button onClick={onCancel} className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors">Cancel</button>
+          <button onClick={onCancel} className="u-btn-2 flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors">Cancel</button>
           <button onClick={onConfirm} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors">Delete</button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>,
+    document.body,
   )
 }
 
@@ -530,7 +548,7 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
           </svg>
         </button>
       </div>
-      <div className="flex-1 space-y-0.5 overflow-y-auto min-h-0">
+      <div className="relative flex-1 space-y-0.5 overflow-y-auto min-h-0">
         {colLoading ? (
           <div className="space-y-1">
             {[1,2,3].map(i => <div key={i} className="h-8 bg-slate-800/40 rounded-lg animate-pulse" />)}
@@ -538,16 +556,19 @@ function BookmarksSubsection({ collections, activeId, colLoading, onSelect, onNe
         ) : collections.length === 0 ? (
           <p className="text-xs text-slate-600 px-1 py-2">No collections yet.</p>
         ) : (
-          collections.map(col => (
+          <AnimatePresence mode="popLayout" initial={false}>
+          {collections.map(col => (
+            <m.div key={col.collection_id} {...presets.listItem}>
             <CollectionItem
-              key={col.collection_id}
               col={col}
               isActive={activeId === col.collection_id}
               onClick={onSelect}
               onEdit={onEdit}
               onDelete={onDelete}
             />
-          ))
+            </m.div>
+          ))}
+          </AnimatePresence>
         )}
       </div>
     </div>
@@ -708,44 +729,62 @@ export default function BookmarksPage({ onOpenChat, onOpenFeed, onSidebarClose, 
       ) : bookmarks.length === 0 ? (
         <EmptyState activeCol={activeCol} hasFilters={!!search || !!typeFilter} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {bookmarks.map(bm => (
-            <BookmarkCard key={bm.bookmark_id} bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} onOpenFeed={onOpenFeed} />
-          ))}
+        <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <AnimatePresence mode="popLayout">
+            {bookmarks.map((bm, i) => (
+              <m.div
+                key={bm.bookmark_id}
+                {...presets.listItem}
+                animate={{ opacity: 1, scale: 1, transition: { ...SPRING, delay: Math.min(i, 8) * 0.04 } }}
+              >
+                <BookmarkCard bookmark={bm} onDelete={handleDeleteBookmark} onOpenChat={onOpenChat} onOpenFeed={onOpenFeed} />
+              </m.div>
+            ))}
+          </AnimatePresence>
         </div>
       )}
 
-      {showNewCol && (
-        <NewCollectionModal
-          onClose={() => setShowNewCol(false)}
-          onCreate={handleCollectionCreated}
-        />
-      )}
+      <AnimatePresence>
+        {showNewCol && (
+          <NewCollectionModal
+            key="new-collection"
+            onClose={() => setShowNewCol(false)}
+            onCreate={handleCollectionCreated}
+          />
+        )}
+      </AnimatePresence>
 
-      {editingCol && (
-        <EditCollectionModal
-          col={editingCol}
-          onClose={() => setEditingCol(null)}
-          onSave={(fields) => handleEditCollection(editingCol, fields)}
-        />
-      )}
+      <AnimatePresence>
+        {editingCol && (
+          <EditCollectionModal
+            key="edit-collection"
+            col={editingCol}
+            onClose={() => setEditingCol(null)}
+            onSave={(fields) => handleEditCollection(editingCol, fields)}
+          />
+        )}
+      </AnimatePresence>
 
-      {pendingDeleteCol && (
-        <DeleteConfirmModal
-          name={pendingDeleteCol.name}
-          message="All bookmarks inside will be unassigned."
-          onConfirm={async () => { await handleDeleteCollection(pendingDeleteCol.collection_id); setPendingDeleteCol(null) }}
-          onCancel={() => setPendingDeleteCol(null)}
-        />
-      )}
+      <AnimatePresence>
+        {pendingDeleteCol && (
+          <DeleteConfirmModal
+            key="delete-collection"
+            name={pendingDeleteCol.name}
+            message="All bookmarks inside will be unassigned."
+            onConfirm={async () => { await handleDeleteCollection(pendingDeleteCol.collection_id); setPendingDeleteCol(null) }}
+            onCancel={() => setPendingDeleteCol(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
 
 function EmptyState({ activeCol, hasFilters }) {
   return (
-    <div className="flex flex-col items-center justify-center flex-1 min-h-[40vh] text-center">
-      <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center mb-4">
+    <div className="relative isolate flex flex-col items-center justify-center flex-1 min-h-[40vh] text-center">
+      <Plate seed={41} count={9} className="u-plate u-plate-empty" />
+      <div className="u-bob w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center mb-4">
         <svg className="w-5 h-5 text-slate-500" viewBox="0 0 16 16" fill="currentColor">
           <path d="M3 2.75C3 1.784 3.784 1 4.75 1h6.5C12.216 1 13 1.784 13 2.75v10.5a.75.75 0 0 1-1.2.6l-3.8-2.85-3.8 2.85A.75.75 0 0 1 3 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.386l3.05-2.287a.75.75 0 0 1 .9 0l3.05 2.287V2.75a.25.25 0 0 0-.25-.25Z" />
         </svg>

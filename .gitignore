@@ -82,3 +82,7 @@ graphify-out/
 
 # ── Interview prep study docs (local only) ────────────────────────────────────
 docs/interview-prep/
+/Curivio-Interview-Technical-Brief.pdf
+
+# ── Superpowers workspace (brainstorm sessions, plan ledgers — local only) ─────
+.superpowers/

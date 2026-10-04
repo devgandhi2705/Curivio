@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react"
-import { useTextSelection } from "../../hooks/useTextSelection.js"
-import { explainStream, translateTerm, readAloudTerm } from "../../api/unpack.js"
+import { useTextSelection, MAX_SELECTION_LENGTH } from "../../hooks/useTextSelection.js"
+import { explainStream, translateTerm, readAloudStream } from "../../api/unpack.js"
 import UnpackPopover from "./UnpackPopover.jsx"
+import { AnimatePresence } from "../../lib/motion.jsx"
+import { useChangeCount } from "../../hooks/useChangeCount.js"
+import { useHoverPill } from "../../hooks/useHoverPill.js"
+import WaveDots from "../shared/WaveDots.jsx"
+import { toTtsOptions } from "./voicePrefs.js"
 
 const LANGUAGES = [
   { code: "hi", label: "Hindi" },
@@ -9,6 +14,46 @@ const LANGUAGES = [
   { code: "fr", label: "French" },
   { code: "de", label: "German" },
 ]
+
+/** Text that fades in word by word. While it streams, only the words that just
+ *  arrived animate: the count committed last render marks where they start. */
+function Words({ text }) {
+  const parts = (text || "").split(/(\s+)/)
+  const committed = useRef(0)
+  useEffect(() => { committed.current = parts.length })
+  const start = committed.current
+  return parts.map((w, i) => (!w.trim() ? w : (
+    <span key={i} className="u-word" style={{ "--d": Math.min(Math.max(i - start, 0), 30) * 22 }}>{w}</span>
+  )))
+}
+
+const ICON = { className: "w-3.5 h-3.5 flex-shrink-0 text-slate-400", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+  strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }
+
+/** The first step: items rise in turn and one highlight glides under the pointer. */
+function UnpackMenu({ onExplain, onTranslate, onReadAloud }) {
+  const pillRef = useHoverPill()
+  const item = "w-full flex items-center gap-2 text-left px-2.5 py-1.5 rounded-md text-[12px] font-medium text-slate-200"
+  return (
+    <div ref={pillRef} className="u-menu relative p-1.5 flex flex-col gap-0.5">
+      <span className="u-hover-pill" aria-hidden="true" />
+      <button onClick={onExplain} className={item}>
+        <svg {...ICON}><path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z" /></svg>
+        Explain
+      </button>
+      <button onClick={onTranslate} className={item}>
+        <svg {...ICON}><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" /></svg>
+        Translate
+      </button>
+      <button onClick={onReadAloud} className={item}>
+        <svg {...ICON}><path d="M11 5 6 9H2v6h4l5 4V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M19 5a10 10 0 0 1 0 14" /></svg>
+        Read Aloud
+      </button>
+    </div>
+  )
+}
+
+const LOADING = "flex items-center gap-2 text-[12px] text-slate-400"
 
 /**
  * Mounted once near the app root. Listens for text selections anywhere on
@@ -39,8 +84,21 @@ export default function UnpackListener() {
   const [audioStatus, setAudioStatus] = useState("idle") // idle | loading | done | error
   const [audioResult, setAudioResult] = useState(null)
   const [audioError, setAudioError] = useState("")
+  const [playing, setPlaying] = useState(false)
+  // Each step slides in: forward into an option, back when returning to the menu.
+  const stepChanges = useChangeCount(mode)
 
   const abortRef = useRef(null)
+  // The live audio download: cancel stops it and frees its URL. readSeqRef
+  // drops a stream that only starts after the user has already moved on.
+  const audioCancelRef = useRef(null)
+  const readSeqRef = useRef(0)
+  const stopAudio = () => {
+    readSeqRef.current++
+    audioCancelRef.current?.()
+    audioCancelRef.current = null
+  }
+  useEffect(() => stopAudio, [])
   const dismissedKeyRef = useRef("")
   // Mirrors the currently open session's identity. Clicking anything inside the
   // popover (Explain, Translate, a language button, Close) can collapse the live
@@ -58,9 +116,11 @@ export default function UnpackListener() {
     setTranslateStatus("idle")
     setTranslation(null)
     setTranslateError("")
+    stopAudio()
     setAudioStatus("idle")
     setAudioResult(null)
     setAudioError("")
+    setPlaying(false)
   }
 
   const dismiss = useCallback(() => {
@@ -126,6 +186,13 @@ export default function UnpackListener() {
     )
   }
 
+  function goBack() {
+    abortRef.current?.()
+    abortRef.current = null
+    stopAudio()
+    setMode("menu")
+  }
+
   function handleTranslateMenu() {
     setMode("language")
   }
@@ -150,15 +217,20 @@ export default function UnpackListener() {
   async function handleReadAloud() {
     setMode("audio")
     if (!session) return
+    stopAudio()
+    const seq = readSeqRef.current
     setAudioStatus("loading")
     setAudioResult(null)
     setAudioError("")
 
     try {
-      const result = await readAloudTerm(session.text)
+      const result = await readAloudStream(session.text, toTtsOptions())
+      if (seq !== readSeqRef.current) { result.cancel(); return }
+      audioCancelRef.current = result.cancel
       setAudioResult(result)
       setAudioStatus("done")
     } catch (err) {
+      if (seq !== readSeqRef.current) return
       setAudioError(err.message || "Could not load audio.")
       setAudioStatus("error")
     }
@@ -173,31 +245,21 @@ export default function UnpackListener() {
     return () => window.removeEventListener("scroll", onScroll, true)
   }, [session, dismiss])
 
-  if (!session) return null
+  const stepClass = stepChanges ? (mode === "menu" ? "u-step-back" : "u-step-fwd") : ""
 
   return (
-    <UnpackPopover rect={session.rect} onClose={dismiss}>
-      {mode === "menu" && (
-        <div className="p-1.5 flex flex-col gap-1">
-          <button
-            onClick={handleExplain}
-            className="w-full text-left px-2.5 py-1.5 rounded-md text-[12px] font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 transition-colors"
-          >
-            Explain
-          </button>
-          <button
-            onClick={handleTranslateMenu}
-            className="w-full text-left px-2.5 py-1.5 rounded-md text-[12px] font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 transition-colors"
-          >
-            Translate
-          </button>
-          <button
-            onClick={handleReadAloud}
-            className="w-full text-left px-2.5 py-1.5 rounded-md text-[12px] font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 transition-colors"
-          >
-            Read Aloud
-          </button>
-        </div>
+    <AnimatePresence>
+    {session && (
+    <UnpackPopover key={sessionKeyRef.current} rect={session.rect} onClose={dismiss} onBack={mode === "menu" ? null : goBack}>
+      <div key={mode} className={stepClass}>
+      {mode === "menu" && session.tooLong && (
+        <p className="px-3 py-2 text-xs text-slate-400">
+          That's {session.text.length.toLocaleString()} characters. Select up to {MAX_SELECTION_LENGTH.toLocaleString()} to explain, translate or read aloud.
+        </p>
+      )}
+
+      {mode === "menu" && !session.tooLong && (
+        <UnpackMenu onExplain={handleExplain} onTranslate={handleTranslateMenu} onReadAloud={handleReadAloud} />
       )}
 
       {mode === "language" && (
@@ -221,18 +283,14 @@ export default function UnpackListener() {
       {mode === "explain" && (
         <div className="px-3 py-2 space-y-2 max-h-72 overflow-y-auto">
           {explainStatus === "loading" && !meaning && !explainResult ? (
-            <div className="space-y-1.5 animate-pulse">
-              <div className="h-2.5 bg-slate-800 rounded w-3/4" />
-              <div className="h-2.5 bg-slate-800 rounded w-full" />
-              <div className="h-2.5 bg-slate-800 rounded w-5/6" />
-            </div>
+            <p className={LOADING}><WaveDots className="text-blue-300" />Thinking…</p>
           ) : explainStatus === "error" && !explainResult ? (
             <p className="text-xs text-red-400">{explainError || "Could not load explanation."}</p>
           ) : (
-            <>
+            <div className="u-rise space-y-2">
               {explainResult?.definition_general && (
                 <p className="text-[13px] text-slate-300 leading-relaxed">
-                  {explainResult.definition_general}
+                  <Words text={explainResult.definition_general} />
                 </p>
               )}
 
@@ -244,14 +302,14 @@ export default function UnpackListener() {
                     </span>
                   )}
                   <p className="text-[13px] text-slate-100 leading-relaxed font-medium">
-                    {explainResult?.meaning_in_context ?? meaning}
+                    <Words text={explainResult?.meaning_in_context ?? meaning} />
                     {explainStatus === "loading" && !explainResult && (
                       <span className="inline-block w-1 h-3 ml-0.5 bg-blue-400 animate-pulse align-middle" />
                     )}
                   </p>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
@@ -259,12 +317,12 @@ export default function UnpackListener() {
       {mode === "translate" && (
         <div className="px-3 py-2 max-h-72 overflow-y-auto">
           {translateStatus === "loading" ? (
-            <div className="h-2.5 bg-slate-800 rounded w-2/3 animate-pulse" />
+            <p className={LOADING}><WaveDots className="text-blue-300" />Translating…</p>
           ) : translateStatus === "error" ? (
             <p className="text-xs text-red-400">{translateError || "Could not load translation."}</p>
           ) : (
             <p className="text-[15px] text-slate-100 leading-relaxed font-medium">
-              {translation?.translation}
+              <Words text={translation?.translation} />
             </p>
           )}
         </div>
@@ -273,21 +331,30 @@ export default function UnpackListener() {
       {mode === "audio" && (
         <div className="px-3 py-2">
           {audioStatus === "loading" ? (
-            <div className="h-2.5 bg-slate-800 rounded w-2/3 animate-pulse" />
+            <p className={LOADING}><WaveDots className="text-blue-300" />Preparing audio…</p>
           ) : audioStatus === "error" ? (
             <p className="text-xs text-red-400">{audioError || "Could not load audio."}</p>
           ) : (
-            audioResult?.audio_base64 && (
-              <audio
-                controls
-                autoPlay
-                className="w-full h-8"
-                src={`data:audio/mp3;base64,${audioResult.audio_base64}`}
-              />
+            audioResult?.src && (
+              <div className="flex items-center gap-2">
+                <audio
+                  controls
+                  autoPlay
+                  onPlay={() => setPlaying(true)}
+                  onPause={() => setPlaying(false)}
+                  onEnded={() => setPlaying(false)}
+                  className="w-full h-8 min-w-0"
+                  src={audioResult.src}
+                />
+                {playing && <span className="u-eq text-blue-300" aria-hidden="true"><i /><i /><i /><i /></span>}
+              </div>
             )
           )}
         </div>
       )}
+      </div>
     </UnpackPopover>
+    )}
+    </AnimatePresence>
   )
 }

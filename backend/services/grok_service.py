@@ -82,14 +82,24 @@ def ask_grok(prompt: str, json_mode: bool = False) -> str:
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
-    _preflight_check("ask_grok", prompt=prompt)
-
     try:
+        # A prompt over Groq's budget is still within the free router's 32K, so a
+        # preflight refusal takes the same backup path as a failed call.
+        _preflight_check("ask_grok", prompt=prompt)
         response = _get_client().chat.completions.create(**kwargs)
     except Exception as exc:
-        raise RuntimeError(
-            f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}."
-        ) from exc
+        # Groq is this function's only model — the OpenRouter free router is its backup.
+        logger.warning("[groq] %s failed (%s) — trying the free router backup", MODEL_NAME, exc)
+        try:
+            from ..llm.model_provider import get_chat_model, extract_text
+            backup = get_chat_model(legs="openrouter", json_mode=json_mode)
+            return extract_text(backup.invoke(kwargs["messages"],
+                                              config={"metadata": {"call_type": "ask_grok_backup"}}))
+        except Exception as backup_exc:
+            raise RuntimeError(
+                f"API request failed for model '{MODEL_NAME}' at '{BASE_URL}': {exc}. "
+                f"Free router backup failed too: {backup_exc}."
+            ) from exc
 
     duration_ms   = int((time.monotonic() - t0) * 1000)
     usage         = getattr(response, "usage", None)

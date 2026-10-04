@@ -1,6 +1,11 @@
 import { useRef, useState, useEffect, useCallback } from "react"
 import { uploadAttachment } from "../../api/chat.js"
 import { AttachmentPreviewModal } from "./ChatMessage.jsx"
+import { m, AnimatePresence, presets } from "../../lib/motion.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
+import PopMenu from "../shared/PopMenu.jsx"
+import { useTurnedOnCount } from "../../hooks/useChangeCount.js"
+import { haptic } from "../../lib/motionPrefs.js"
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -41,14 +46,7 @@ function StopIcon() {
 }
 
 function SpinnerIcon() {
-  return (
-    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-20" cx="12" cy="12" r="10"
-        stroke="currentColor" strokeWidth="3" />
-      <path className="opacity-80" fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  )
+  return <WaveDots className="text-slate-400" />
 }
 
 function PlusIcon() {
@@ -97,7 +95,7 @@ const MAX_ATTACHMENTS = 4
 // document_extraction_service.DOCUMENT_EXTENSIONS.
 const ACCEPTED_TYPES = [
   "image/png,image/jpeg,image/webp,image/gif,application/pdf",
-  ".docx,.csv,.txt,.md",
+  ".docx,.pptx,.csv,.txt,.md",
   ".py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cpp,.h,.hpp,.cs,.rb,.php,.sh,.sql,.json,.yaml,.yml,.html,.css,.xml",
 ].join(",")
 
@@ -108,10 +106,11 @@ function AttachmentChip({ attachment, onRemove, onPreview }) {
 
   return (
     <div
+      data-chip
       onClick={previewable ? () => onPreview(attachment) : undefined}
       className={`
         relative flex items-center gap-2 pl-1.5 pr-2 py-1.5 rounded-xl border text-xs
-        ${status === "error" ? "bg-red-950/40 border-red-800/50" : "bg-white/[0.04] border-white/[0.08]"}
+        ${status === "error" ? "u-shake bg-red-950/40 border-red-800/50" : "bg-white/[0.04] border-white/[0.08]"}
         ${previewable ? "cursor-pointer hover:border-white/[0.16] hover:bg-white/[0.07] transition-colors" : ""}
       `}
       title={status === "error" ? error : previewable ? `${file.name} — click to preview` : file.name}
@@ -119,7 +118,7 @@ function AttachmentChip({ attachment, onRemove, onPreview }) {
       {isImage && previewUrl ? (
         <img src={previewUrl} alt="" className="w-7 h-7 rounded-lg object-cover flex-shrink-0" />
       ) : (
-        <span className="w-7 h-7 rounded-lg bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-slate-400">
+        <span className={`${status === "uploading" ? "u-jump " : ""}w-7 h-7 rounded-lg bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-slate-400`}>
           <FileIcon />
         </span>
       )}
@@ -267,11 +266,16 @@ export default function ChatInput({
 
   const uploadingCount = attachments.filter(a => a.status === "uploading").length
   const readyAttachments = attachments.filter(a => a.status === "done")
+  const flights = useRef(0)   // sends so far; keys the arrow's fly-off
+  const ready = (hasText || readyAttachments.length > 0) && uploadingCount === 0
+  const readyCount = useTurnedOnCount(ready)
 
   function submit() {
     const value = textareaRef.current?.value.trim() || ""
     if (disabled || uploadingCount > 0) return
     if (!value && readyAttachments.length === 0) return
+    flights.current += 1
+    haptic("tap")
 
     onSend(value, readyAttachments.map(a => ({ ...a.uploaded, previewUrl: a.previewUrl })))
 
@@ -324,18 +328,25 @@ export default function ChatInput({
           `}
         >
           {/* Attachment chips */}
+          {/* The row itself is conditional, so it gets its own exit: removing the
+              last chip collapses the row while the chip shrinks out. */}
+          <AnimatePresence initial={false}>
           {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+            <m.div key="chips" {...presets.collapse} className="relative flex flex-wrap gap-1.5 px-3 pt-2.5">
+              <AnimatePresence mode="popLayout" initial={false}>
               {attachments.map(a => (
+                <m.div key={a.id} {...presets.listItem}>
                 <AttachmentChip
-                  key={a.id}
                   attachment={a}
                   onRemove={removeAttachment}
                   onPreview={(att) => setPreviewAttachment({ ...att.uploaded, previewUrl: att.previewUrl })}
                 />
+                </m.div>
               ))}
-            </div>
+              </AnimatePresence>
+            </m.div>
           )}
+          </AnimatePresence>
 
           {/* Single row: + menu · attach · textarea · char count · send */}
           <div className="flex items-center gap-1 px-2 py-1.5">
@@ -363,8 +374,9 @@ export default function ChatInput({
               >
                 <PlusIcon />
               </button>
+              <AnimatePresence>
               {menuOpen && (
-                <div className="u-pop absolute left-0 bottom-full mb-1.5 z-50 min-w-[170px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
+                <PopMenu key="menu" className="origin-bottom-left absolute left-0 bottom-full mb-1.5 z-50 min-w-[170px] bg-slate-800 border border-slate-700/50 rounded-lg shadow-xl py-1 overflow-hidden">
                   <ModeMenuItem
                     active={laymanActive}
                     onClick={() => { toggleLayman(); setMenuOpen(false) }}
@@ -387,8 +399,9 @@ export default function ChatInput({
                     label="Attach files"
                     variant="blue"
                   />
-                </div>
+                </PopMenu>
               )}
+              </AnimatePresence>
             </div>
 
             {autoMode && (
@@ -404,7 +417,7 @@ export default function ChatInput({
               onKeyDown={handleKeyDown}
               onInput={handleInput}
               className="
-                flex-1 min-w-0 resize-none bg-transparent
+                u-bare flex-1 min-w-0 resize-none bg-transparent
                 px-1.5 py-1.5 text-sm text-slate-100
                 placeholder-slate-500 focus:outline-none
                 disabled:cursor-not-allowed leading-relaxed
@@ -427,14 +440,14 @@ export default function ChatInput({
                 h-7 rounded-lg flex items-center justify-center
                 transition-all duration-150 flex-shrink-0
                 ${disabled
-                  ? "min-w-[62px] gap-1.5 px-2 bg-blue-600 text-white shadow-sm shadow-blue-950/40 hover:bg-blue-500 active:scale-95"
+                  ? "u-flat min-w-[62px] gap-1.5 px-2 bg-blue-600 text-white shadow-sm shadow-blue-950/40 hover:bg-blue-500 active:scale-95"
                   : (hasText || readyAttachments.length > 0) && uploadingCount === 0
                     ? "w-7 bg-slate-100 text-slate-900 hover:bg-white shadow-sm active:scale-95"
                     : "w-7 bg-white/[0.05] text-slate-600 cursor-default"
                 }
               `}
             >
-              {disabled ? <><StopIcon /><span className="text-[11px] font-semibold">Cancel</span></> : uploadingCount > 0 ? <SpinnerIcon /> : <ArrowUpIcon />}
+              {disabled ? <><StopIcon /><span className="text-[11px] font-semibold">Cancel</span></> : uploadingCount > 0 ? <SpinnerIcon /> : <span key={readyCount} className={readyCount ? "u-pop-num" : "inline-flex"}><span key={flights.current} className={flights.current ? "u-fly" : "inline-flex"}><ArrowUpIcon /></span></span>}
             </button>
           </div>
         </div>
@@ -448,9 +461,11 @@ export default function ChatInput({
       </div>
     </div>
 
-    {previewAttachment && (
-      <AttachmentPreviewModal attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />
-    )}
+    <AnimatePresence>
+      {previewAttachment && (
+        <AttachmentPreviewModal key="preview" attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />
+      )}
+    </AnimatePresence>
     </>
   )
 }

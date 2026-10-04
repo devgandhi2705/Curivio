@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import { m, useDialogMotion } from '../../lib/motion.jsx'
 import { fetchCollections, fetchBookmarks, createCollection, saveBookmark, deleteBookmark } from '../../api/bookmarks.js'
 
 const COLOR_OPTIONS = [
@@ -20,6 +22,7 @@ const COLOR_DOT = {
 }
 
 export default function CollectionPickerModal({ bookmarkData, onClose, onSaved }) {
+  const dm = useDialogMotion(onClose)
   const [collections, setCollections] = useState([])
   // collection_id → bookmark_id for bookmarks that already exist
   const [existingMap, setExistingMap] = useState({})
@@ -114,16 +117,21 @@ export default function CollectionPickerModal({ bookmarkData, onClose, onSaved }
     return parts.join(' · ')
   }
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+  // Portalled: it opens from inside feed cards and chat messages, which lift
+  // and animate — a transformed ancestor would trap a fixed overlay.
+  return createPortal(
+    <m.div
+      {...dm.root}
+      className="u-motion-managed u-sheet-root fixed inset-0 z-[80] flex items-center justify-center p-4"
       onClick={e => { e.stopPropagation(); onClose() }}
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div
-        className="relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden"
+      <m.div
+        {...dm.card}
+        className="u-sheet relative w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-slate-800">
           <div>
@@ -255,7 +263,8 @@ export default function CollectionPickerModal({ bookmarkData, onClose, onSaved }
             {buttonLabel()}
           </button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>,
+    document.body,
   )
 }

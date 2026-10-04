@@ -1,5 +1,10 @@
 """
-Chat-R6a — direct text extraction for uploaded documents (pdf/docx/csv/text/code).
+Chat-R6a — direct text extraction for uploaded documents (pdf/docx/pptx/csv/text/code).
+
+Word and PowerPoint files are extracted as Markdown (backend/utils/office_markdown.py):
+blocks in document order, blank lines between them, headings/lists/tables/emphasis
+kept — so the preview can show them formatted and chunking splits on real paragraph
+boundaries (the old flat docx text was one "paragraph" hard-cut every 800 chars).
 
 Images stay entirely on the existing native Gemini vision path (chat_agent.py's
 Chat-5 has_attachments gate) — this module is never invoked for image uploads.
@@ -42,6 +47,8 @@ import logging
 import pypdf
 from docx import Document
 
+from ..utils.office_markdown import docx_to_markdown, pptx_to_markdown
+
 logger = logging.getLogger(__name__)
 
 # Real digital PDF pages run into the hundreds of chars/page; a scanned/image-only
@@ -56,6 +63,8 @@ ERROR_PDF_NO_PAGES          = "pdf_no_pages"
 ERROR_PDF_SCANNED           = "pdf_scanned"
 ERROR_DOCX_UNREADABLE       = "docx_unreadable"
 ERROR_DOCX_NO_TEXT          = "docx_no_text"
+ERROR_PPTX_UNREADABLE       = "pptx_unreadable"
+ERROR_PPTX_NO_TEXT          = "pptx_no_text"
 ERROR_TEXT_UNDECODABLE      = "text_undecodable"
 ERROR_TEXT_EMPTY            = "text_empty"
 ERROR_UNSUPPORTED_EXTENSION = "unsupported_extension"
@@ -67,7 +76,7 @@ _PLAIN_TEXT_EXTENSIONS = {
     ".html", ".css", ".xml",
 }
 
-DOCUMENT_EXTENSIONS = _PLAIN_TEXT_EXTENSIONS | {".pdf", ".docx"}
+DOCUMENT_EXTENSIONS = _PLAIN_TEXT_EXTENSIONS | {".pdf", ".docx", ".pptx"}
 
 
 def _extract_pdf(file_bytes: bytes, filename: str) -> tuple[str | None, list[dict] | None, str | None, str | None]:
@@ -100,14 +109,20 @@ def _extract_docx(file_bytes: bytes, filename: str) -> tuple[str | None, list[di
     except Exception as exc:
         return None, None, f"Couldn't read '{filename}' as a .docx file: {exc}", ERROR_DOCX_UNREADABLE
 
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
-    for table in doc.tables:
-        for row in table.rows:
-            parts.append(" | ".join(cell.text for cell in row.cells))
-    text = "\n".join(parts)
+    text = docx_to_markdown(doc)
     if not text.strip():
         return None, None, f"'{filename}' has no extractable text.", ERROR_DOCX_NO_TEXT
     return text, None, None, None  # docx has no real page concept — pages stays None
+
+
+def _extract_pptx(file_bytes: bytes, filename: str) -> tuple[str | None, list[dict] | None, str | None, str | None]:
+    try:
+        text, _structure = pptx_to_markdown(file_bytes)
+    except Exception as exc:
+        return None, None, f"Couldn't read '{filename}' as a .pptx file: {exc}", ERROR_PPTX_UNREADABLE
+    if not text.strip() or not any(l.strip() and not l.startswith("## Slide") for l in text.splitlines()):
+        return None, None, f"'{filename}' has no text on its slides.", ERROR_PPTX_NO_TEXT
+    return text, None, None, None  # slides, not pages — page_no stays None
 
 
 def _extract_plain(file_bytes: bytes, filename: str) -> tuple[str | None, list[dict] | None, str | None, str | None]:
@@ -131,6 +146,8 @@ def extract_document_text(file_bytes: bytes, filename: str, ext: str) -> tuple[s
         return _extract_pdf(file_bytes, filename)
     if ext == ".docx":
         return _extract_docx(file_bytes, filename)
+    if ext == ".pptx":
+        return _extract_pptx(file_bytes, filename)
     if ext in _PLAIN_TEXT_EXTENSIONS:
         return _extract_plain(file_bytes, filename)
     return None, None, f"Unsupported file type: {ext or 'unknown'}", ERROR_UNSUPPORTED_EXTENSION

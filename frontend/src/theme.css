@@ -234,6 +234,9 @@ html:not([data-ui]),
   --u-pre-bg:      #EDEAE0;
   --u-pre-fg:      #282217;
   --u-card-shadow: 0 1px 2px rgba(29,24,16,.05), 0 1px 3px rgba(29,24,16,.07);
+  --u-lift-shadow: 0 2px 4px rgba(29,24,16,.05), 0 18px 30px -12px rgba(29,24,16,.30);
+  --u-sheen:        rgba(255, 255, 255, .55);
+  --u-sheen-strong: rgba(255, 255, 255, .75);
   /* Overlays share the card token with the surface underneath them, so on
      paper the shadow is the only thing separating a settings panel from the
      sidebar it covers. It carries more weight here than it does on charcoal. */
@@ -407,6 +410,9 @@ html:not([data-ui]),
   --u-pre-bg:      #171411;
   --u-pre-fg:      #D0C4B9;
   --u-card-shadow: 0 1px 3px rgba(0,0,0,.40), 0 0 0 1px rgba(246,239,232,.045);
+  --u-lift-shadow: 0 20px 40px -14px rgba(0,0,0,.75), 0 0 0 1px rgba(246,239,232,.08);
+  --u-sheen:        rgba(246, 239, 232, .06);
+  --u-sheen-strong: rgba(246, 239, 232, .35);
   --u-modal-shadow: 0 24px 64px -20px rgba(0,0,0,.78), 0 4px 14px rgba(0,0,0,.50);
 }
 
@@ -462,6 +468,9 @@ html:not([data-ui]),
   --u-pre-bg:      rgba(8,10,16,.70);
   --u-pre-fg:      #c9d8e8;
   --u-card-shadow: 0 1px 3px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.04);
+  --u-lift-shadow: 0 20px 40px -14px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.08);
+  --u-sheen:        rgba(255, 255, 255, .06);
+  --u-sheen-strong: rgba(255, 255, 255, .35);
   --u-modal-shadow: 0 20px 60px rgba(0,0,0,.70), 0 4px 16px rgba(0,0,0,.50);
 }
 
@@ -631,14 +640,6 @@ button:active .u-logo { transform: scale(.94); }
   .u-auth-plate-c { display: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .u-auth-plate,
-  .u-auth-plate .lp-plate-node,
-  .u-auth-plate .lp-plate-edge,
-  .u-auth-plate .lp-plate-rings circle { animation: none; }
-  .u-auth-plate .lp-plate-edge { stroke-dashoffset: 0; }
-}
-
 
 /* ══ THE SWITCH ══════════════════════════════════════════════════════════
    Repainting the app is a state change, so it gets a transition rather than a
@@ -698,15 +699,9 @@ html.u-swapping *::after {
    positioned backdrop and one relative card, so the whole set animates from
    structure alone — no per-call-site class. The backdrop fades with the root;
    `:not(.absolute)` is what separates the card from the backdrop. */
-.fixed.inset-0.z-50 { animation: u-scrim-in 180ms ease both; }
-.fixed.inset-0.z-50 > *:not(.absolute) {
+/* Dialogs migrated to Motion (u-motion-managed) animate themselves, both
+   ways; this structural rule stays as the fallback for anything not yet. */
+.fixed.inset-0.z-50:not(.u-motion-managed) { animation: u-scrim-in 180ms ease both; }
+.fixed.inset-0.z-50:not(.u-motion-managed) > *:not(.absolute) {
   animation: u-sheet-in 260ms cubic-bezier(.32, .72, 0, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .u-pop, .u-slide-r,
-  .fixed.inset-0.z-50,
-  .fixed.inset-0.z-50 > *:not(.absolute) { animation-duration: 1ms; }
-  ::view-transition-new(root) { animation-duration: 1ms; }
-  html.u-swapping, html.u-swapping * { transition-duration: 1ms !important; }
 }

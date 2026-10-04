@@ -74,14 +74,43 @@ class TestGetFullText:
         assert full.index("Paragraph 0") < full.index("Paragraph 1") < full.index("Paragraph 5")
 
     def test_not_trimmed_by_token_budget_unlike_get_context(self, mem_db):
-        # get_context caps at token_budget=3000; get_full_text must not.
-        big_text = "word " * 5000  # comfortably over the 3000-token budget
+        # get_context caps at token_budget; get_full_text must not.
+        big_text = "word " * 100_000  # comfortably over get_context's 100K-token default
         attachment_id = document_memory_service.store_document("huge.txt", big_text)
 
         full = document_memory_service.get_full_text(attachment_id)
 
         assert full is not None
         assert len(full) >= len(big_text) - 10  # rejoin adds separators, not much loss
+
+
+class TestGetContext:
+    def test_short_paper_sent_in_full_by_default(self, mem_db):
+        # Regression: a 5-page paper (~29K chars, ~7.2K tokens — the real
+        # ARIIA-2026 docx) blew the old 3000-token default and only 5 of its
+        # chunks (~10% of the text) reached the model.
+        paragraphs = [f"Section {i}. " + ("detail " * 90) for i in range(45)]
+        text = "\n\n".join(paragraphs)
+        attachment_id = document_memory_service.store_document("paper.docx", text)
+
+        note = document_memory_service.get_context(attachment_id, "paper.docx", "What is this?")
+
+        assert note.startswith("[Document 'paper.docx', full text:]")
+        assert "Section 0." in note and "Section 44." in note
+
+    def test_excerpts_fill_the_budget_not_just_top_five(self, mem_db):
+        paragraphs = [f"Chunk {i}. " + ("y" * 780) for i in range(20)]  # one ~200-token chunk each
+        attachment_id = document_memory_service.store_document("big.txt", "\n\n".join(paragraphs))
+        chunks = document_memory_service._all_chunks(attachment_id)
+        ranked = list(reversed(chunks))  # most relevant = last chunk
+
+        with patch.object(document_memory_service, "_search_chunks", return_value=ranked):
+            note = document_memory_service.get_context(attachment_id, "big.txt", "q", token_budget=2000)
+
+        # 197 tokens/chunk -> 10 fit in 2000 (the old code stopped at 5)
+        assert "showing the 10 most relevant excerpts out of 20" in note
+        assert "Chunk 19." in note and "Chunk 10." in note and "Chunk 9." not in note
+        assert note.index("Chunk 10.") < note.index("Chunk 19.")  # restored to reading order
 
 
 if __name__ == "__main__":

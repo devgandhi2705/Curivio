@@ -3,33 +3,66 @@
 @tailwind utilities;
 
 /* ── Hover / press feedback ───────────────────────────────────────────────
-   In `@layer base` on purpose: every one of these is meant to be a default a
-   component can override. Anything carrying its own `transition-*`,
-   `duration-*` or `active:scale-*` utility outranks the whole layer, so this
-   only fills in the elements that never got explicit motion. Scoped away from
-   the landing page, which runs its own motion engine. */
+   In `@layer base`, but note the `body:not(:has(.lp))` prefix gives these a
+   specificity of (0,2,1)+ — higher than any single Tailwind utility — so they
+   win over `transition-*` / `active:scale-*` utilities on the same element.
+   motion.css matches the prefix for utilities that must win back. Scoped away
+   from the landing page, which runs its own motion engine. */
 @layer base {
   body:not(:has(.lp)) :is(a, button, [role="button"], summary, label[for], input, select, textarea) {
     transition:
-      color            160ms ease,
-      background-color 160ms ease,
-      border-color     160ms ease,
-      box-shadow       160ms ease,
-      opacity          160ms ease,
-      transform        170ms cubic-bezier(.2, .9, .3, 1);
+      color            var(--m-hover, 160ms) ease,
+      background-color var(--m-hover, 160ms) ease,
+      border-color     var(--m-hover, 160ms) ease,
+      box-shadow       var(--m-hover, 160ms) var(--m-out, ease),
+      opacity          var(--m-hover, 160ms) ease,
+      transform        var(--m-press, 170ms) var(--m-out, ease),
+      translate        var(--m-press, 170ms) var(--m-out, ease),
+      scale            var(--m-press, 170ms) var(--m-out, ease);
   }
 
   /* 0.98 rather than the usual 0.95: much of this app's button surface is
      full-width sidebar rows, where a 5% squeeze reads as a glitch and 2%
-     reads as pressure. */
+     reads as pressure. `scale`, not `transform`, so it composes with
+     Tailwind's -translate-y-1/2 centring instead of erasing it. */
   body:not(:has(.lp)) button:not(:disabled):active,
   body:not(:has(.lp)) [role="button"]:not([aria-disabled="true"]):active {
-    transform: scale(.98);
+    scale: .98;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    body:not(:has(.lp)) button:not(:disabled):active { transform: none; }
+    body:not(:has(.lp)) button:not(:disabled):active { scale: none; }
   }
+
+  /* Primary buttons stand above the surface and drop onto their ledge on press. */
+  body:not(:has(.lp)) :is(button, a).bg-blue-600:not(.u-flat) { box-shadow: 0 3px 0 color-mix(in srgb, rgb(var(--u-blue-600, 37 99 235)) 55%, black); }
+  body:not(:has(.lp)) :is(button, a).bg-red-600:not(.u-flat)  { box-shadow: 0 3px 0 color-mix(in srgb, rgb(var(--u-red-600, 220 38 38)) 55%, black); }
+  body:not(:has(.lp)) .u-btn-2:not(.u-flat)                   { box-shadow: 0 3px 0 rgb(var(--u-slate-700, 51 65 85)); }
+  @media (hover: hover) {
+    body:not(:has(.lp)) :is(:is(button, a).bg-blue-600, :is(button, a).bg-red-600, .u-btn-2):not(.u-flat):not(:disabled):hover {
+      translate: 0 -1px;
+    }
+  }
+  body:not(:has(.lp)) :is(:is(button, a).bg-blue-600, :is(button, a).bg-red-600, .u-btn-2):not(.u-flat):not(:disabled):active {
+    translate: 0 3px;
+    box-shadow: 0 0 0 transparent;
+  }
+  body:not(:has(.lp)) :is(button.bg-blue-600, button.bg-red-600, button.u-btn-2):disabled { box-shadow: none; }
+
+  /* A single keyboard focus ring, with a softer treatment for text fields. */
+  body:not(:has(.lp)) :focus-visible {
+    outline: 2px solid rgb(var(--u-blue-400, 96 165 250));
+    outline-offset: 2px;
+  }
+  body:not(:has(.lp)) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(var(--u-blue-400, 96 165 250)) 55%, transparent);
+  }
+  body:not(:has(.lp)) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select)[class~="border"]:focus-visible {
+    box-shadow: 0 0 0 4px color-mix(in srgb, rgb(var(--u-blue-400, 96 165 250)) 22%, transparent);
+    transition: box-shadow var(--m-settle, 400ms) var(--m-spring, ease);
+  }
+  body:not(:has(.lp)) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select).u-bare:focus-visible { box-shadow: none; }
 }
 
 @keyframes chat-cursor-blink {
@@ -49,13 +82,13 @@
    ============================================================ */
 
 html {
-  overflow-x: hidden;
+  overflow-x: clip;
   /* Prevent tap highlight on mobile */
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  overflow-x: hidden;
+  overflow-x: clip;
   /* Smooth momentum scrolling on iOS */
   -webkit-overflow-scrolling: touch;
 }
@@ -122,7 +155,7 @@ body {
 body {
   font-family: var(--font-sans);
   line-height: 1.6;
-  letter-spacing: -0.011em;
+  letter-spacing: -0.006em;
   font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -132,6 +165,102 @@ body {
 code, pre, kbd, samp {
   font-family: var(--font-mono);
   font-feature-settings: 'liga' 1, 'calt' 1;
+}
+
+/* ── Reading type ───────────────────────────────────────────── */
+:root { --font-serif: 'Newsreader', 'Iowan Old Style', Georgia, serif; }
+
+.u-read-display, .u-read-title, .u-read-heading, .u-read-quote {
+  font-family: var(--font-serif);
+  font-optical-sizing: auto;
+}
+.u-read-display { font-size: clamp(23px, 15px + 1.1vw, 32px); font-weight: 600; line-height: 1.2; letter-spacing: -0.012em; }
+.u-read-title   { font-size: clamp(19px, 15.5px + 0.4vw, 21.5px); font-weight: 600; line-height: 1.28; letter-spacing: -0.006em; }
+.u-read-heading { font-size: clamp(16.5px, 15px + 0.15vw, 17.5px); font-weight: 600; line-height: 1.35; letter-spacing: 0; }
+.u-read-lead    { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px); line-height: 1.7; letter-spacing: -0.008em; }
+.u-read-body    { font-size: clamp(14.5px, 13.4px + 0.13vw, 15.5px); line-height: 1.7; letter-spacing: -0.004em; }
+.u-read-quote   { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px); line-height: 1.6; font-style: italic; }
+.u-read-label   { font-size: 10.5px; font-weight: 600; line-height: 1.3; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.u-feed-col { max-width: 800px; margin-inline: auto; width: 100%; }
+.u-feed-col:has(.u-day-rail) {
+  max-width: min(800px, 100% - 280px);
+  margin-left: max(0px, (100% - min(800px, 100% - 280px) - 280px) / 2);
+  margin-right: auto;
+}
+
+.u-reader .u-read-body,
+.u-reader .u-read-lead {
+  font-family: var(--r-font); font-size: var(--r-size); line-height: var(--r-lh);
+  letter-spacing: var(--r-tracking); word-spacing: var(--r-words);
+  text-align: var(--r-align); hyphens: var(--r-hyphens);
+}
+.u-reader .u-read-lead    { font-size: calc(var(--r-size) * 1.08); }
+.u-reader .u-read-title   { font-family: var(--r-font); font-size: calc(var(--r-size) * var(--r-head-scale) * 1.45); line-height: 1.2; }
+.u-reader .u-read-heading { font-family: var(--r-font); font-size: calc(var(--r-size) * var(--r-head-scale)); line-height: 1.3; }
+.u-reader .u-read-quote   { font-family: var(--r-font); font-size: calc(var(--r-size) * 1.08); line-height: var(--r-lh); }
+.u-reader .u-read-label   { font-size: max(10.5px, calc(var(--r-size) * 0.6)); }
+.u-rc-main > * + *        { margin-top: var(--r-para); }
+
+.u-rc-wrap { max-width: calc(var(--r-width) + 4rem); }
+.u-reader-card { display: flex; flex-direction: column; gap: 1.25rem; }
+.u-rc-rail, .u-rc-aside { display: contents; }
+.u-rc-eyebrow, .u-rc-meta { order: 0; padding-inline: 0.75rem; }
+.u-rc-main      { order: 1; }
+.u-rc-sources   { order: 2; padding-inline: 0.75rem; }
+.u-rc-actions   { order: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-inline: 0.5rem; }
+.u-rc-note      { order: 4; padding-inline: 0.75rem; }
+.u-rc-related   { order: 5; padding-inline: 0.75rem; }
+.u-rc-meta      { align-items: center; flex-wrap: wrap; }
+.u-rc-sep       { display: none; }
+
+.u-rc-act {
+  display: inline-flex; align-items: center; gap: 0.6rem; height: 36px; padding: 0 0.625rem;
+  border-radius: 0.5rem; font-size: 13px; text-align: left;
+  transition: color .15s, background-color .15s, transform .12s;
+}
+.u-rc-act:hover:not(:disabled) { background: rgb(var(--u-white, 255 255 255) / 0.06); }
+.u-rc-act:active:not(:disabled) { transform: scale(.97); }
+.u-reader .u-rc-bm > button {
+  height: 36px; padding: 0 0.625rem; gap: 0.6rem; font-size: 13px;
+  border-color: transparent; background: transparent;
+}
+.u-reader .u-rc-bm > button:hover { background: rgb(var(--u-white, 255 255 255) / 0.06); }
+
+@media (min-width: 1024px) {
+  .u-reader .u-rc-wrap { max-width: calc(var(--r-width) + 330px); }
+  .u-reader-card {
+    display: grid; align-items: start; row-gap: 2.5rem;
+    grid-template-columns: minmax(170px, 210px) minmax(0, var(--r-width));
+    column-gap: clamp(32px, 4vw, 64px);
+  }
+  .u-rc-rail {
+    display: flex; flex-direction: column; gap: 1.5rem;
+    grid-column: 1; grid-row: 1 / span 2;
+    position: sticky; top: calc(3.5rem + 1rem);
+  }
+  .u-rc-eyebrow, .u-rc-meta, .u-rc-actions { padding-inline: 0; }
+  .u-rc-meta { flex-direction: column; align-items: flex-start; }
+  .u-rc-actions { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 2px; margin-left: -0.625rem; }
+  .u-reader .u-rc-bm,
+  .u-reader .u-rc-bm > button { width: 100%; }
+  .u-rc-sep { display: block; height: 1px; margin: 0.5rem 0.625rem; background: rgb(var(--u-slate-800, 30 41 59)); }
+  .u-rc-main { grid-column: 2; grid-row: 1; }
+  .u-rc-aside {
+    display: flex; flex-direction: column; gap: 2rem;
+    grid-column: 2; grid-row: 2; padding-inline: 1.25rem;
+  }
+  .u-rc-aside > * { padding-inline: 0; }
+}
+@media (min-width: 1280px) {
+  .u-reader .u-rc-wrap { max-width: calc(var(--r-width) + 640px); }
+  .u-reader-card { grid-template-columns: minmax(170px, 210px) minmax(0, var(--r-width)) minmax(220px, 280px); }
+  .u-rc-rail { grid-row: 1; }
+  .u-rc-aside {
+    grid-column: 3; grid-row: 1; padding-inline: 0;
+    position: sticky; top: calc(3.5rem + 1rem);
+    max-height: calc(100vh - 3.5rem - 5rem); overflow-y: auto;
+  }
 }
 
 /* ============================================================

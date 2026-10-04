@@ -254,6 +254,14 @@ def live_copy(tmp_path_factory, request):
     shutil.copy(LIVE_DB, copy)
     conn = sqlite3.connect(str(copy))
     conn.row_factory = sqlite3.Row
+    # Bring the copy to the current schema, as init_db does at boot (new tables
+    # such as admin_log_stars are CREATE IF NOT EXISTS; vec tables need an
+    # extension this connection doesn't load, and aren't used here).
+    for stmt in ALL_TABLES:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
 
     @contextmanager
     def _get_conn():

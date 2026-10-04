@@ -22,10 +22,10 @@ store_document_stream(filename, text, pages=None) -> generator yielding progress
     so page_no is exact. None (the default) -> flat chunking, page_no=NULL
     for every chunk — used for docx/plain-text (no real page concept) and
     by any caller that doesn't have per-page extraction.
-get_context(attachment_id, filename, query_text, token_budget=3000) -> str
-    Full extracted text when it fits token_budget; otherwise the top
-    semantically-relevant chunks for query_text (Chat-3's get_embedding/search
-    pattern, reused not reimplemented). Inserts a "--- Page N ---" marker on
+get_context(attachment_id, filename, query_text, token_budget=_FULL_TEXT_TOKEN_BUDGET) -> str
+    Full extracted text when it fits token_budget; otherwise as many of the
+    most semantically-relevant chunks for query_text as fit token_budget
+    (Chat-3's get_embedding/search pattern, reused not reimplemented). Inserts a "--- Page N ---" marker on
     each page transition so the model can cite a real page number; chunks
     with page_no=NULL join exactly as before, no markers.
 get_full_text(attachment_id) -> str | None
@@ -64,6 +64,13 @@ _CHUNK_CHARS = 800    # ~200 tokens/chunk at the project's 4-chars/token heurist
 # progress blast radius to 25 chunks, not the library's max of 100.
 _EMBED_BATCH_SIZE = 25
 _TOP_K = 5
+# get_context's default: a whole document goes to the model up to this size.
+# Was 3000, which cut a 5-page paper (~7K tokens) down to 5 chunks (~10% of
+# it). Groq's 8K-TPM legs can't take a prompt this big, but they don't need
+# to: chat_agent._check_budget skips any leg the prompt doesn't fit, so the
+# turn lands on a 1M-context Gemini leg. The cap (~130 dense pages) keeps a
+# single document well under Gemini free tier's per-minute token limit.
+_FULL_TEXT_TOKEN_BUDGET = 100_000
 # Looser than vector_memory_service's 0.35 — retrieval here only ever competes
 # against chunks of the SAME document (attachment_id-scoped), not the whole
 # corpus, so a marginal chunk merely lacks relevance rather than crossing documents.
@@ -191,7 +198,8 @@ def _all_chunks(attachment_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _search_chunks(attachment_id: str, query_text: str, top_k: int = _TOP_K) -> list[dict]:
+def _search_chunks(attachment_id: str, query_text: str, top_k: int = _TOP_K,
+                   max_distance: float = _MAX_DISTANCE) -> list[dict]:
     query_vec = get_embedding(query_text)
     with get_connection() as conn:
         rows = conn.execute(
@@ -203,7 +211,7 @@ def _search_chunks(attachment_id: str, query_text: str, top_k: int = _TOP_K) -> 
                LIMIT  ?""",
             (json.dumps(query_vec), attachment_id, top_k),
         ).fetchall()
-    return [dict(r) for r in rows if r["distance"] < _MAX_DISTANCE]
+    return [dict(r) for r in rows if r["distance"] < max_distance]
 
 
 def _join_with_page_markers(chunks: list[dict]) -> str:
@@ -287,10 +295,12 @@ def is_relevant(attachment_id: str, query_text: str) -> bool:
         return False
 
 
-def get_context(attachment_id: str, filename: str, query_text: str, token_budget: int = 3000) -> str:
+def get_context(attachment_id: str, filename: str, query_text: str,
+                token_budget: int = _FULL_TEXT_TOKEN_BUDGET) -> str:
     """
-    Full document text when it fits token_budget; otherwise the top
-    semantically-relevant chunks for query_text, restored to reading order.
+    Full document text when it fits token_budget; otherwise the most
+    semantically-relevant chunks for query_text, best first until token_budget
+    is spent, restored to reading order.
     Non-fatal: returns an honest note instead of raising on any error.
     """
     try:
@@ -302,8 +312,16 @@ def get_context(attachment_id: str, filename: str, query_text: str, token_budget
         if estimate_tokens(full_text) <= token_budget:
             return f"[Document '{filename}', full text:]\n{full_text}"
 
-        hits = _search_chunks(attachment_id, query_text) or chunks[:_TOP_K]
-        hits = sorted(hits, key=lambda c: int(c["chunk_index"]))
+        # Rank every chunk (no distance cutoff — this orders what to keep, it
+        # doesn't gate relevance) and fill the budget, not a fixed top-5.
+        ranked = _search_chunks(attachment_id, query_text, top_k=len(chunks), max_distance=float("inf"))
+        hits, used = [], 0
+        for c in ranked:
+            used += estimate_tokens(c["chunk_text"])
+            if used > token_budget:
+                break
+            hits.append(c)
+        hits = sorted(hits or ranked[:1], key=lambda c: int(c["chunk_index"]))
         excerpt = _join_with_page_markers(hits)
         return (
             f"[Document '{filename}' is long — showing the {len(hits)} most "

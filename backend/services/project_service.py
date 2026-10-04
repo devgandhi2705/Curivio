@@ -190,9 +190,31 @@ def update_project(project_id: str, **fields) -> dict | None:
     return project
 
 
+# Every table that holds rows for a legacy project. Only project_insights and
+# journey_plans have ON DELETE CASCADE foreign keys; the rest were left behind by
+# the old delete (the project row went, its reads, notes, progression, learning
+# state, knowledge graph, provenance and metrics stayed forever).
+_PROJECT_CHILD_TABLES = (
+    "feed_article_reads", "card_notes", "project_progression", "project_learning_state",
+    "project_learning_memory", "knowledge_graph_edges", "knowledge_graph_nodes",
+    "learning_evaluations", "article_provenance", "retrieval_metrics", "feed_chat_links",
+    "read_later_items", "project_insights", "journey_plans",
+)
+
+
 def delete_project(project_id: str) -> bool:
+    """Delete a legacy project and every row that belongs to it (one transaction).
+    Kept on purpose: bookmarks (each holds its own saved copy and the project's name)
+    and llm_call_log (the admin cost/audit log). Legacy projects store no files, so
+    there is nothing in R2 to remove."""
     from ..utils.db import get_connection
     with get_connection() as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for table in _PROJECT_CHILD_TABLES:
+            if table in tables:
+                conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
+        if "share_links" in tables:
+            conn.execute("DELETE FROM share_links WHERE type = 'feed' AND resource_id LIKE ?", (f"{project_id}/%",))
         r = conn.execute("DELETE FROM learning_projects WHERE project_id = ?", (project_id,))
     return r.rowcount > 0
 
@@ -1677,8 +1699,15 @@ def _extract_json(text: str) -> dict:
 
 
 def delete_project_insight(project_id: str, insight_id: int) -> bool:
+    """Delete one day's package and the rows that exist only for it."""
     from ..utils.db import get_connection
     with get_connection() as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for table in ("feed_article_reads", "card_notes", "article_provenance", "retrieval_metrics",
+                      "feed_chat_links", "read_later_items"):
+            if table in tables:
+                conn.execute(f"DELETE FROM {table} WHERE project_id = ? AND insight_id = ?",
+                             (project_id, insight_id))
         cur = conn.execute(
             "DELETE FROM project_insights WHERE id = ? AND project_id = ?",
             (insight_id, project_id),

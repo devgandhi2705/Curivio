@@ -9,6 +9,7 @@
  *   onNavigate   ({ type: 'feed'|'bookmarks'|'chat', ...data }) => void
  */
 import { useState, useEffect, useRef, useCallback } from "react"
+import { m, presets, SPRING } from "../lib/motion.jsx"
 import { globalSearch } from "../api/search.js"
 
 // ── Color map (mirrors ProjectCard) ──────────────────────────────────────────
@@ -73,7 +74,7 @@ function Highlight({ text, query }) {
   return (
     <span>
       {text.slice(0, idx)}
-      <mark className="bg-blue-500/25 text-blue-300 rounded-[2px] px-0.5">
+      <mark className="u-mark-in bg-blue-500/25 text-blue-300 rounded-[2px] px-0.5">
         {text.slice(idx, idx + query.length)}
       </mark>
       {text.slice(idx + query.length)}
@@ -138,12 +139,17 @@ function ResultRow({ result, query, isSelected, onSelect, onHover, flatIdx }) {
       ref={ref}
       onMouseEnter={() => onHover(flatIdx)}
       onClick={() => onSelect(result)}
-      className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors ${
-        isSelected ? "bg-slate-800/80" : "hover:bg-slate-800/40"
+      className={`u-rise relative w-full text-left px-4 py-3 flex items-start gap-3 transition-colors ${
+        isSelected ? "" : "hover:bg-slate-800/40"
       }`}
     >
-      <div className="mt-0.5 flex-shrink-0">{icon}</div>
-      <div className="min-w-0 flex-1">
+      {/* one selection highlight, gliding with the arrow keys */}
+      {isSelected && (
+        <m.span layoutId="search-selection" transition={SPRING} aria-hidden="true"
+          className="absolute inset-0 bg-slate-800/80" />
+      )}
+      <div className="relative mt-0.5 flex-shrink-0">{icon}</div>
+      <div className="relative min-w-0 flex-1">
         <p className="text-[13px] font-medium text-slate-200 truncate leading-snug">
           <Highlight text={title} query={query} />
         </p>
@@ -155,7 +161,7 @@ function ResultRow({ result, query, isSelected, onSelect, onHover, flatIdx }) {
         <p className="text-[10px] text-slate-600 mt-1">{meta}</p>
       </div>
       {isSelected && (
-        <div className="flex-shrink-0 mt-0.5">
+        <div className="relative u-pop-num flex-shrink-0 mt-0.5">
           <kbd className="px-1.5 py-0.5 text-[9px] rounded bg-slate-700 text-slate-400 border border-slate-600/60">
             ↵
           </kbd>
@@ -268,12 +274,14 @@ export default function GlobalSearch({ onClose, onNavigate }) {
   const isEmpty = query.trim().length >= 2 && !loading && !hasResults
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh] px-4"
+    <m.div
+      {...presets.scrim}
+      className="u-motion-managed fixed inset-0 z-50 flex items-start justify-center pt-[12vh] px-4"
       style={{ background: "var(--u-scrim)", backdropFilter: "blur(4px)" }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div
+      <m.div
+        {...presets.palette}
         className="w-full max-w-[640px] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden"
         onKeyDown={handleKeyDown}
       >
@@ -404,7 +412,7 @@ export default function GlobalSearch({ onClose, onNavigate }) {
             </span>
           </div>
         )}
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }

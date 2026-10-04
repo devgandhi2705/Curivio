@@ -93,6 +93,48 @@ SORT_COLUMNS = {
 }
 
 
+
+# ── Admin log stars (docs/superpowers/specs/2026-10-03-admin-log-stars-design.md)
+# A group star keys COALESCE(trace_id, 'row-' || id) — the grouped list's own
+# key; a row star keys llm_call_log.id. The `starred` filter keeps every group
+# that is starred or holds a starred row and surfaces the WHOLE group, the same
+# rule search follows. One condition in _build_where, so the list, its count,
+# the summaries, the volume chart and the export can never disagree.
+STAR_KINDS = ("group", "row")
+
+_STARRED_GROUPS_SQL = """COALESCE(l.trace_id, 'row-' || l.id) IN (
+    SELECT target_key FROM admin_log_stars WHERE target_kind = 'group'
+    UNION
+    SELECT COALESCE(s_l.trace_id, 'row-' || s_l.id)
+      FROM admin_log_stars s
+      JOIN llm_call_log s_l ON s.target_kind = 'row' AND s_l.id = CAST(s.target_key AS INTEGER)
+)"""
+
+
+def star_log(kind: str, key: str, starred_by: str | None) -> None:
+    """Idempotent: starring twice keeps one star."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO admin_log_stars (target_kind, target_key, starred_by) VALUES (?, ?, ?)",
+            (kind, key, starred_by),
+        )
+
+
+def unstar_log(kind: str, key: str) -> None:
+    """Idempotent: unstarring something that isn't starred is a no-op."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM admin_log_stars WHERE target_kind = ? AND target_key = ?", (kind, key))
+
+
+def _star_sets(conn) -> tuple[set[str], set[str]]:
+    """(starred group keys, starred row ids as text). One read of the whole
+    table — it holds a handful of hand-picked stars, and an IN (...) list sized
+    to an export (20k groups) would overrun SQLite's variable limit."""
+    groups, rows = set(), set()
+    for kind, key in conn.execute("SELECT target_kind, target_key FROM admin_log_stars"):
+        (groups if kind == "group" else rows).add(key)
+    return groups, rows
+
 def _build_where(
     date_from: str | None,
     date_to: str | None,
@@ -105,6 +147,7 @@ def _build_where(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[str, list]:
     where = []
     params: list = []
@@ -179,6 +222,8 @@ def _build_where(
     # Phase B2: real is_test column replaces the call_type-prefix heuristic.
     # A specific call_type filter no longer implicitly bypasses the test-data
     # exclusion — is_test is now an independent, honest dimension.
+    if starred:
+        where.append(_STARRED_GROUPS_SQL)
     if not include_test_data:
         where.append("l.is_test = 0")
 
@@ -208,10 +253,11 @@ def list_call_logs(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[int, list[dict]]:
     where_clause, params = _build_where(
         date_from, date_to, call_type, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search,
+        status, action_type, day_ref, target_language, search, starred=starred,
     )
     order_expr = SORT_COLUMNS[sort_by]
     direction = "ASC" if sort_order == "asc" else "DESC"
@@ -230,8 +276,12 @@ def list_call_logs(
             """,
             [*params, limit, offset],
         ).fetchall()
+        _, star_rows = _star_sets(conn)
 
-    return total, [_row_to_dict(r) for r in rows]
+    result = [_row_to_dict(r) for r in rows]
+    for d in result:
+        d["starred"] = str(d["id"]) in star_rows
+    return total, result
 
 
 # Phase O — Task 1: bucket size adapts to the selected range so the chart
@@ -303,6 +353,7 @@ def get_daily_volume(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[str, list[dict]]:
     """Real per-bucket call counts over the complete filtered set (no row
     cap). Returns (granularity, buckets) — see _pick_granularity.
@@ -314,7 +365,7 @@ def get_daily_volume(
     """
     where_clause, params = _build_where(
         date_from, date_to, call_type, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search,
+        status, action_type, day_ref, target_language, search, starred=starred,
     )
     granularity = _pick_granularity(date_from, date_to)
     bucket_expr = _BUCKET_EXPR[granularity]
@@ -448,6 +499,7 @@ def _groups_cte(
     day_ref: int | None,
     target_language: str | None,
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[str, list]:
     """The trace_id-grouping CTE shared by list_grouped_calls (Phase B2) and
     get_operation_summary (Phase F) — factored out so the FIRST_VALUE-pick
@@ -542,7 +594,7 @@ def _groups_cte(
     ws_placeholders = ",".join("?" * len(_WEB_SEARCH_CALL_TYPES))
     candidate_where, candidate_params = _build_where(
         date_from, date_to, None, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search,
+        status, action_type, day_ref, target_language, search, starred=starred,
     )
     if search:
         search_case = "MAX(CASE WHEN input LIKE ? OR output LIKE ? THEN 1 ELSE 0 END)"
@@ -627,6 +679,7 @@ def list_grouped_calls(
     sort_by: str = "timestamp",
     sort_order: str = "desc",
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[int, list[dict]]:
     """Groups llm_call_log rows by trace_id (one page = `limit` GROUPS, not rows).
     A NULL trace_id (any pre-Phase-3 historical row) becomes its own singleton
@@ -644,7 +697,7 @@ def list_grouped_calls(
     _groups_cte's has_search_match aggregate and _build_group_where."""
     cte, cte_params = _groups_cte(
         date_from, date_to, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search=search,
+        status, action_type, day_ref, target_language, search=search, starred=starred,
     )
     where_clause, where_params = _build_group_where(
         date_from, date_to, project_id, user_id, include_test_data,
@@ -698,6 +751,10 @@ def list_grouped_calls(
                 d = _row_to_dict(r)
                 gk = d.pop("group_key")
                 member_rows[gk].append(d)
+        star_groups, star_rows = _star_sets(conn)
+    for member in member_rows.values():
+        for d in member:
+            d["starred"] = str(d["id"]) in star_rows
 
     result = [
         {
@@ -715,6 +772,7 @@ def list_grouped_calls(
             # latency or token figure to render.
             "op_latency_ms": g["op_latency_ms"],
             "op_tokens": g["op_tokens"],
+            "starred": g["group_key"] in star_groups,
             "rows": member_rows[g["group_key"]],
         }
         for g in groups
@@ -746,6 +804,7 @@ def export_grouped_calls(
     day_ref: int | None,
     target_language: str | None,
     search: str | None = None,
+    starred: bool = False,
 ) -> tuple[int, bool, list[dict]]:
     """The COMPLETE filtered group set for a bulk download — every group the
     same filters would page through, in one call.
@@ -759,7 +818,7 @@ def export_grouped_calls(
     total, groups = list_grouped_calls(
         date_from, date_to, project_id, user_id, include_test_data,
         status, action_type, day_ref, target_language,
-        limit=EXPORT_MAX_GROUPS, offset=0, search=search,
+        limit=EXPORT_MAX_GROUPS, offset=0, search=search, starred=starred,
     )
     return total, total > len(groups), groups
 
@@ -775,6 +834,7 @@ def get_operation_summary(
     day_ref: int | None,
     target_language: str | None,
     search: str | None = None,
+    starred: bool = False,
 ) -> dict:
     """Phase F — the group-level (trace_id/operation) counterpart to
     get_call_summary's row-level totals. get_call_summary has never computed
@@ -790,7 +850,7 @@ def get_operation_summary(
     )
     cte, cte_params = _groups_cte(
         date_from, date_to, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search=search,
+        status, action_type, day_ref, target_language, search=search, starred=starred,
     )
 
     with get_connection() as conn:
@@ -857,6 +917,7 @@ def get_call_summary(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ) -> dict:
     # Phase B1: parity fix — call_type/project_id/user_id used to be hardcoded
     # to None here (summary tiles ignored them regardless of what the caller
@@ -870,7 +931,7 @@ def get_call_summary(
     # Phase R: search added, same pattern.
     where_clause, params = _build_where(
         date_from, date_to, call_type, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search,
+        status, action_type, day_ref, target_language, search, starred=starred,
     )
 
     with get_connection() as conn:

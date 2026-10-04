@@ -1,0 +1,339 @@
+/* ============================================================================
+   CURIVIO APP — MOTION SYSTEM
+   Spec: docs/superpowers/specs/2026-10-02-ui-motion-design.md
+
+   Timing lives here; colour never does. theme.css owns every colour, so this
+   file only reads --u-* variables (frontend/tests/test_motion_css.mjs checks).
+
+   Transforms are written with the individual `translate` / `scale` / `rotate`
+   properties, never `transform`, so they compose with Tailwind's own
+   `transform` utilities (e.g. -translate-y-1/2 centring) instead of erasing
+   them — and with Motion, which writes `transform` inline.
+
+   Utilities that can land on a button, link or input carry the
+   `body:not(:has(.lp))` prefix: index.css's base layer gives every interactive
+   element a `transition` at that specificity, and matching it here, in a later
+   file, is what lets the utility's own timing win.
+   ========================================================================= */
+
+:root {
+  --m-spring: linear(0, .063, .25 10.4%, 1.024 32.5%, 1.141 39.6%, 1.17 44.4%, 1.133 50.3%, .991 64.6%, .966 71.1%, .97 76.3%, 1.005 90.9%, 1);
+  --m-spring-soft: linear(0, .2 6%, .55 13%, .82 21%, .96 29%, 1.025 37%, 1.03 44%, 1.01 56%, 1);
+  --m-pop: cubic-bezier(.34, 1.56, .64, 1);
+  --m-out: cubic-bezier(.16, 1, .3, 1);
+  --m-exit: cubic-bezier(.7, 0, .84, 0);
+  --m-press: 110ms;
+  --m-hover: 180ms;
+  --m-menu: 320ms;
+  --m-settle: 600ms;
+  --m-progress: 900ms;
+  --m-dist: 10px;
+}
+
+/* phones: 0.8× durations, shorter distances */
+@media (pointer: coarse) {
+  :root { --m-press: 90ms; --m-hover: 145ms; --m-menu: 255ms; --m-settle: 480ms; --m-progress: 720ms; --m-dist: 6px; }
+}
+
+
+/* ══ KEYFRAMES ═══════════════════════════════════════════════════════════ */
+
+@keyframes m-rise      { from { opacity: 0; translate: 0 var(--m-dist); } }
+@keyframes m-pop       { from { opacity: 0; scale: .4; } }
+@keyframes m-land      { 50% { scale: 1.18; } }
+@keyframes m-hop       { from { rotate: -20deg; scale: .5; } }
+@keyframes m-stamp     { from { opacity: 0; scale: 2; rotate: -18deg; } }
+@keyframes m-spin-once { from { rotate: -360deg; } }
+@keyframes m-shake     { 20% { translate: -5px 0; } 40% { translate: 4px 0; } 60% { translate: -3px 0; } 80% { translate: 2px 0; } }
+@keyframes m-wave      { 0%, 60%, 100% { translate: 0 0; opacity: .45; } 30% { translate: 0 -4px; opacity: 1; } }
+@keyframes m-breathe   { 50% { opacity: .2; } }
+@keyframes m-flick     { 0%, 100% { rotate: -4deg; scale: 1; } 50% { rotate: 4deg; scale: 1.1; } }
+@keyframes m-sweep     { from { translate: -100% 0; } to { translate: 100% 0; } }
+@keyframes m-ring-draw { from { stroke-dashoffset: var(--ring-c); } }
+@keyframes m-grow-y    { from { scale: 1 0; } }
+@keyframes m-cell      { from { scale: 0; } }
+@keyframes m-burst     { 0% { opacity: 1; translate: 0 0; rotate: 0deg; scale: .6; } 100% { opacity: 0; translate: var(--dx) var(--dy); rotate: var(--r); scale: 1; } }
+@keyframes m-ping-once { from { box-shadow: 0 0 0 0 color-mix(in srgb, rgb(var(--u-blue-500, 59 130 246)) 45%, transparent); } to { box-shadow: 0 0 0 14px transparent; } }
+@keyframes m-bob       { 50% { translate: 0 -5px; } }
+@keyframes m-jump      { from { translate: 0 2px; scale: 1 .88; } to { translate: 0 -4px; scale: 1 1.05; } }
+@keyframes m-slide-fwd { from { opacity: 0; translate: 28px 0; } }
+@keyframes m-slide-back { from { opacity: 0; translate: -28px 0; } }
+@keyframes m-node-gold { 0%, 100% { opacity: .18; } 50% { opacity: .7; fill: rgb(var(--u-amber-400, 251 191 36)); } }
+
+
+/* ══ ENTRANCES ═══════════════════════════════════════════════════════════ */
+
+/* Entrances only define `from` and fill `backwards`: a finished `both` fill
+   keeps a transform in effect for good, which makes the element the
+   containing block for any position:fixed descendant (tooltips, pickers). */
+
+/* App sections are always mounted and toggled with `hidden`; leaving
+   display:none is a fresh style, so @starting-style gives the entrance with no
+   JS. `position: relative` (no z-index, so no new stacking context) keeps the
+   section painting above the header plate that precedes it. Opacity only: a
+   translate would make the section the containing block for its fixed
+   children (the feed's day pill, open dialogs) while it ran. */
+.u-section { position: relative; transition: opacity 280ms var(--m-out); }
+@starting-style { .u-section { opacity: 0; } }
+
+.u-rise { animation: m-rise 420ms var(--m-out) backwards; }
+
+.u-stagger > * { animation: m-rise 420ms var(--m-out) backwards; }
+.u-stagger > :nth-child(2)  { animation-delay: 40ms; }
+.u-stagger > :nth-child(3)  { animation-delay: 80ms; }
+.u-stagger > :nth-child(4)  { animation-delay: 120ms; }
+.u-stagger > :nth-child(5)  { animation-delay: 160ms; }
+.u-stagger > :nth-child(6)  { animation-delay: 200ms; }
+.u-stagger > :nth-child(7)  { animation-delay: 240ms; }
+.u-stagger > :nth-child(8)  { animation-delay: 280ms; }
+.u-stagger > :nth-child(n+9) { animation-delay: 320ms; }
+
+.u-slide-down { transition: opacity 240ms var(--m-out), translate 360ms var(--m-pop); }
+@starting-style { .u-slide-down { opacity: 0; translate: 0 -100%; } }
+
+.u-step-fwd  { animation: m-slide-fwd  420ms var(--m-spring-soft) backwards; }
+.u-step-back { animation: m-slide-back 420ms var(--m-spring-soft) backwards; }
+
+/* Inline form messages (error / success lines) slide in under their field. */
+body:not(:has(.lp)) form p:is(.text-red-400, .text-emerald-400, .text-green-400) {
+  transition: opacity 220ms var(--m-out), translate 320ms var(--m-pop);
+}
+@starting-style {
+  body:not(:has(.lp)) form p:is(.text-red-400, .text-emerald-400, .text-green-400) { opacity: 0; translate: 0 -4px; }
+}
+
+/* Feed cards rise as they enter the viewport. Scroll-driven, so browsers
+   without it (Firefox today) show the cards static — never hidden. */
+@supports (animation-timeline: view()) {
+  .u-reveal {
+    animation: m-rise linear backwards;
+    animation-timeline: view();
+    animation-range: entry 0% entry 30%;
+  }
+}
+
+
+/* ══ ONE-SHOT REACTIONS ═════════════════════════════════════════════════ */
+
+.u-pop-num   { display: inline-block; animation: m-pop 420ms var(--m-pop); }
+.u-pop-num.flex { display: flex; }   /* a flex badge keeps centring its glyph */
+.u-land      { display: inline-block; animation: m-land 380ms var(--m-pop) 860ms; }
+.u-hop       { animation: m-hop 600ms var(--m-pop); }
+.u-stamp     { animation: m-stamp 450ms var(--m-pop) backwards; }
+.u-spin-once { animation: m-spin-once 700ms var(--m-spring); }
+.u-shake     { animation: m-shake 380ms ease; }
+.u-ping-once { animation: m-ping-once 1.2s var(--m-out) 600ms; }
+@keyframes m-roll     { from { opacity: 0; translate: 0 60%; } }
+@keyframes m-reveal-x { from { clip-path: inset(0 100% 0 0); } }
+.u-roll    { display: inline-block; animation: m-roll 380ms var(--m-spring) backwards; }
+.u-mark-in { animation: m-reveal-x 420ms var(--m-out) backwards; }
+@keyframes m-spark { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: var(--sx) var(--sy); } }
+.u-burst { position: absolute; inset: 0; pointer-events: none; }
+.u-burst > i { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px; border-radius: 9999px; background: currentColor; animation: m-spark 520ms var(--m-out) both; }
+
+
+/* ══ AMBIENT (where it belongs) ═════════════════════════════════════════ */
+
+.u-bob   { animation: m-bob 3.2s ease-in-out infinite; }
+.u-flame { display: inline-block; transform-origin: 50% 90%; animation: m-flick 1.4s ease-in-out infinite; }
+.u-jump  { animation: m-jump 700ms var(--m-pop) infinite alternate; }
+
+.u-wave { display: inline-flex; align-items: center; gap: 3px; }
+.u-wave > i { width: 4px; height: 4px; border-radius: 9999px; background: currentColor; animation: m-wave 1s ease-in-out infinite; }
+.u-wave > i:nth-child(2) { animation-delay: .12s; }
+.u-wave > i:nth-child(3) { animation-delay: .24s; }
+
+/* The streaming cursor breathes instead of blinking (index.css defines it). */
+.chat-stream-cursor { animation: m-breathe 1.1s ease-in-out infinite; }
+
+/* Skeleton bones: a soft sweep instead of Tailwind's blink. Matches only the
+   surface-coloured blocks — status dots (rounded-full) and pulsing text keep
+   their pulse. */
+.animate-pulse:is([class*="bg-slate-8"], [class*="bg-slate-9"]):not(.rounded-full) {
+  animation: none; position: relative; overflow: hidden;
+}
+.animate-pulse:is([class*="bg-slate-8"], [class*="bg-slate-9"]):not(.rounded-full)::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--u-sheen), transparent);
+  animation: m-sweep 1.6s ease-in-out infinite;
+}
+
+/* Graph plates — the landing's <Plate>, placed for app surfaces. landing.css
+   already ships its geometry, drift, twinkle and off-screen pause. Every rule
+   is written `.lp-plate.u-…` so it outranks landing.css's `.lp-plate` whatever
+   order the two files land in the bundle. */
+.lp-plate.u-plate { color: rgb(var(--u-slate-500, 100 116 139)); }
+.lp-plate.u-plate .lp-plate-node:nth-child(3n) { animation-name: m-node-gold; }
+.lp-plate.u-plate-header { top: 0; right: 0; width: 360px; height: 270px; opacity: .4; }
+.lp-plate.u-plate-empty  { left: 50%; top: 50%; width: 420px; height: 315px; margin: -158px 0 0 -210px; opacity: .35; }
+.lp-plate.u-plate-gen    { top: -10px; right: -40px; width: 380px; height: 285px; opacity: .4; }
+.lp-plate.u-plate-hero   { top: -30px; right: -60px; width: 420px; height: 315px; opacity: .4; }
+/* The normal feed's background: a layer behind the day's cards (DailyPackageView). */
+.u-feed-plates { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.lp-plate.u-plate-feed   { inset: 0; width: 100%; height: 100%; opacity: .4; }
+[data-ui="dark"] .lp-plate.u-plate, [data-ui="legacy"] .lp-plate.u-plate { opacity: .6; }
+/* Local plates sit behind their container's content: the container carries
+   `relative isolate` (none of them hold the app's fixed dialogs), so -1 lands
+   above its background and below its text. The header plate can't do this —
+   App's content container holds dialogs — so it relies on .u-section instead. */
+.lp-plate:is(.u-plate-empty, .u-plate-gen, .u-plate-hero) { z-index: -1; }
+@media (max-width: 767px) {
+  .lp-plate.u-plate { display: block; }   /* landing.css hides its own plates here */
+  .lp-plate.u-plate-header { width: 240px; height: 180px; }
+  .lp-plate.u-plate-empty  { width: 300px; height: 225px; margin: -112px 0 0 -150px; }
+  .lp-plate:is(.u-plate-gen, .u-plate-hero) { width: 260px; height: 195px; right: -50px; }
+}
+
+
+/* ══ CARDS ══════════════════════════════════════════════════════════════ */
+
+/* Big reading cards lift; they never tilt — text being read never moves. */
+.u-read-card { transition: translate 450ms var(--m-out), box-shadow 450ms var(--m-out), background-color var(--m-hover) ease, border-color var(--m-hover) ease; }
+.u-read-card::after {
+  content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+  border-radius: 0 3px 3px 0; background: rgb(var(--u-blue-400, 96 165 250)); pointer-events: none;
+  scale: 1 0; transform-origin: top; transition: scale 500ms var(--m-out);
+}
+@media (hover: hover) {
+  .u-read-card:hover { translate: 0 -4px; box-shadow: var(--u-lift-shadow); }
+  .u-read-card:hover::after { scale: 1 1; }
+}
+
+/* Compact standalone cards: the full spring tilt. Held still while one of
+   their own menus is open, so the menu doesn't swing with the card. */
+body:not(:has(.lp)) .u-tilt {
+  transition: rotate var(--m-settle) var(--m-spring), scale var(--m-settle) var(--m-spring),
+              box-shadow 300ms var(--m-out), background-color var(--m-hover) ease,
+              border-color var(--m-hover) ease, color var(--m-hover) ease;
+}
+@media (hover: hover) {
+  body:not(:has(.lp)) .u-tilt:hover:not(:has(.u-menu)) { rotate: -1.2deg; scale: 1.03; box-shadow: var(--u-lift-shadow); }
+}
+body:not(:has(.lp)) .u-tilt:active { scale: .97; transition-duration: 140ms; }
+
+/* Full-width list rows nudge instead of tilting. */
+body:not(:has(.lp)) .u-nudge {
+  transition: translate var(--m-settle) var(--m-spring), background-color var(--m-hover) ease, color var(--m-hover) ease;
+}
+@media (hover: hover) {
+  body:not(:has(.lp)) .u-nudge:hover:not(:has(.u-menu)) { translate: 3px 0; }
+}
+
+
+/* ══ CONTROLS ══════════════════════════════════════════════════════════ */
+
+/* Segmented-control pills (appearance, motion). */
+.u-pill { transition: transform var(--m-settle) var(--m-spring), width var(--m-settle) var(--m-spring); }
+
+/* Icon buttons: the glyph hops on hover. */
+body:not(:has(.lp)) button:is(.w-7, .w-8, .w-9) > svg { transition: rotate 450ms var(--m-pop), scale 450ms var(--m-pop); }
+@media (hover: hover) {
+  body:not(:has(.lp)) button:is(.w-7, .w-8, .w-9):not(:disabled):hover > svg { rotate: -8deg; scale: 1.12; }
+}
+
+/* Checkbox / radio tick pops as it turns on. */
+body:not(:has(.lp)) input:is([type="checkbox"], [type="radio"]):checked { animation: m-pop 300ms var(--m-pop); }
+
+/* Menus: items rise in 30ms apart; one highlight glides under the pointer
+   (useHoverPill writes --pill-y / --pill-h and data-pill). */
+.u-menu > :not(.u-hover-pill) { position: relative; z-index: 1; animation: m-rise 300ms var(--m-pop) backwards; }
+.u-menu > :nth-child(3)  { animation-delay: 30ms; }
+.u-menu > :nth-child(4)  { animation-delay: 60ms; }
+.u-menu > :nth-child(5)  { animation-delay: 90ms; }
+.u-menu > :nth-child(6)  { animation-delay: 120ms; }
+.u-menu > :nth-child(n+7) { animation-delay: 150ms; }
+.u-hover-pill {
+  position: absolute; left: 4px; right: 4px; top: 0; z-index: 0; pointer-events: none;
+  height: var(--pill-h, 0); translate: 0 var(--pill-y, 0); border-radius: 8px;
+  background: rgb(var(--u-slate-800, 30 41 59)); opacity: 0;
+  transition: translate 380ms var(--m-spring), opacity 150ms ease;
+}
+.u-menu[data-pill="on"] > .u-hover-pill { opacity: 1; }
+
+.u-dropzone svg { transition: translate 500ms var(--m-pop), scale 500ms var(--m-pop); }
+.u-dropzone[data-drag="true"] svg { translate: 0 -5px; scale: 1.12; }
+
+
+/* ══ PROGRESS & CELEBRATION ════════════════════════════════════════════ */
+
+/* B-style fill: still when idle, glides on change. Width, as before this
+   work — the bar is 6px tall and the fill is the track's only child. */
+.u-progress-fill {
+  position: relative; overflow: hidden; height: 100%; border-radius: 9999px;
+  background: linear-gradient(90deg, rgb(var(--u-blue-400, 96 165 250)), rgb(var(--u-violet-400, 167 139 250)));
+  box-shadow: 0 0 12px -1px rgb(var(--u-blue-400, 96 165 250) / 80%);
+  transition: width var(--m-progress) var(--m-out);
+}
+.u-progress-fill[data-done="true"] {
+  background: linear-gradient(90deg, rgb(var(--u-emerald-500, 16 185 129)), rgb(var(--u-emerald-400, 52 211 153)));
+  box-shadow: 0 0 12px -1px rgb(var(--u-emerald-400, 52 211 153) / 80%);
+}
+/* one pass, keyed by the caller so it plays only on a real change */
+.u-sheen {
+  position: absolute; inset: 0; pointer-events: none; translate: -100% 0;
+  background: linear-gradient(90deg, transparent, var(--u-sheen-strong), transparent);
+  animation: m-sweep var(--m-progress) var(--m-out) 150ms both;
+}
+
+.u-confetti { position: absolute; width: 0; height: 0; pointer-events: none; z-index: 2; }
+.u-confetti > i { position: absolute; width: 6px; height: 9px; border-radius: 2px; opacity: 0; animation: m-burst 1s cubic-bezier(.2, .7, .3, 1) both; }
+.u-confetti > i:nth-child(4n+1) { background: rgb(var(--u-blue-400, 96 165 250)); }
+.u-confetti > i:nth-child(4n+2) { background: rgb(var(--u-amber-400, 251 191 36)); }
+.u-confetti > i:nth-child(4n+3) { background: rgb(var(--u-rose-400, 251 113 133)); }
+.u-confetti > i:nth-child(4n)   { background: rgb(var(--u-violet-400, 167 139 250)); }
+
+/* Dashboard: ring draws, bars grow, cells pop — each staggered by --i. */
+.u-ring-draw { animation: m-ring-draw 1.1s var(--m-spring) backwards; }
+.u-grow-y { transform-origin: bottom; animation: m-grow-y 700ms var(--m-spring) backwards; animation-delay: calc(var(--i, 0) * 50ms); }
+.u-cell   { animation: m-cell 380ms var(--m-pop) backwards; animation-delay: calc(var(--i, 0) * 18ms); }
+.u-fill-x { display: block; height: 100%; transform-origin: left; scale: 0 1; transition: scale 550ms var(--m-out); }
+.u-fill-x[data-on="true"] { scale: 1 1; }
+
+/* theme.css's opt-in pop for small panels, on the app's spring */
+.u-pop { animation: u-pop-in 260ms var(--m-pop) backwards; }
+
+
+/* ══ SHELL ══════════════════════════════════════════════════════════════ */
+
+/* hidden off phones; the phone rule below shows it */
+.u-sheet-handle { display: none; }
+
+@media (max-width: 767px) {
+  /* the drawer springs open; translate is what useSwipeDismiss writes */
+  .u-drawer { transition: transform 460ms var(--m-spring-soft), translate 300ms var(--m-out); touch-action: pan-y; }
+  .u-drawer-item { transition: opacity 300ms var(--m-out), translate 450ms var(--m-pop); transition-delay: calc(var(--i, 0) * 40ms); }
+  .u-drawer:not([data-open="true"]) .u-drawer-item { opacity: 0; translate: -14px 0; transition-delay: 0ms; }
+
+  /* dialogs become bottom sheets */
+  .u-sheet-root { align-items: flex-end; padding: 0; }
+  .u-sheet { position: relative; width: 100%; max-width: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0; padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+  /* a 96×28 touch target across the top centre; the visible bar is ::before.
+     Absolute, so it never shifts the card's own layout. */
+  .u-sheet-handle { display: block; position: absolute; top: 0; left: 50%; translate: -50% 0; width: 96px; height: 28px; z-index: 1; touch-action: none; }
+  .u-sheet-handle::before { content: ""; position: absolute; top: 8px; left: 30px; width: 36px; height: 4px; border-radius: 9999px; background: rgb(var(--u-slate-700, 51 65 85)); }
+}
+
+/* Chat: ChatMessage adds u-msg-in only to messages created in the last few
+   seconds, so a loaded history never cascades. */
+.u-msg-in { animation: m-rise 420ms var(--m-spring) backwards; }
+.u-msg-in.u-msg-user { transform-origin: 100% 100%; animation: m-pop 460ms var(--m-spring) backwards; }
+@keyframes m-fly { 45% { translate: 0 -24px; opacity: 0; } 46% { translate: 0 18px; opacity: 0; } }
+.u-fly { display: inline-flex; animation: m-fly 520ms var(--m-out); }
+
+/* Unpack: an answer fades in word by word (--d is each word's delay in ms),
+   and Read Aloud shows sound bars while it plays. */
+@keyframes m-fade { from { opacity: 0; } }
+.u-word { animation: m-fade 360ms var(--m-out) backwards; animation-delay: calc(var(--d, 0) * 1ms); }
+@keyframes m-eq { from { scale: 1 .25; } }
+.u-eq { display: inline-flex; flex-shrink: 0; align-items: flex-end; gap: 2px; height: 14px; }
+.u-eq > i { width: 3px; height: 100%; border-radius: 9999px; background: currentColor; transform-origin: bottom; animation: m-eq 480ms ease-in-out infinite alternate; }
+.u-eq > i:nth-child(2) { animation-delay: -160ms; }
+.u-eq > i:nth-child(3) { animation-delay: -320ms; }
+.u-eq > i:nth-child(4) { animation-delay: -80ms; }
+
+
+/* ══ LITE ════════════════════════════════════════════════════════════
+   Low-end phones (index.html) skip the two costliest decorations. There is no
+   reduced mode: the app always animates.                                  */
+
+[data-motion-lite] .u-confetti, [data-motion-lite] .lp-plate.u-plate { display: none; }

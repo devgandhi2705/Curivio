@@ -15,6 +15,8 @@
  * No automatic LLM calls from onChange/debounce — only explicit button click.
  */
 import { useState, useRef } from "react"
+import { m, useDialogMotion } from "../../lib/motion.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
 import { suggestKeywords } from "../../api/projects.js"
 
 const COLORS = [
@@ -90,6 +92,7 @@ function KeywordChip({ kw, index, onRemove, dragRef }) {
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
 export default function CreateProjectModal({ onClose, onCreate, loading, initialName = "" }) {
+  const dm = useDialogMotion(onClose, { sheet: false })
   const [step,                  setStep]                  = useState(0)
   const [name,                  setName]                  = useState(initialName)
   const [description,           setDescription]           = useState("")
@@ -168,12 +171,13 @@ export default function CreateProjectModal({ onClose, onCreate, loading, initial
   }
 
   return (
-    <div
+    <m.div
+      {...dm.root}
       data-no-unpack
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      className="u-motion-managed fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
       onClick={handleBackdrop}
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden">
+      <m.div {...dm.card} className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
@@ -247,10 +251,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading, initial
               >
                 {suggestLoading ? (
                   <>
-                    <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                      <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                    <WaveDots />
                     Generating keywords…
                   </>
                 ) : (
@@ -413,7 +414,7 @@ export default function CreateProjectModal({ onClose, onCreate, loading, initial
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }

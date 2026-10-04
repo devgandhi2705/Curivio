@@ -69,7 +69,59 @@ def _legs(monkeypatch, scripts):
     return built
 
 
+class _SlowModel(_FakeModel):
+    def __init__(self, script, delay=0.05):
+        super().__init__(script)
+        self._delay = delay
+
+    def stream(self, messages, config=None):
+        import time
+        for item in self._script:
+            time.sleep(self._delay)
+            yield _Chunk(item)
+
+    def invoke(self, messages, config=None):
+        import time
+        time.sleep(self._delay * 20)      # a slow non-streamed answer
+        return super().invoke(messages, config)
+
+
 class TestExplainStream:
+    def _slow_first_leg(self, monkeypatch, slow_model):
+        """Leg 1 is slow; every later leg would answer instantly. Returns the later
+        legs' models so a test can check none of them was ever called."""
+        later = []
+        def _build(spec, **kw):
+            if spec.step == 1:
+                return slow_model
+            later.append(_FakeModel([VALID]))
+            return later[-1]
+        monkeypatch.setattr(mp, "build_leg", _build)
+        monkeypatch.setattr(unpack_service, "is_dictionary_fast_path_eligible", lambda term: False)
+        return later
+
+    def test_the_popover_gives_up_at_one_shared_deadline(self, monkeypatch):
+        # The free router ran 30s live (two pooled keys, each slow). One wall clock
+        # for the whole popover: past it, no further leg is even called.
+        import time
+        monkeypatch.setattr(unpack_service, "_DEADLINE_SEC", 0.15)
+        later = self._slow_first_leg(monkeypatch, _SlowModel(["{", "\"term\"", ": 1}", "}"], delay=0.1))
+        t0 = time.monotonic()
+        events = _events()
+        assert events[-1]["source"] == "unavailable"
+        assert time.monotonic() - t0 < 1.0
+        assert all(not m.configs for m in later), "a leg was called after the deadline"
+
+    def test_the_strict_retry_is_inside_the_same_deadline(self, monkeypatch):
+        # A slow strict retry used to run unbounded (a plain invoke): 20s live.
+        import time
+        monkeypatch.setattr(unpack_service, "_DEADLINE_SEC", 0.15)
+        self._slow_first_leg(monkeypatch, _SlowModel(["not json"], delay=0.1))
+        t0 = time.monotonic()
+        events = _events()
+        assert events[-1]["source"] == "unavailable"
+        assert time.monotonic() - t0 < 1.0, "the strict retry ran past the deadline"
+
     def test_streams_the_meaning_then_a_done_event(self, monkeypatch):
         _legs(monkeypatch, [[VALID[:60], VALID[60:]]])
         events = _events()
@@ -103,8 +155,7 @@ class TestExplainStream:
         assert rate_limits.is_skipped("groq", "openai/gpt-oss-120b", 0) == "rate_limit"
 
     def test_total_failure_degrades_to_the_dictionary(self, monkeypatch):
-        _legs(monkeypatch, [[RuntimeError("Error code: 400 - nope")],
-                            [RuntimeError("Error code: 400 - nope")]])
+        _legs(monkeypatch, [[RuntimeError("Error code: 400 - nope")]] * 3)   # incl. the free router
         monkeypatch.setattr(unpack_service, "is_dictionary_fast_path_eligible", lambda term: True)
         monkeypatch.setattr(unpack_service, "dictionary_lookup", lambda term: {
             "term": term, "definition_general": "a delay", "meaning_in_context": None,

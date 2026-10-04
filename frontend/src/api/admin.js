@@ -18,6 +18,7 @@ async function apiFetch(path, options = {}) {
     error.status = res.status
     throw error
   }
+  if (res.status === 204) return null      // PUT/DELETE /admin/stars answer with no body
   return res.json()
 }
 
@@ -76,7 +77,7 @@ export async function listAdminCalls({
 // list but not these row-level tiles).
 export async function getAdminSummary({
   dateFrom, dateTo, includeTestData, projectId, userId, status, actionType,
-  dayRef, targetLanguage, search,
+  dayRef, targetLanguage, search, starred,
 } = {}) {
   const query = buildQuery({
     date_from: dateFrom,
@@ -89,6 +90,7 @@ export async function getAdminSummary({
     day_ref: dayRef,
     target_language: targetLanguage,
     search,
+    starred: starred ? "true" : undefined,
   })
   return apiFetch(`/admin/summary${query}`)
 }
@@ -97,7 +99,7 @@ export async function getAdminSummary({
 // row totals. Same filter shape as listAdminCallsGrouped.
 export async function getAdminOperationSummary({
   dateFrom, dateTo, projectId, userId, includeTestData,
-  status, actionType, dayRef, targetLanguage, search,
+  status, actionType, dayRef, targetLanguage, search, starred,
 } = {}) {
   const query = buildQuery({
     date_from: dateFrom,
@@ -110,6 +112,7 @@ export async function getAdminOperationSummary({
     day_ref: dayRef,
     target_language: targetLanguage,
     search,
+    starred: starred ? "true" : undefined,
   })
   return apiFetch(`/admin/operations/summary${query}`)
 }
@@ -123,7 +126,7 @@ export async function getAdminOperationSummary({
 // listAdminCalls already had for the flat /admin/calls route.
 export async function listAdminCallsGrouped({
   dateFrom, dateTo, projectId, userId, includeTestData,
-  status, actionType, dayRef, targetLanguage, search,
+  status, actionType, dayRef, targetLanguage, search, starred,
   limit = 20, offset = 0, sortBy, sortOrder,
 } = {}) {
   const query = buildQuery({
@@ -137,6 +140,7 @@ export async function listAdminCallsGrouped({
     day_ref: dayRef,
     target_language: targetLanguage,
     search,
+    starred: starred ? "true" : undefined,
     limit,
     offset,
     sort_by: sortBy,
@@ -153,7 +157,7 @@ export async function listAdminCallsGrouped({
 // instead of one (~1.8s).
 export async function exportAdminCallsGrouped({
   dateFrom, dateTo, projectId, userId, includeTestData,
-  status, actionType, dayRef, targetLanguage, search,
+  status, actionType, dayRef, targetLanguage, search, starred,
 } = {}) {
   const query = buildQuery({
     date_from: dateFrom,
@@ -166,6 +170,7 @@ export async function exportAdminCallsGrouped({
     day_ref: dayRef,
     target_language: targetLanguage,
     search,
+    starred: starred ? "true" : undefined,
   })
   return apiFetch(`/admin/calls/export${query}`)
 }
@@ -176,7 +181,7 @@ export async function exportAdminCallsGrouped({
 // B2) while every other view on the page already honored it.
 export async function getAdminCallVolume({
   dateFrom, dateTo, callType, projectId, userId, includeTestData,
-  status, actionType, dayRef, targetLanguage, search,
+  status, actionType, dayRef, targetLanguage, search, starred,
 } = {}) {
   const query = buildQuery({
     date_from: dateFrom,
@@ -190,10 +195,20 @@ export async function getAdminCallVolume({
     day_ref: dayRef,
     target_language: targetLanguage,
     search,
+    starred: starred ? "true" : undefined,
   })
   return apiFetch(`/admin/calls/volume${query}`)
 }
 
 export async function getAdminCallTree(runId) {
   return apiFetch(`/admin/calls/${encodeURIComponent(runId)}/tree`)
+}
+
+// Star an operation group (key = trace_id, or 'row-<id>' for a call with no
+// trace) or a single call (key = its id). PUT stars, DELETE unstars; both are
+// idempotent. See docs/superpowers/specs/2026-10-03-admin-log-stars-design.md.
+export async function setAdminStar(kind, key, on) {
+  return on
+    ? apiFetch("/admin/stars", { method: "PUT", body: JSON.stringify({ kind, key }) })
+    : apiFetch(`/admin/stars${buildQuery({ kind, key })}`, { method: "DELETE" })
 }

@@ -3,12 +3,15 @@
 # Everything after the first "/" is the model id.
 # Each model is tried on every API key of its provider before the next model.
 # Edit, then restart the server.
+# "openrouter/openrouter/free" (OpenRouter's Free Models Router — a random free
+# model per call) is the last-resort backup on every list except [image]; it is
+# left out at runtime when OPENROUTER_API_KEY is not set.
 
 # Task 2 spike (2026-09-12): 30/30 valid JSON on groq/openai/gpt-oss-20b
 # (median 0.52s), 10/10 on gemini/gemini-3.1-flash-lite — order and
 # max_tokens below match what was measured, unchanged.
 [classifier]      # every turn: search? simple tone? code? crisis?
-models          = ["groq/openai/gpt-oss-20b", "gemini/gemini-3.1-flash-lite"]
+models          = ["groq/openai/gpt-oss-20b", "gemini/gemini-3.1-flash-lite", "openrouter/openrouter/free"]
 max_tokens      = 400
 reasoning       = "low"          # low | off (ignored where unsupported)
 # The classifier is joined before the prompt is built, so a hung call would
@@ -16,17 +19,17 @@ reasoning       = "low"          # low | off (ignored where unsupported)
 timeout_seconds = 10
 
 [simple]
-models     = ["groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash"]
+models     = ["groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash", "openrouter/openrouter/free"]
 max_tokens = 8192
 reasoning  = "low"
 
 [complex]
-models     = ["gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite"]
+models     = ["gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b", "gemini/gemini-3.1-flash-lite", "openrouter/openrouter/free"]
 max_tokens = 8192
 reasoning  = "low"
 
 [code]            # first model must be Gemini 3.x (only one that can run code)
-models     = ["gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b"]
+models     = ["gemini/gemini-3.1-flash-lite", "gemini/gemini-2.5-flash", "groq/openai/gpt-oss-120b", "openrouter/openrouter/free"]
 max_tokens = 8192
 reasoning  = "low"
 
@@ -36,7 +39,7 @@ max_tokens = 8192
 reasoning  = "low"
 
 [explain]         # select-to-explain popover
-models          = ["groq/openai/gpt-oss-120b", "gemini/gemini-flash-lite-latest"]
+models          = ["groq/openai/gpt-oss-120b", "gemini/gemini-flash-lite-latest", "openrouter/openrouter/free"]
 max_tokens      = 200
 timeout_seconds = 5
 

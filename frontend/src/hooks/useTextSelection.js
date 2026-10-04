@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { extractSentenceContext } from "../lib/sentenceContext.js"
 
-const MAX_SELECTION_LENGTH = 300
+// A long paragraph fits. Mirrors UNPACK_MAX_TERM_CHARS in backend/main.py.
+export const MAX_SELECTION_LENGTH = 1000
 const TOUCH_READ_DELAY_MS = 60 // mobile browsers can finalize a touch selection slightly after touchend
 
 function findBlockContainer(node) {
@@ -32,7 +33,7 @@ export function useTextSelection() {
     }
 
     const text = sel.toString().trim()
-    if (!text || text.length > MAX_SELECTION_LENGTH) {
+    if (!text) {
       setSelection(null)
       return
     }
@@ -52,6 +53,14 @@ export function useTextSelection() {
     const rect = range.getBoundingClientRect()
     if (!rect || (rect.width === 0 && rect.height === 0)) {
       setSelection(null)
+      return
+    }
+
+    // Over the limit: still report it, flagged, so the popover can say so.
+    // Returning null here used to leave the popover on the last shorter
+    // snapshot from mid-drag, which then sent only part of the selection.
+    if (text.length > MAX_SELECTION_LENGTH) {
+      setSelection({ text, sentence: "", prevSentence: "", nextSentence: "", rect, tooLong: true })
       return
     }
 

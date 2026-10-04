@@ -14,7 +14,9 @@ the slowest individual query, vs ~= the slowest once parallelized). Plain
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from .. import config as cfg
 from ..rate_limiter import limiter
@@ -62,6 +64,7 @@ class AdminCallLogRow(BaseModel):
     error_message: str | None
     retry_count: int
     created_at: str
+    starred: bool = False
 
 
 class AdminCallLogListResponse(BaseModel):
@@ -162,6 +165,7 @@ class AdminCallGroupRow(BaseModel):
     # email, or null (see admin_service.list_grouped_calls). The frontend
     # picks the fallback label ("Unattributed" vs. "Shared") from `surface`.
     user_email: str | None
+    starred: bool = False
     rows: list[AdminCallLogRow]
 
 
@@ -217,6 +221,7 @@ def admin_list_calls(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ):
     if sort_by not in admin_service.SORT_COLUMNS:
         raise HTTPException(status_code=400, detail=f"sort_by must be one of {sorted(admin_service.SORT_COLUMNS)}")
@@ -228,7 +233,7 @@ def admin_list_calls(
     offset = max(offset, 0)
     total, rows = admin_service.list_call_logs(
         date_from, date_to, call_type, project_id, user_id, include_test_data, limit, offset,
-        sort_by, sort_order, status, action_type, day_ref, target_language, search=_norm_search(search),
+        sort_by, sort_order, status, action_type, day_ref, target_language, search=_norm_search(search), starred=starred,
     )
     return AdminCallLogListResponse(total=total, limit=limit, offset=offset, rows=rows)
 
@@ -251,6 +256,7 @@ def admin_list_calls_grouped(
     sort_by: str = "timestamp",
     sort_order: str = "desc",
     search: str | None = None,
+    starred: bool = False,
 ):
     """Paginated GROUPS (by trace_id), not rows — see admin_service.list_grouped_calls
     for the grouping/filter semantics. A pre-Phase-3 row with no trace_id comes
@@ -273,7 +279,7 @@ def admin_list_calls_grouped(
     total, groups = admin_service.list_grouped_calls(
         date_from, date_to, project_id, user_id, include_test_data,
         status, action_type, day_ref, target_language, limit, offset,
-        sort_by, sort_order, search=_norm_search(search),
+        sort_by, sort_order, search=_norm_search(search), starred=starred,
     )
     return AdminCallGroupListResponse(total=total, limit=limit, offset=offset, groups=groups)
 
@@ -292,6 +298,7 @@ def admin_export_calls(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ):
     """Phase I — every group matching these filters, unpaginated, for a bulk
     download. Same filter params and same underlying query as /calls/grouped,
@@ -302,7 +309,7 @@ def admin_export_calls(
 
     total, truncated, groups = admin_service.export_grouped_calls(
         date_from, date_to, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search=_norm_search(search),
+        status, action_type, day_ref, target_language, search=_norm_search(search), starred=starred,
     )
     return AdminCallExportResponse(
         total=total, returned=len(groups), truncated=truncated, groups=groups
@@ -324,11 +331,12 @@ def admin_calls_volume(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ):
     _validate_status_action(status, action_type)
     granularity, by_day = admin_service.get_daily_volume(
         date_from, date_to, call_type, project_id, user_id, include_test_data,
-        status, action_type, day_ref, target_language, search=_norm_search(search),
+        status, action_type, day_ref, target_language, search=_norm_search(search), starred=starred,
     )
     return AdminDailyVolumeResponse(
         total=sum(d["count"] for d in by_day), granularity=granularity, by_day=by_day
@@ -359,13 +367,14 @@ def admin_summary(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ):
     _validate_status_action(status, action_type)
     return AdminSummaryResponse(
         **admin_service.get_call_summary(
             date_from, date_to, include_test_data,
             call_type, project_id, user_id, status, action_type,
-            day_ref, target_language, search=_norm_search(search),
+            day_ref, target_language, search=_norm_search(search), starred=starred,
         )
     )
 
@@ -384,6 +393,7 @@ def admin_operation_summary(
     day_ref: int | None = None,
     target_language: str | None = None,
     search: str | None = None,
+    starred: bool = False,
 ):
     """Group-level (trace_id/operation) counterpart to /admin/summary's row
     totals — see admin_service.get_operation_summary. Same filter dimensions
@@ -392,9 +402,39 @@ def admin_operation_summary(
     return AdminOperationSummaryResponse(
         **admin_service.get_operation_summary(
             date_from, date_to, project_id, user_id, include_test_data,
-            status, action_type, day_ref, target_language, search=_norm_search(search),
+            status, action_type, day_ref, target_language, search=_norm_search(search), starred=starred,
         )
     )
+
+
+class AdminStarRequest(BaseModel):
+    kind: Literal["group", "row"]
+    key: str = Field(min_length=1, max_length=200)
+
+
+def _star_target(kind: str, key: str) -> None:
+    """A row key is an llm_call_log id; a group key is a trace_id or 'row-<id>'."""
+    if kind not in admin_service.STAR_KINDS or not 1 <= len(key) <= 200:
+        raise HTTPException(status_code=422, detail="kind must be 'group' or 'row'; key 1-200 characters")
+    if kind == "row" and not key.isdigit():
+        raise HTTPException(status_code=400, detail="a row key is a call id")
+
+
+@router.put("/stars", status_code=204)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
+def admin_star(request: Request, body: AdminStarRequest, admin: dict = Depends(get_current_admin_user)):
+    """Star an operation group or a single call (docs/superpowers/specs/
+    2026-10-03-admin-log-stars-design.md). Idempotent."""
+    _star_target(body.kind, body.key)
+    admin_service.star_log(body.kind, body.key, admin.get("user_id"))
+
+
+@router.delete("/stars", status_code=204)
+@limiter.limit(ADMIN_READ_RATE_LIMIT)
+def admin_unstar(request: Request, kind: str, key: str):
+    """Remove a star. Idempotent."""
+    _star_target(kind, key)
+    admin_service.unstar_log(kind, key)
 
 
 @router.get("/projects", response_model=AdminProjectListResponse)

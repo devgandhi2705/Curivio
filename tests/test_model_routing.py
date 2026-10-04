@@ -86,12 +86,20 @@ class TestLoaderRejects:
 
 
 class TestShippedFile:
-    def test_the_real_file_loads_and_has_no_openrouter_model(self):
+    def test_the_real_file_loads_and_uses_only_the_free_openrouter_router(self):
         cfg = mp.chat_models()
         listed = [str(m) for route in cfg.routes.values() for m in route.models]
         assert listed, "chat_models.toml lists no models"
-        assert not [m for m in listed if m.startswith("openrouter/")], (
-            f"OpenRouter is excluded from chat until the account is funded: {listed}")
+        assert {m for m in listed if m.startswith("openrouter/")} == {f"openrouter/{mp.FREE_ROUTER_MODEL}"}, (
+            f"the account is unfunded, so only the free router may appear: {listed}")
+
+    def test_every_text_route_ends_on_the_free_router_backup(self):
+        for name, route in mp.chat_models().routes.items():
+            last = route.models[-1]
+            if name == "image":     # the router cannot read a Gemini Files API upload
+                assert last.provider == "gemini"
+            else:
+                assert (last.provider, last.model) == ("openrouter", mp.FREE_ROUTER_MODEL), name
 
 
 class TestRouteLegs:
@@ -117,6 +125,53 @@ class TestRouteLegs:
     def test_image_route_uses_the_first_gemini_key_only(self):
         legs = mp.route_legs("image")
         assert {leg.key_index for leg in legs} == {0}, "Files API scopes an upload to one key"
+
+    def test_a_provider_without_keys_is_left_out_not_fatal(self, monkeypatch):
+        def keys(provider):
+            if provider == "openrouter":
+                raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
+            return ["k1"]
+        monkeypatch.setattr(mp, "_keys_for_provider", keys)
+        legs = mp.route_legs("simple")
+        assert legs and all(leg.provider != "openrouter" for leg in legs)
+
+
+class TestFeedChainBackup:
+    """The old Feed chain ends on the free router when a key exists."""
+
+    @pytest.fixture(autouse=True)
+    def _keys(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEYS", "k1,k2")
+        monkeypatch.setenv("GROQ_API_KEY", "g1")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o1")
+
+    @staticmethod
+    def _names(legs):
+        return [type(m).__name__ for m, _ in mp._build_raw_models(legs=legs)]
+
+    def test_all_and_groq_chains_end_on_the_free_router(self):
+        assert self._names("all")[-1] == "ChatOpenRouter"
+        assert self._names("groq") == ["ChatGroq", "ChatOpenRouter"]
+        assert mp._build_raw_models(legs="all")[-1][0].model_name == mp.FREE_ROUTER_MODEL
+
+    def test_gemini_only_chain_has_no_backup(self):
+        # writer_provider_router runs the groq chain after it, which carries the backup
+        assert "ChatOpenRouter" not in self._names("gemini")
+
+    def test_openrouter_only_chain_is_just_the_backup(self):
+        assert self._names("openrouter") == ["ChatOpenRouter"]
+
+    def test_one_backup_leg_per_pooled_key(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o1, o2")
+        assert self._names("openrouter") == ["ChatOpenRouter", "ChatOpenRouter"]
+
+    def test_backup_leg_refuses_providers_that_keep_prompts(self):
+        backup, _ = mp._build_raw_models(legs="openrouter")[0]
+        assert backup.openrouter_provider == {"data_collection": "deny"}
+
+    def test_no_key_means_no_backup_leg(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY")
+        assert "ChatOpenRouter" not in self._names("all")
 
 
 class TestRunRoute:
@@ -206,7 +261,7 @@ class TestRunRoute:
         notes = []
         with pytest.raises(mp.AllLegsFailed) as exc_info:
             mp.run_route("simple", self._boom(RuntimeError("bad request")), notes=notes)
-        assert len(notes) == 3
+        assert len(notes) == 4      # 3 models + the free router backup
         assert "every model failed" in str(exc_info.value)
 
     def test_caller_can_resume_at_the_next_leg(self):
@@ -272,6 +327,41 @@ class TestBuildLeg:
         spec = mp.LegSpec("explain", 2, "gemini", "gemini-flash-lite-latest", 0)
         model = mp.build_leg(spec, streaming=True, temperature=0.3)
         assert model.timeout == 10
+
+    def test_openrouter_leg_timeout_is_milliseconds_and_sdk_never_retries(self, monkeypatch):
+        # ChatOpenRouter's timeout is in ms (5 meant a 5ms timeout), and max_retries=0
+        # left the SDK's own default on: retry 5xx + timeouts with backoff for 1 hour.
+        monkeypatch.setattr(mp, "_keys_for_provider", lambda provider: ["k1"])
+        spec = mp.LegSpec("explain", 3, "openrouter", mp.FREE_ROUTER_MODEL, 0)
+        model = mp.build_leg(spec, streaming=True, temperature=0.3)
+        assert model.request_timeout == 5000
+        assert model.client.sdk_configuration.retry_config.strategy == "none"
+
+    def test_free_router_gets_reasoning_room_other_legs_keep_the_route_cap(self, monkeypatch):
+        # The router often picks a reasoning model; 200 tokens left it empty 4/4 live.
+        monkeypatch.setattr(mp, "_keys_for_provider", lambda provider: ["k1"])
+        free = mp.build_leg(mp.LegSpec("explain", 3, "openrouter", mp.FREE_ROUTER_MODEL, 0))
+        groq = mp.build_leg(mp.LegSpec("explain", 1, "groq", "openai/gpt-oss-120b", 0))
+        assert free.max_tokens == mp._FREE_ROUTER_MIN_TOKENS
+        assert groq.max_tokens == 200
+
+    def test_free_router_chat_leg_refuses_providers_that_keep_prompts(self, monkeypatch):
+        # data_collection=deny also keeps out nvidia's content-safety model, which
+        # answered "User Safety: safe" on ~30% of unfiltered router calls.
+        monkeypatch.setattr(mp, "_keys_for_provider", lambda provider: ["k1"])
+        free = mp.build_leg(mp.LegSpec("simple", 4, "openrouter", mp.FREE_ROUTER_MODEL, 0))
+        assert free.openrouter_provider == {"data_collection": "deny"}
+
+    def test_free_router_has_a_budget_entry(self):
+        from backend.services.model_registry import get_model_config
+        assert get_model_config(mp.FREE_ROUTER_MODEL).model_name == mp.FREE_ROUTER_MODEL
+
+    def test_feed_chain_backup_leg_never_retries_inside_the_sdk(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+        monkeypatch.setenv("GROQ_API_KEY", "g1")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o1")
+        backup, _ = mp._build_raw_models(legs="openrouter")[0]
+        assert backup.client.sdk_configuration.retry_config.strategy == "none"
 
     def test_the_floor_only_raises_a_short_deadline(self):
         assert mp._gemini_deadline(5.0) == 10

@@ -11,6 +11,7 @@
  *   On generate: refresh insights list + progression
  */
 import { useState, useEffect, useCallback, useRef } from "react"
+import { m, AnimatePresence, presets, useDialogMotion } from "../../lib/motion.jsx"
 import {
   listProjects,
   listProjectInsights,
@@ -114,7 +115,7 @@ function WorkspaceSkeleton() {
       role="status"
       aria-busy="true"
       aria-label="Loading your brief"
-      className="animate-pulse motion-reduce:animate-none"
+      className="animate-pulse"
     >
       <div className="space-y-2.5">
         <div className="h-6 w-11/12 rounded-lg bg-slate-800/55" />
@@ -164,10 +165,12 @@ function RenameModal({ heading, initialValue, onConfirm, onClose }) {
     if (e.key === 'Escape') onClose()
     e.stopPropagation()
   }
+  const dm = useDialogMotion(onClose)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+      <m.div {...dm.card} className="u-sheet relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
         <input
           ref={inputRef}
@@ -178,11 +181,11 @@ function RenameModal({ heading, initialValue, onConfirm, onClose }) {
           className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
         />
         <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={onClose} className="u-btn-2 flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
           <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 
@@ -245,10 +248,11 @@ function FeedSubsection({
       ) : projects.length === 0 ? (
         <EmptySidebar onNew={onNew} />
       ) : (
-        <div className="space-y-0.5 overflow-y-auto flex-1">
+        <div className="relative space-y-0.5 overflow-y-auto flex-1">
+          <AnimatePresence mode="popLayout" initial={false}>
           {projects.map(project => (
+            <m.div key={project.project_id} {...presets.listItem}>
             <ProjectCard
-              key={project.project_id}
               project={project}
               progression={progressions[project.project_id]}
               isActive={project.project_id === activeId}
@@ -257,7 +261,9 @@ function FeedSubsection({
               onEdit={onEdit}
               onDelete={onDelete}
             />
+            </m.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
     </div>
@@ -322,6 +328,7 @@ export default function ProjectsPage({
   const [creating,             setCreating]             = useState(false)
   const [showEdit,             setShowEdit]             = useState(false)
   const [pendingDelete,        setPendingDelete]        = useState(null)
+  const deleteDm = useDialogMotion(() => setPendingDelete(null))
   const [showRenameProject,    setShowRenameProject]    = useState(false)
   const [renameProjectDraft,   setRenameProjectDraft]   = useState('')
   const [confirming,           setConfirming]           = useState(false)
@@ -781,104 +788,110 @@ export default function ProjectsPage({
 
   return (
     <>
-      {/* Greeting */}
-      <div className="mb-2.5 md:mb-4 px-1">
-        <h1 className="text-xl md:text-2xl font-bold text-slate-100 tracking-tight">{getGreeting(userName)}</h1>
+      {/* One reading column (index.css .u-feed-col): 800px, sharing the row with
+          the day's article list when it fits. */}
+      <div className="u-feed-col">
+        {/* Greeting */}
+        <div className="mb-2.5 md:mb-4 px-1">
+          <h1 className="text-xl md:text-2xl font-bold text-slate-100 tracking-tight">{getGreeting(userName)}</h1>
+        </div>
+
+        {/* Workspace */}
+        {showNotesOnly ? (
+          <NotesOnlyFeed />
+        /* Projects still arriving: never offer "create your first project" to someone
+           who already has one — show the brief's shape until we know. */
+        ) : loadingList || (projects.length > 0 && !activeProject) ? (
+          <WorkspaceSkeleton />
+        ) : !activeProject ? (
+          <EmptyWorkspace onNew={(topic) => { setCreateSeed(typeof topic === "string" ? topic : "" ); setShowCreate(true) }} />
+        ) : (
+          <>
+            {genError && (
+              <div className="mb-5 px-4 py-3 bg-red-950/30 border border-red-900/40 rounded-xl text-xs text-red-400">
+                {genError}
+              </div>
+            )}
+
+            {generating && genDismissed && (
+              <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
+                <span
+                  aria-hidden
+                  className="h-2 w-2 rounded-full animate-pulse"
+                  style={{ background: "var(--u-accent)" }}
+                />
+                <span className="text-[13px] text-slate-300">Still building your next lesson</span>
+                <span className="text-[12px] text-slate-500">{stageShortLabel(genStage)}</span>
+                <button
+                  type="button"
+                  onClick={() => setGenDismissed(false)}
+                  className="ml-auto text-[12px] text-slate-400 hover:text-slate-100 underline underline-offset-2 transition-colors"
+                >
+                  Show progress
+                </button>
+              </div>
+            )}
+
+            {genReady && (
+              <div className="mb-5 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
+                <span className="text-[13px] text-slate-200">{genReady} is ready to read.</span>
+                <button
+                  type="button"
+                  onClick={() => setGenReady(null)}
+                  aria-label="Dismiss"
+                  className="ml-auto text-[12px] text-slate-500 hover:text-slate-200 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {loadingContent && !generating ? (
+              <WorkspaceSkeleton />
+            ) : (
+              <ProjectInsightView
+                project={activeProject}
+                insights={insights}
+                onGenerate={handleGenerate}
+                onRegenerate={handleRegenerate}
+                generating={generating}
+                genStage={genStage}
+                genStageDetail={genDetail}
+                genDismissed={genDismissed}
+                onDismissGenerating={() => setGenDismissed(true)}
+                targetInsightId={targetInsightId}
+                targetArticleKey={targetArticleKey}
+                onClearQueueTarget={onClearQueueTarget}
+                onOpenInChat={
+                  onOpenInChat
+                    ? (card, action) => onOpenInChat(card, action, {
+                        name:       activeProject.name,
+                        keywords:   activeProject.keywords,
+                        domain:     activeProject.domain || "default",
+                        project_id: activeProject.project_id,
+                        insight_id: insights[0]?.id ?? null,
+                      })
+                    : undefined
+                }
+                readKeys={readKeys}
+                onMarkRead={handleMarkRead}
+                onMarkUnread={handleMarkUnread}
+                relatedChatsMap={relatedChatsMap}
+                onLoadRelatedChats={handleLoadRelatedChats}
+                onOpenChat={handleOpenChat}
+                onExportReady={handleExportReady}
+                isOnline={isOnline}
+                offlineIds={offlineIds}
+              />
+            )}
+          </>
+        )}
       </div>
 
-      {/* Workspace */}
-      {showNotesOnly ? (
-        <NotesOnlyFeed />
-      /* Projects still arriving: never offer "create your first project" to someone
-         who already has one — show the brief's shape until we know. */
-      ) : loadingList || (projects.length > 0 && !activeProject) ? (
-        <WorkspaceSkeleton />
-      ) : !activeProject ? (
-        <EmptyWorkspace onNew={(topic) => { setCreateSeed(typeof topic === "string" ? topic : "" ); setShowCreate(true) }} />
-      ) : (
-        <>
-          {genError && (
-            <div className="mb-5 px-4 py-3 bg-red-950/30 border border-red-900/40 rounded-xl text-xs text-red-400">
-              {genError}
-            </div>
-          )}
-
-          {generating && genDismissed && (
-            <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
-              <span
-                aria-hidden
-                className="h-2 w-2 rounded-full animate-pulse motion-reduce:animate-none"
-                style={{ background: "var(--u-accent)" }}
-              />
-              <span className="text-[13px] text-slate-300">Still building your next lesson</span>
-              <span className="text-[12px] text-slate-500">{stageShortLabel(genStage)}</span>
-              <button
-                type="button"
-                onClick={() => setGenDismissed(false)}
-                className="ml-auto text-[12px] text-slate-400 hover:text-slate-100 underline underline-offset-2 transition-colors"
-              >
-                Show progress
-              </button>
-            </div>
-          )}
-
-          {genReady && (
-            <div className="mb-5 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
-              <span className="text-[13px] text-slate-200">{genReady} is ready to read.</span>
-              <button
-                type="button"
-                onClick={() => setGenReady(null)}
-                aria-label="Dismiss"
-                className="ml-auto text-[12px] text-slate-500 hover:text-slate-200 transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {loadingContent && !generating ? (
-            <WorkspaceSkeleton />
-          ) : (
-            <ProjectInsightView
-              project={activeProject}
-              insights={insights}
-              onGenerate={handleGenerate}
-              onRegenerate={handleRegenerate}
-              generating={generating}
-              genStage={genStage}
-              genStageDetail={genDetail}
-              genDismissed={genDismissed}
-              onDismissGenerating={() => setGenDismissed(true)}
-              targetInsightId={targetInsightId}
-              targetArticleKey={targetArticleKey}
-              onClearQueueTarget={onClearQueueTarget}
-              onOpenInChat={
-                onOpenInChat
-                  ? (card, action) => onOpenInChat(card, action, {
-                      name:       activeProject.name,
-                      keywords:   activeProject.keywords,
-                      domain:     activeProject.domain || "default",
-                      project_id: activeProject.project_id,
-                      insight_id: insights[0]?.id ?? null,
-                    })
-                  : undefined
-              }
-              readKeys={readKeys}
-              onMarkRead={handleMarkRead}
-              onMarkUnread={handleMarkUnread}
-              relatedChatsMap={relatedChatsMap}
-              onLoadRelatedChats={handleLoadRelatedChats}
-              onOpenChat={handleOpenChat}
-              onExportReady={handleExportReady}
-              isOnline={isOnline}
-              offlineIds={offlineIds}
-            />
-          )}
-        </>
-      )}
-
+      <AnimatePresence>
       {onboardingActive && (
         <OnboardingModal
+          key="onboarding"
           step={onboardingStep}
           onGoToStep={onOnboardingGoToStep}
           onBack={onOnboardingBack}
@@ -887,27 +900,36 @@ export default function ProjectsPage({
           userId={userId}
         />
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showCreate && (
         <CreateProjectModal
+          key="create"
           initialName={createSeed}
           onClose={() => { setShowCreate(false); setCreateSeed("") }}
           onCreate={handleCreate}
           loading={creating}
         />
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showRenameProject && (
         <RenameModal
+          key="rename"
           heading="Rename project"
           initialValue={renameProjectDraft}
           onConfirm={handleRenameProject}
           onClose={() => setShowRenameProject(false)}
         />
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showPersonaEditor && activeProject && (
         <IntentConfirmModal
+          key="persona"
           project={activeProject}
           mode="edit"
           onSave={handleSavePersona}
@@ -915,15 +937,19 @@ export default function ProjectsPage({
           saving={confirming}
         />
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showEdit && activeProject && (
         <EditProjectModal
+          key="edit"
           project={activeProject}
           onClose={() => setShowEdit(false)}
           onSave={handleEditProject}
           onEditPersona={() => { setShowEdit(false); setShowPersonaEditor(true) }}
         />
       )}
+      </AnimatePresence>
 
       {/* Post-persona-save prompt */}
       {personaSaved && (
@@ -956,12 +982,16 @@ export default function ProjectsPage({
         </div>
       )}
 
+      <AnimatePresence>
       {pendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+        <m.div
+          key="delete-project"
+          {...deleteDm.root}
+          className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
           onClick={e => { if (e.target === e.currentTarget) setPendingDelete(null) }}
         >
-          <div className="w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6">
+          <m.div {...deleteDm.card} className="u-sheet w-full max-w-sm bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-6">
+            {deleteDm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl bg-red-950/60 border border-red-900/50 flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-red-400" viewBox="0 0 16 16" fill="currentColor">
@@ -982,7 +1012,7 @@ export default function ProjectsPage({
             <div className="flex gap-3">
               <button
                 onClick={() => setPendingDelete(null)}
-                className="flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors"
+                className="u-btn-2 flex-1 px-4 py-2.5 rounded-xl text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50 transition-colors"
               >
                 Cancel
               </button>
@@ -993,9 +1023,10 @@ export default function ProjectsPage({
                 Delete
               </button>
             </div>
-          </div>
-        </div>
+          </m.div>
+        </m.div>
       )}
+      </AnimatePresence>
     </>
   )
 }
@@ -1005,7 +1036,7 @@ export default function ProjectsPage({
 function EmptySidebar({ onNew }) {
   return (
     <div className="flex flex-col items-center justify-center py-10 px-3 text-center">
-      <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-3">
+      <div className="u-bob w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-3">
         <svg className="w-4 h-4 text-slate-500" viewBox="0 0 16 16" fill="currentColor">
           <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Z" />
         </svg>
@@ -1015,7 +1046,7 @@ function EmptySidebar({ onNew }) {
       </p>
       <button
         onClick={onNew}
-        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
+        className="u-ping-once px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
       >
         Create Project
       </button>
@@ -1053,7 +1084,7 @@ function EmptyWorkspace({ onNew }) {
 
       <button
         onClick={() => onNew()}
-        className="mt-7 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+        className="u-ping-once mt-7 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
       >
         <PlusIcon className="w-4 h-4" />
         Start a project

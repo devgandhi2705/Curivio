@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react"
+import { AnimatePresence } from "../../lib/motion.jsx"
+import PopMenu from "../shared/PopMenu.jsx"
 
 const COLOR_GRAD = {
   blue:    "from-blue-500 to-blue-600",
@@ -54,7 +56,7 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
     <div
       onClick={() => onSelect(project)}
       className={`
-        group relative flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-colors select-none
+        u-nudge group relative flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-colors select-none
         ${menuOpen ? "z-50" : ""}
         ${isActive ? "bg-white/[0.07]" : menuOpen ? "bg-white/[0.04]" : "hover:bg-white/[0.04]"}
       `}
@@ -85,8 +87,9 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
         >
           <DotsIcon />
         </button>
+        <AnimatePresence>
         {menuOpen && (
-          <div className="u-pop absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/60 rounded-lg shadow-2xl py-1 overflow-hidden isolate" style={{ backdropFilter: "none" }}>
+          <PopMenu key="menu" className="origin-top-right absolute right-0 top-full mt-1 z-50 min-w-[110px] bg-slate-800 border border-slate-700/60 rounded-lg shadow-2xl py-1 overflow-hidden isolate" style={{ backdropFilter: "none" }}>
             <button
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRename?.(project) }}
               className="w-full text-left px-3 py-1.5 text-[11px] text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors"
@@ -105,8 +108,9 @@ export default function ProjectCard({ project, progression, isActive, onSelect, 
             >
               Delete
             </button>
-          </div>
+          </PopMenu>
         )}
+        </AnimatePresence>
       </div>
     </div>
   )

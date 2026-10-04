@@ -19,7 +19,16 @@
  *   onOpenChat(sessionId)
  */
 import { useState, useEffect, useRef } from "react"
-import { useNavigate } from "react-router-dom"
+import { createPortal } from "react-dom"
+import { useNavigate, useLocation } from "react-router-dom"
+import { AnimatePresence } from "../../lib/motion.jsx"
+import ReadingMode from "./reader/ReadingMode.jsx"
+import PopMenu from "../shared/PopMenu.jsx"
+import { useChangeCount, useCompletedCount } from "../../hooks/useChangeCount.js"
+import Confetti from "../shared/Confetti.jsx"
+import Plate from "../shared/Plate.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
+import { haptic } from "../../lib/motionPrefs.js"
 import InsightCard from "./InsightCard.jsx"
 import { articleKeyFromTitle } from "../../api/feed.js"
 import { getInsightNotes, saveCardNote, deleteCardNote } from "../../api/notes.js"
@@ -82,13 +91,8 @@ export function computeNextLabel(packages, displayLabels, generatedTodayCount) {
 
 // ─── Icon helpers ─────────────────────────────────────────────────────────────
 
-function SpinnerIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none">
-      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-      <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  )
+function SpinnerIcon() {
+  return <WaveDots className="text-blue-400" />
 }
 
 function PlusIcon({ className }) {
@@ -122,43 +126,62 @@ function buildContentMix(pkg) {
 
 // ─── Day history dropdown ─────────────────────────────────────────────────────
 
-function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
-  const [open, setOpen] = useState(false)
+// The trigger carries the next day's state: a dot once it can be generated, a
+// pulsing one while it builds. `open` is owned by the page so the progress
+// bar's "unlocked" nudge can open the menu too. Reading mode passes
+// canGenerate={false}: there the menu only switches days.
+function DayDropdown({ packages, displayLabels, selectedId, onSelect, open, setOpen, next, canGenerate = true }) {
   const ref = useRef(null)
   const currentLabel = displayLabels.get(selectedId) ?? `Day ?`
+  const labelChanges = useChangeCount(currentLabel)
 
   useEffect(() => {
     if (!open) return
     function onDown(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false)
     }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [open])
+    document.addEventListener("pointerdown", onDown)
+    return () => document.removeEventListener("pointerdown", onDown)
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(o => !o)}
+        data-next={next.state}
         className={[
-          "inline-flex items-center gap-1.5 px-3 py-1 rounded-lg",
+          "relative inline-flex items-center gap-1.5 px-3 py-1 rounded-lg",
           "text-[11px] font-semibold uppercase tracking-wider transition-colors select-none",
           open
             ? "bg-white/[0.12] border border-white/[0.16] text-slate-100"
             : "bg-white/[0.07] border border-white/[0.11] text-slate-400 hover:text-slate-100 hover:bg-white/[0.10] hover:border-white/[0.15]",
         ].join(" ")}
       >
-        {currentLabel}
+        <span key={currentLabel} className={labelChanges ? "u-roll" : ""}>{currentLabel}</span>
         <svg
-          className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          className={`w-3 h-3 transition-transform duration-300 ${open ? "rotate-180" : ""}`}
           viewBox="0 0 20 20" fill="currentColor"
         >
           <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
         </svg>
+        {canGenerate && next.state !== "locked" && (
+          <span
+            aria-hidden="true"
+            className={`u-pop-num absolute -top-1 -right-1 h-2 w-2 rounded-full ${next.state === "building" ? "animate-pulse" : ""}`}
+            style={{ background: "var(--u-accent, #3b82f6)" }}
+          />
+        )}
       </button>
 
+      <AnimatePresence>
       {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-30 min-w-[172px] bg-slate-900/95 backdrop-blur-sm border border-white/[0.07] rounded-xl shadow-2xl shadow-black/60 overflow-hidden py-1">
+        <PopMenu key="menu" className="origin-top absolute left-1/2 -ml-[120px] top-full mt-1.5 z-30 w-[240px] bg-slate-900/95 backdrop-blur-sm border border-white/[0.07] rounded-xl shadow-2xl shadow-black/60 overflow-hidden py-1">
+          {canGenerate && (
+            <>
+              <GenerateRow next={next} onDone={() => setOpen(false)} />
+              <div className="my-1 h-px bg-white/[0.06]" />
+            </>
+          )}
           {packages.map(pkg => {
             const label  = displayLabels.get(pkg.id)
             const isSel  = pkg.id === selectedId
@@ -183,8 +206,9 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect }) {
               </button>
             )
           })}
-        </div>
+        </PopMenu>
       )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -195,7 +219,7 @@ function PackageHeader({ pkg, dayLabel, projectId }) {
     <div className="mb-3 md:mb-7">
       {/* Headline */}
       <div className="flex items-start justify-between gap-2 mb-1.5 md:mb-4">
-        <h2 className="text-[17px] md:text-[22px] font-bold text-slate-100 leading-snug tracking-tight break-words">
+        <h2 className="u-read-display text-slate-100 break-words">
           {pkg.package_headline}
         </h2>
       </div>
@@ -204,7 +228,7 @@ function PackageHeader({ pkg, dayLabel, projectId }) {
       {pkg.learning_thread && (
         <div className="flex gap-3">
           <div className="flex-shrink-0 w-0.5 rounded-full bg-white/[0.08] self-stretch" />
-          <p className="text-[12px] text-slate-500 leading-relaxed">{pkg.learning_thread}</p>
+          <p className="u-read-body text-slate-400">{pkg.learning_thread}</p>
         </div>
       )}
     </div>
@@ -230,8 +254,8 @@ function ActionItem({ text }) {
         </svg>
       </div>
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-400/80 mb-1">Today's Action</p>
-        <p className="text-sm text-slate-300 leading-relaxed">{text}</p>
+        <p className="u-read-label text-blue-400/80 mb-1">Today's Action</p>
+        <p className="u-read-body text-slate-200">{text}</p>
       </div>
     </div>
   )
@@ -239,111 +263,100 @@ function ActionItem({ text }) {
 
 // ─── Day progress bar ─────────────────────────────────────────────────────────
 
-function DayProgressBar({ readCount, totalCount }) {
+// unlocked: the next day's label once it can be generated — "Complete" then
+// points at the Day menu, where generating lives.
+function DayProgressBar({ readCount, totalCount, unlocked, onOpenNext }) {
+  const allDone = totalCount > 0 && readCount >= totalCount
+  // Keyed on real changes: the sheen and count pop never play on load, and
+  // confetti + the success buzz fire only when the last card is marked.
+  const changes = useChangeCount(readCount)
+  const completions = useCompletedCount(readCount, totalCount)
+  useEffect(() => { if (completions) haptic("success") }, [completions])
+
   if (totalCount === 0) return null
   const pct = Math.round((readCount / totalCount) * 100)
-  const allDone = readCount >= totalCount
 
   return (
-    <div className="flex items-center gap-3 mb-2.5 md:mb-5 px-3 md:px-4 py-2.5 md:py-3 bg-white/[0.04] rounded-xl">
+    <div className="relative flex items-center gap-3 mb-2.5 md:mb-5 px-3 md:px-4 py-2.5 md:py-3 bg-white/[0.04] rounded-xl">
       <div className="flex-1">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[11px] font-semibold text-slate-400">Day progress</span>
-          <span className={`text-[11px] font-semibold ${allDone ? "text-emerald-400" : "text-slate-500"}`}>
+          <span key={readCount} className={`text-[11px] font-semibold ${changes ? "u-pop-num" : ""} ${allDone ? "text-emerald-400" : "text-slate-500"}`}>
             {readCount} / {totalCount} core read
           </span>
         </div>
-        <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              allDone ? "bg-emerald-500" : "bg-blue-500"
-            }`}
-            style={{ width: `${pct}%` }}
-          />
+        <div className="h-1.5 bg-slate-700/60 rounded-full">
+          <div className="u-progress-fill" data-done={allDone ? "true" : "false"} style={{ width: `${pct}%` }}>
+            {changes > 0 && <span key={changes} className="u-sheen" aria-hidden="true" />}
+          </div>
         </div>
       </div>
-      {allDone && (
-        <span className="text-[10px] font-semibold text-emerald-400 flex-shrink-0">Complete</span>
-      )}
+      {allDone && (unlocked ? (
+        <button
+          type="button"
+          onClick={onOpenNext}
+          className="u-pop-num text-[10px] font-semibold text-emerald-400 hover:text-emerald-300 hover:underline underline-offset-2 flex-shrink-0 transition-colors"
+        >
+          Complete · {unlocked} unlocked ↑
+        </button>
+      ) : (
+        <span className="u-pop-num text-[10px] font-semibold text-emerald-400 flex-shrink-0">Complete</span>
+      ))}
+      <Confetti key={completions} fire={completions > 0} className="right-10 top-4" />
     </div>
   )
 }
 
-// ─── Generate button ──────────────────────────────────────────────────────────
+// ─── Generate row (first item of the Day menu) ────────────────────────────────
 
-function GenerateButton({ generating, genStage, onGenerate, locked, offline = false, nextLabel = "Next Day", generatedTodayCount }) {
+// next: { label, state: "locked"|"ready"|"building", remaining, extraToday, stage, offline, onGenerate }
+function GenerateRow({ next, onDone }) {
   const [confirming, setConfirming] = useState(false)
-  const isExtraToday = generatedTodayCount > 0
+  const { label, state, remaining, extraToday, stage, offline, onGenerate } = next
 
-  function handleClick() {
-    if (locked || generating || offline) return
-    setConfirming(true)
-  }
-
-  function handleConfirm() {
-    setConfirming(false)
-    onGenerate()
-  }
-
-  function handleCancel() {
-    setConfirming(false)
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {confirming ? (
-        <div className="flex flex-col gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] border border-white/[0.08]">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-300 flex-1">
-              Generate {nextLabel}
-              {isExtraToday && <span className="text-slate-500 text-xs ml-1">(extra for today)</span>}
-              ?
-            </span>
-            <button
-              onClick={handleConfirm}
-              className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
-            >
-              Yes
-            </button>
-            <button
-              onClick={handleCancel}
-              className="px-3 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <span className="flex-1 text-[12px] text-slate-200">Generate {label}?</span>
         <button
-          onClick={handleClick}
-          disabled={generating || locked || offline}
-          title={offline ? "Generating requires an internet connection" : locked ? "Mark all articles as read to unlock the next package" : undefined}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] hover:border-white/[0.12] text-sm text-slate-400 hover:text-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          onClick={() => { setConfirming(false); onDone(); onGenerate() }}
+          className="px-2.5 py-0.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition-colors"
         >
-          {generating ? (
-            <>
-              <SpinnerIcon className="w-3.5 h-3.5 animate-spin text-blue-400" />
-              Generating {nextLabel} · {stageShortLabel(genStage)}…
-            </>
-          ) : locked ? (
-            <>
-              <LockIcon className="w-3.5 h-3.5 text-slate-500" />
-              Generate {nextLabel}
-            </>
-          ) : (
-            <>
-              <PlusIcon className="w-3.5 h-3.5" />
-              Generate {nextLabel}
-            </>
-          )}
+          Yes
         </button>
-      )}
-      {locked && !generating && (
-        <p className="text-[11px] text-slate-600 ml-1">
-          Mark all articles as read to unlock.
-        </p>
-      )}
-    </div>
+        <button
+          onClick={() => setConfirming(false)}
+          className="px-2.5 py-0.5 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 text-[11px] font-medium transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    )
+  }
+
+  const building = state === "building"
+  const locked = state === "locked"
+  const note = building ? stageShortLabel(stage)
+    : offline ? "Needs internet"
+    : locked ? `Read ${remaining} more to unlock`
+    : extraToday ? "Extra for today"
+    : null
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      disabled={building || locked || offline}
+      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-slate-200 hover:text-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors"
+    >
+      {building ? <SpinnerIcon />
+        : locked ? <LockIcon className="w-3 h-3 flex-shrink-0" />
+        : <PlusIcon className="w-3.5 h-3.5 flex-shrink-0" />}
+      <span className="flex flex-col">
+        <span className="text-[11px] font-semibold uppercase tracking-wide">
+          {building ? "Building" : "Generate"} {label}
+        </span>
+        {note && <span className="text-[10px] text-slate-500">{note}</span>}
+      </span>
+    </button>
   )
 }
 
@@ -366,20 +379,50 @@ function CuriositySectionHeader() {
   )
 }
 
+// InsightCard props for one card — shared by the feed and Reading mode.
+function buildCardProps(card, {
+  pkg, project, readKeys, onMarkRead, onMarkUnread, onOpenInChat, relatedChatsMap,
+  onLoadRelatedChats, onOpenChat, notesMap, onSaveNote, onDeleteNote, queuedKeys,
+  onToggleQueue, isOnline = true, offlineIds,
+}) {
+  const ak = articleKeyFromTitle(card.title || "")
+  return {
+    card,
+    isRead:             readKeys?.has(ak) ?? false,
+    onMarkRead:         onMarkRead   ? () => onMarkRead(pkg.id, ak, card.title || "") : undefined,
+    onMarkUnread:       onMarkUnread ? () => onMarkUnread(pkg.id, ak)                 : undefined,
+    onAskAbout:         onOpenInChat ? (c) => onOpenInChat(c, "ask_about")         : undefined,
+    onExplainSimply:    onOpenInChat ? (c) => onOpenInChat(c, "explain_simply")    : undefined,
+    relatedChats:       relatedChatsMap?.get(ak) ?? null,
+    onLoadRelatedChats: onLoadRelatedChats ? () => onLoadRelatedChats(pkg.id, ak)    : undefined,
+    onOpenChat,
+    projectId:   project?.project_id || '',
+    projectName: project?.name       || '',
+    note:         notesMap?.get(ak) ?? null,
+    onSaveNote:   onSaveNote   ? (content) => onSaveNote(ak, content)  : undefined,
+    onDeleteNote: onDeleteNote ? ()        => onDeleteNote(ak)         : undefined,
+    isQueued:      queuedKeys?.has(ak) ?? false,
+    onToggleQueue: onToggleQueue ? (c) => onToggleQueue(ak, c) : undefined,
+    isOfflineAvailable: offlineIds?.has(pkg.id) || offlineIds?.has(`${project?.project_id || ''}_${pkg.id}_${ak}`) || false,
+    offlineDisabled: !isOnline,
+    day:        pkg.id,
+    articleKey: ak,
+  }
+}
+
 function PackageContent({
   pkg,
   project,
   generating,
-  genStage,
-  onGenerate,
   onRegenerate,
   onOpenInChat,
   isLatestPackage,
   nextPackage,
   onSelectPackage,
   dayLabel,
-  generatedTodayCount,
   nextLabel,
+  unlockedLabel,
+  onOpenNext,
   readKeys,
   onMarkRead,
   onMarkUnread,
@@ -402,44 +445,17 @@ function PackageContent({
   const curiosityCards = pkg.curiosity_insights || []
   const totalCoreCards = allCoreCards.length
 
-  // Generation lock is based on CORE cards only — curiosity is optional
-  const readCount        = readKeys?.size ?? 0
-  const generationLocked = isLatestPackage && totalCoreCards > 0 && readCount < totalCoreCards
+  const readCount      = coreReadCount(allCoreCards, readKeys)
 
-  const makeCardProps = (card) => {
-    const ak = articleKeyFromTitle(card.title || "")
-    return {
-      card,
-      isRead:             readKeys?.has(ak) ?? false,
-      onMarkRead:         onMarkRead   ? () => onMarkRead(pkg.id, ak, card.title || "") : undefined,
-      onMarkUnread:       onMarkUnread ? () => onMarkUnread(pkg.id, ak)                 : undefined,
-      onAskAbout:         onOpenInChat ? (c) => onOpenInChat(c, "ask_about")         : undefined,
-      onExplainSimply:    onOpenInChat ? (c) => onOpenInChat(c, "explain_simply")    : undefined,
-      relatedChats:       relatedChatsMap?.get(ak) ?? null,
-      onLoadRelatedChats: onLoadRelatedChats ? () => onLoadRelatedChats(pkg.id, ak)    : undefined,
-      onOpenChat,
-      projectId:   project?.project_id || '',
-      projectName: project?.name       || '',
-      note:         notesMap?.get(ak) ?? null,
-      onSaveNote:   onSaveNote   ? (content) => onSaveNote(ak, content)  : undefined,
-      onDeleteNote: onDeleteNote ? ()        => onDeleteNote(ak)         : undefined,
-      isQueued:      queuedKeys?.has(ak) ?? false,
-      onToggleQueue: onToggleQueue ? (c) => onToggleQueue(ak, c) : undefined,
-      isOfflineAvailable: offlineIds?.has(pkg.id) || offlineIds?.has(`${project?.project_id || ''}_${pkg.id}_${ak}`) || false,
-      offlineDisabled: !isOnline,
-      day:        pkg.id,
-      articleKey: ak,
-    }
-  }
+  const makeCardProps = (card) => buildCardProps(card, {
+    pkg, project, readKeys, onMarkRead, onMarkUnread, onOpenInChat, relatedChatsMap,
+    onLoadRelatedChats, onOpenChat, notesMap, onSaveNote, onDeleteNote, queuedKeys,
+    onToggleQueue, isOnline, offlineIds,
+  })
 
   if (failed) {
     return (
-      <div>
-        <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
-        <div className="mt-4 pt-4 border-t border-slate-800">
-          <GenerateButton generating={generating} onGenerate={onGenerate} locked={false} offline={!isOnline} nextLabel={nextLabel} generatedTodayCount={generatedTodayCount} />
-        </div>
-      </div>
+      <FailedPackageBanner pkg={pkg} nextLabel={nextLabel} generating={generating} onRegenerate={onRegenerate} />
     )
   }
 
@@ -453,7 +469,7 @@ function PackageContent({
 
       {/* Day progress bar — core cards only (curiosity is optional) */}
       {isLatestPackage && totalCoreCards > 0 && (
-        <DayProgressBar readCount={readCount} totalCount={totalCoreCards} />
+        <DayProgressBar readCount={readCount} totalCount={totalCoreCards} unlocked={unlockedLabel} onOpenNext={onOpenNext} />
       )}
 
       {/* News cards */}
@@ -464,7 +480,7 @@ function PackageContent({
             {newsCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
-                <div key={card.id || i} id={`queue-card-${ak}`}>
+                <div key={card.id || i} id={`queue-card-${ak}`} className="scroll-mt-20">
                   <InsightCard {...makeCardProps(card)} />
                 </div>
               )
@@ -481,7 +497,7 @@ function PackageContent({
             {eduCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
-                <div key={card.id || i} id={`queue-card-${ak}`}>
+                <div key={card.id || i} id={`queue-card-${ak}`} className="scroll-mt-20">
                   <InsightCard {...makeCardProps(card)} />
                 </div>
               )
@@ -496,7 +512,7 @@ function PackageContent({
           {allCoreCards.map((card, i) => {
             const ak = articleKeyFromTitle(card.title || "")
             return (
-              <div key={card.id || i} id={`queue-card-${ak}`}>
+              <div key={card.id || i} id={`queue-card-${ak}`} className="scroll-mt-20">
                 <InsightCard {...makeCardProps(card)} />
               </div>
             )
@@ -511,14 +527,14 @@ function PackageContent({
       {curiosityCards.length > 0 && (
         <div className="mt-1.5 md:mt-2">
           <CuriositySectionHeader />
-          <p className="text-[11px] text-slate-600 mb-2 md:mb-3 leading-relaxed">
+          <p className="text-[12.5px] text-slate-500 mb-2 md:mb-3 leading-relaxed">
             Optional side trails — intellectually stimulating, not on the critical path.
           </p>
           <div className="space-y-2 md:space-y-3">
             {curiosityCards.map((card, i) => {
               const ak = articleKeyFromTitle(card.title || "")
               return (
-                <div key={card.id || `curiosity-${i}`} id={`queue-card-${ak}`}>
+                <div key={card.id || `curiosity-${i}`} id={`queue-card-${ak}`} className="scroll-mt-20">
                   <InsightCard {...makeCardProps(card)} />
                 </div>
               )
@@ -527,19 +543,9 @@ function PackageContent({
         </div>
       )}
 
-      {/* Generating belongs to the newest day; older days offer the way forward instead. */}
-      <div className="mt-3 md:mt-6 pt-3 md:pt-5 border-t border-slate-800">
-        {isLatestPackage ? (
-          <GenerateButton
-            generating={generating}
-            genStage={genStage}
-            onGenerate={onGenerate}
-            locked={generationLocked}
-            offline={!isOnline}
-            nextLabel={nextLabel}
-            generatedTodayCount={generatedTodayCount}
-          />
-        ) : nextPackage ? (
+      {/* Generating lives in the Day menu; older days offer the way forward. */}
+      {nextPackage && (
+        <div className="mt-3 md:mt-6 pt-3 md:pt-5 border-t border-slate-800">
           <button
             type="button"
             onClick={() => onSelectPackage?.(nextPackage.id)}
@@ -547,13 +553,126 @@ function PackageContent({
           >
             Read {nextPackage.label}
           </button>
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
 
+// ─── Wide-screen rails ────────────────────────────────────────────────────────
+
+// Background graph plates for the normal feed, alternating sides down the page.
+const FEED_PLATES = [
+  { seed: 3,  count: 11, top: "6%",  side: "left"  },
+  { seed: 19, count: 9,  top: "17%", side: "right" },
+  { seed: 27, count: 12, top: "29%", side: "left"  },
+  { seed: 44, count: 10, top: "41%", side: "right" },
+  { seed: 52, count: 11, top: "53%", side: "left"  },
+  { seed: 63, count: 9,  top: "65%", side: "right" },
+  { seed: 71, count: 12, top: "77%", side: "left"  },
+  { seed: 88, count: 10, top: "88%", side: "right" },
+]
+
+// The article list needs 280px beside a reading column of at least 720px,
+// inside the feed's 32px side padding: 720 + 280 + 64 (see .u-feed-col).
+const RAILS_MIN_WIDTH = 1064
+
+// Width of the page's <main> (it changes with the sidebar, not just the
+// window), so the list appears exactly when it fits.
+function useMainWidth(ref, mounted) {
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const main = ref.current?.closest("main")
+    if (!main) return
+    const ro = new ResizeObserver(([e]) => setWidth(e.contentRect.width))
+    ro.observe(main)
+    return () => ro.disconnect()
+  }, [ref, mounted])
+  return width
+}
+
+// Page order: news, then educational (or unsorted core), then curiosity.
+function cardsInPageOrder(pkg) {
+  const all  = pkg.insights ?? []
+  const news = all.filter(c => c.content_type === "news")
+  const edu  = all.filter(c => c.content_type === "educational")
+  const core = news.length || edu.length ? [...news, ...edu] : all
+  return { core, cards: [...core, ...(pkg.curiosity_insights ?? [])] }
+}
+
+// Right rail: the day's cards in order. Jumps to a card; marks the one in view
+// and the ones read (newest day only — older days carry no read state).
+function DayOutline({ pkg, dayLabel, readKeys, showRead }) {
+  const { core: coreInPageOrder, cards } = cardsInPageOrder(pkg)
+  const keys  = cards.map(c => articleKeyFromTitle(c.title || ""))
+  const core  = coreInPageOrder.length
+  const read  = coreReadCount(coreInPageOrder, readKeys)
+  const [active, setActive] = useState(keys[0])
+
+  useEffect(() => {
+    const els = keys.map(k => document.getElementById(`queue-card-${k}`)).filter(Boolean)
+    // A thin band just above the middle of the screen: whichever card crosses it is the one being read.
+    const io = new IntersectionObserver(entries => {
+      const hit = entries.find(e => e.isIntersecting)
+      if (hit) setActive(hit.target.id.replace("queue-card-", ""))
+    }, { rootMargin: "-35% 0px -60% 0px" })
+    els.forEach(el => io.observe(el))
+    return () => io.disconnect()
+  }, [pkg.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function jump(k) {
+    setActive(k)
+    document.getElementById(`queue-card-${k}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  return (
+    <nav aria-label="Today's cards">
+      <p className="u-read-label text-slate-500 mb-2 px-2">{dayLabel}</p>
+      {showRead && core > 0 && (
+        <div className="flex items-center gap-2 mb-3 px-2">
+          <div className="flex-1 h-1 bg-slate-700/60 rounded-full">
+            <div className="u-progress-fill" data-done={read >= core ? "true" : "false"} style={{ width: `${Math.round(read / core * 100)}%` }} />
+          </div>
+          <span className="text-[11px] text-slate-500 tabular-nums">{read}/{core}</span>
+        </div>
+      )}
+      <ol className="space-y-0.5">
+        {cards.map((c, i) => {
+          const k = keys[i]
+          const isRead = showRead && readKeys?.has(k)
+          const curiosity = i >= core
+          return (
+            <li key={k}>
+              <button
+                type="button"
+                onClick={() => jump(k)}
+                aria-current={active === k ? "true" : undefined}
+                className={[
+                  "w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left text-[12.5px] leading-snug transition-colors",
+                  active === k ? "bg-white/[0.06] text-slate-100" : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]",
+                ].join(" ")}
+              >
+                {isRead ? (
+                  <svg className="w-3 h-3 mt-[3px] flex-shrink-0 text-emerald-400" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 6l3 3 5-5" /></svg>
+                ) : (
+                  <span className={`w-1.5 h-1.5 mt-[6px] mx-[3px] rounded-full flex-shrink-0 ${curiosity ? "bg-amber-400/60" : "bg-slate-500"}`} />
+                )}
+                <span className="line-clamp-2">{c.title}</span>
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </nav>
+  )
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
+
+// readKeys also holds curiosity cards, which never count towards the day.
+function coreReadCount(coreCards, readKeys) {
+  return coreCards.filter(c => readKeys?.has(articleKeyFromTitle(c.title || ""))).length
+}
 
 function isFailedPackage(pkg) {
   return (
@@ -588,10 +707,7 @@ function FailedPackageBanner({ pkg, nextLabel, generating, onRegenerate }) {
         >
           {generating ? (
             <>
-              <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+              <WaveDots />
               Regenerating…
             </>
           ) : (
@@ -633,6 +749,9 @@ export default function DailyPackageView({
   offlineIds,
 }) {
   const [selectedId, setSelectedId] = useState(packages[0]?.id ?? null)
+  const [dayMenuOpen, setDayMenuOpen] = useState(false)
+  const frameRef = useRef(null)
+  const wide = useMainWidth(frameRef, packages.length > 0) >= RAILS_MIN_WIDTH
   // Map<cardId, noteContent> for the currently-selected package
   const [notesMap, setNotesMap] = useState(new Map())
   // Set<articleKey> — synced from localStorage queue
@@ -746,6 +865,21 @@ export default function DailyPackageView({
   ).length
   const nextLabel = computeNextLabel(packages, displayLabels, generatedTodayCount)
 
+  // The next day unlocks once the newest day's CORE cards are all read (curiosity
+  // is optional; a failed day or one with no core cards never locks). readKeys is
+  // always the newest day's, so this holds whichever day is being viewed.
+  const latestCore = packages[0]?.insights ?? []
+  const remaining  = latestCore.length - coreReadCount(latestCore, readKeys)
+  const next = {
+    label:      nextLabel,
+    state:      generating ? "building" : remaining > 0 ? "locked" : "ready",
+    remaining,
+    extraToday: generatedTodayCount > 0,
+    stage:      genStage,
+    offline:    !isOnline,
+    onGenerate,
+  }
+
   // Expose export functions to parent whenever selection changes
   useEffect(() => {
     if (!onExportReady || !selected) return
@@ -781,10 +915,56 @@ export default function DailyPackageView({
     return () => { cancelled = true }
   }, [selected?.id, project?.project_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Reading mode ──────────────────────────────────────────────────────────
+  // { start, origin } while open. It opens on the card in view and, on exit,
+  // the feed scrolls to the card that was last on screen.
+  const [reading, setReading] = useState(null)
+  const [readerDayOpen, setReaderDayOpen] = useState(false)
+  const readerCards = selected ? cardsInPageOrder(selected) : { core: [], cards: [] }
+
+  function openReading(e) {
+    const r = e.currentTarget.getBoundingClientRect()
+    const line = window.innerHeight * 0.35
+    let start = 0
+    readerCards.cards.forEach((c, i) => {
+      const el = document.getElementById(`queue-card-${articleKeyFromTitle(c.title || "")}`)
+      if (el && el.getBoundingClientRect().top <= line) start = i
+    })
+    setDayMenuOpen(false)
+    setReading({ start, origin: { x: r.left + r.width / 2, y: r.top + r.height / 2 } })
+  }
+
+  function exitReading(articleKey) {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+    setReading(null)
+    setReaderDayOpen(false)
+    // Behind the closing reveal, so the feed is already in place when it clears.
+    if (articleKey) document.getElementById(`queue-card-${articleKey}`)?.scrollIntoView({ block: "start" })
+  }
+
+  // Leaving the feed (Ask About opens chat, the back button, another project)
+  // closes Reading mode — it belongs to this project's days only.
+  const { pathname } = useLocation()
+  const onFeed = pathname.startsWith("/feed")
+  useEffect(() => {
+    if (!onFeed && reading) exitReading(null)
+  }, [onFeed]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setReading(null) }, [project?.project_id])
+
+  const readerCardProps = (card) => buildCardProps(card, {
+    pkg: selected, project,
+    readKeys:     isLatest ? readKeys : undefined,
+    onMarkRead:   isLatest ? onMarkRead : undefined,
+    onMarkUnread: isLatest ? onMarkUnread : undefined,
+    onOpenInChat, relatedChatsMap, onLoadRelatedChats, onOpenChat,
+    notesMap, onSaveNote: handleSaveNote, onDeleteNote: handleDeleteNote,
+    queuedKeys, onToggleQueue: handleToggleQueue, isOnline, offlineIds,
+  })
+
   if (packages.length === 0) {
     // Dismissed with nothing to read yet: the progress strip carries the run,
     // so give the page the planned path to read instead of an empty column.
-    if (generating && genDismissed) return <JourneyPreviewPanel projectId={project?.project_id} />
+    if (generating && genDismissed) return <JourneyPreviewPanel projectId={project?.project_id} nextLabel={nextLabel} />
     if (generating) {
       return (
         <GeneratingPackageState
@@ -801,28 +981,63 @@ export default function DailyPackageView({
 
   return selected ? (
     <>
-      <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50">
+      <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5">
         <DayDropdown
           packages={packages}
           displayLabels={displayLabels}
           selectedId={selectedId}
           onSelect={selectPackage}
+          open={dayMenuOpen}
+          setOpen={setDayMenuOpen}
+          next={next}
         />
+        {!isFailedPackage(selected) && (
+          <button
+            type="button"
+            onClick={openReading}
+            aria-label="Reading mode"
+            title="Reading mode"
+            className="inline-flex items-center justify-center gap-1.5 px-2 h-[26px] rounded-lg bg-white/[0.07] border border-white/[0.11] text-slate-400 hover:text-slate-100 hover:bg-white/[0.10] hover:border-white/[0.15] active:scale-95 transition-[color,background-color,border-color,transform] whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+              <path d="M8 4.2C6.6 3.2 4.6 2.8 2 3v9.3c2.6-.2 4.6.2 6 1.2 1.4-1 3.4-1.4 6-1.2V3c-2.6-.2-4.6.2-6 1.2ZM8 4.2v9.3" />
+            </svg>
+            <span className="text-[11px] font-medium">Reading mode</span>
+          </button>
+        )}
       </div>
+      <div ref={frameRef} className="relative isolate">
+      {/* Graph plates down the page, behind the cards (the frame is isolated, so
+          z -1 sits under its content): right ones fill the article list's column,
+          left ones the margin, each just tucked under the column's edge. */}
+      <div aria-hidden="true" className="u-feed-plates">
+        {FEED_PLATES.map(p => (
+          <div key={p.seed} className="absolute w-[260px] h-[195px] md:w-[360px] md:h-[270px]" style={{ top: p.top, ...(p.side === "left" ? { right: "calc(100% - 80px)" } : { left: "calc(100% - 40px)" }) }}>
+            <Plate seed={p.seed} count={p.count} className="u-plate u-plate-feed" />
+          </div>
+        ))}
+      </div>
+      {/* Wide screens: the day's articles, sticky to the right of the reading column. */}
+      {wide && (
+        <div className="u-day-rail absolute inset-y-0 left-full ml-10 w-[240px]">
+          <div className="sticky top-20">
+            <DayOutline pkg={selected} dayLabel={displayLabels.get(selected.id)} readKeys={readKeys} showRead={isLatest} />
+          </div>
+        </div>
+      )}
       <PackageContent
         pkg={selected}
         project={project}
         generating={generating}
-        genStage={genStage}
-        onGenerate={onGenerate}
         onRegenerate={onRegenerate}
         onOpenInChat={onOpenInChat}
         isLatestPackage={isLatest}
         nextPackage={nextPkg ? { id: nextPkg.id, label: displayLabels.get(nextPkg.id) ?? `Day ${nextPkg.day_number}` } : null}
         onSelectPackage={selectPackage}
         dayLabel={displayLabels.get(selected.id)}
-        generatedTodayCount={isLatest ? generatedTodayCount : 0}
         nextLabel={isLatest ? nextLabel : undefined}
+        unlockedLabel={next.state === "ready" && isOnline ? nextLabel : null}
+        onOpenNext={() => setDayMenuOpen(true)}
         readKeys={isLatest ? readKeys : undefined}
         onMarkRead={isLatest ? onMarkRead : undefined}
         onMarkUnread={isLatest ? onMarkUnread : undefined}
@@ -837,7 +1052,38 @@ export default function DailyPackageView({
         isOnline={isOnline}
         offlineIds={offlineIds}
       />
-      <JourneyPreviewPanel projectId={project.project_id} />
+      </div>
+      {createPortal(
+        <AnimatePresence>
+          {reading && (
+            <ReadingMode
+              key="reader"
+              pkg={selected}
+              cards={readerCards.cards}
+              coreCount={readerCards.core.length}
+              startIndex={reading.start}
+              origin={reading.origin}
+              dayLabel={displayLabels.get(selected.id)}
+              readKeys={isLatest ? readKeys : undefined}
+              cardProps={readerCardProps}
+              onExit={exitReading}
+              daySwitcher={
+                <DayDropdown
+                  packages={packages}
+                  displayLabels={displayLabels}
+                  selectedId={selectedId}
+                  onSelect={selectPackage}
+                  open={readerDayOpen}
+                  setOpen={setReaderDayOpen}
+                  next={next}
+                  canGenerate={false}
+                />
+              }
+            />
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </>
   ) : null
 }
@@ -882,7 +1128,8 @@ function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDeta
   const upcoming   = preview?.upcoming?.slice(0, 4) || []
 
   return (
-    <div data-no-unpack className="max-w-xl mx-auto py-10 md:py-16">
+    <div data-no-unpack className="relative isolate max-w-xl mx-auto py-10 md:py-16">
+      <Plate seed={23} count={9} className="u-plate u-plate-gen" />
       <p className="text-[12px] text-slate-500 mb-2.5">{nextLabel} of {project.name}</p>
       <h2 className="text-[22px] md:text-[27px] font-semibold leading-[1.22] tracking-[-0.01em] text-slate-100 max-w-[24ch]">
         {focusTitle || `Building your ${nextLabel} lesson`}
@@ -909,13 +1156,14 @@ function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDeta
               {active && (
                 <span
                   aria-hidden
-                  className="absolute -left-[9px] top-[1px] h-[19px] w-[19px] rounded-full animate-ping motion-reduce:hidden"
+                  className="absolute -left-[9px] top-[1px] h-[19px] w-[19px] rounded-full animate-ping"
                   style={{ background: "var(--u-accent)", opacity: 0.18, animationDuration: "2.4s" }}
                 />
               )}
               <span
+                key={done ? "done" : "todo"}
                 aria-hidden
-                className="absolute -left-[5px] top-[6px] h-[9px] w-[9px] rounded-full transition-colors duration-500"
+                className={`absolute -left-[5px] top-[6px] h-[9px] w-[9px] rounded-full transition-colors duration-500 ${done ? "u-pop-num" : ""}`}
                 style={{ background: done || active ? "var(--u-accent)" : "color-mix(in srgb, var(--u-axis) 38%, transparent)" }}
               />
               <p className={`text-[14px] leading-snug transition-colors duration-500 ${
@@ -965,7 +1213,11 @@ function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDeta
 
 // ─── Journey preview ──────────────────────────────────────────────────────────
 
-function JourneyPreviewPanel({ projectId }) {
+// The server's "today" is the NEXT lesson to generate, and its day_numbers count
+// lessons, not the calendar Day labels the feed shows (Day 2, Day 2.1 …). So the
+// first entry takes the Day menu's own next label, and the rest stay unnumbered:
+// their labels depend on the dates they'll be generated.
+function JourneyPreviewPanel({ projectId, nextLabel = "Day 1", className = "mt-4 md:mt-6" }) {
   const [preview, setPreview] = useState(null)
 
   useEffect(() => {
@@ -977,7 +1229,7 @@ function JourneyPreviewPanel({ projectId }) {
 
   if (!preview.planned) {
     return (
-      <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+      <div className={`${className} px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]`}>
         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1">Your path</p>
         <p className="text-[12px] text-slate-600">Not yet planned — your path will appear here once your first package is generated.</p>
       </div>
@@ -986,7 +1238,7 @@ function JourneyPreviewPanel({ projectId }) {
 
   if (preview.shape === "rotating_theme") {
     return (
-      <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+      <div className={`${className} px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]`}>
         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5">Your path</p>
         <p className="text-[12px] text-slate-400 leading-relaxed">{preview.display_summary}</p>
       </div>
@@ -995,20 +1247,17 @@ function JourneyPreviewPanel({ projectId }) {
 
   // fixed_sequence
   return (
-    <div className="mt-4 md:mt-6 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+    <div className={`${className} px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]`}>
       <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-2">Your path</p>
-      <div className="space-y-1.5">
-        <div className="flex items-baseline gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-400/70 w-10 flex-shrink-0">Today</span>
-          <span className="text-[12px] text-slate-300 leading-snug">{preview.today.display_title}</span>
-        </div>
-        {preview.upcoming.map(day => (
-          <div key={day.day_number} className="flex items-baseline gap-2">
-            <span className="text-[10px] font-medium text-slate-600 w-10 flex-shrink-0">Day {day.day_number}</span>
-            <span className="text-[12px] text-slate-500 leading-snug">{day.display_title}</span>
-          </div>
-        ))}
-      </div>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-400/80">Up next · {nextLabel}</p>
+      <p className="mt-0.5 text-[12.5px] text-slate-200 leading-snug">{preview.today.display_title}</p>
+      {preview.upcoming.length > 0 && (
+        <ol className="mt-3 space-y-1.5 border-l border-white/[0.08] pl-3">
+          {preview.upcoming.map(day => (
+            <li key={day.day_number} className="text-[12px] text-slate-500 leading-snug">{day.display_title}</li>
+          ))}
+        </ol>
+      )}
       {preview.remaining_count > 0 && (
         <p className="mt-2 text-[11px] text-slate-600">+{preview.remaining_count} more planned</p>
       )}
@@ -1018,8 +1267,9 @@ function JourneyPreviewPanel({ projectId }) {
 
 function EmptyPackageState({ project, onGenerate, isOnline = true }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4">
+    <div className="relative isolate flex flex-col items-center justify-center py-16 text-center">
+      <Plate seed={5} count={9} className="u-plate u-plate-empty" />
+      <div className="u-bob w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4">
         <svg className="w-5 h-5 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M4 3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H4Zm12 12H4l4-8 3 6 2-4 3 6Z" clipRule="evenodd" />
         </svg>
@@ -1035,7 +1285,7 @@ function EmptyPackageState({ project, onGenerate, isOnline = true }) {
         onClick={onGenerate}
         disabled={!isOnline}
         title={!isOnline ? "Generating requires an internet connection" : undefined}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="u-ping-once flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
         Generate Day 1
       </button>

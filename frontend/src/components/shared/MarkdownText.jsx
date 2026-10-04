@@ -405,6 +405,23 @@ export default function MarkdownText({ text, variant = "default", className = ""
       continue
     }
 
+    // Blockquote ("> text", consecutive lines form one quote). Used by uploaded
+    // documents rendered in previews (e.g. a slide's speaker notes) and by any
+    // model output that quotes — both previously showed a literal ">".
+    if (/^>\s?/.test(line)) {
+      const quoted = []
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoted.push(lines[i].replace(/^>\s?/, ""))
+        i++
+      }
+      elements.push(
+        <blockquote key={`q-${i}`} className="my-3 border-l-2 border-slate-600 pl-3.5 text-slate-400">
+          {quoted.map((q, qi) => <p key={qi} className={paragraphClass}>{renderInline(q, sources)}</p>)}
+        </blockquote>
+      )
+      continue
+    }
+
     if (_LIST_LINE_RE.test(line)) {
       const { items, nextIndex } = _parseListRun(lines, i)
       elements.push(_renderListTree(items, `list-${i}`, sources))

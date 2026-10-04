@@ -59,8 +59,10 @@ a call site request a specific primary model (e.g. journey planner's
 gemini-2.5-flash, writer's gemini-3.1-flash-lite) without forking the chain.
 
 `legs` restricts which legs get built: "all" (default, full Gemini-pool ->
-Gemini-fallback -> Groq chain), "gemini" (Gemini legs only, no Groq), or "groq"
-(Groq leg only — `model` overrides GROQ_FALLBACK_MODEL in this case). Used by
+Gemini-fallback -> Groq -> free-router chain), "gemini" (Gemini legs only, no
+Groq), "groq" (Groq leg + free router — `model` overrides GROQ_FALLBACK_MODEL in
+this case), or "openrouter" (free router only, grok_service's backup). The free
+router leg (FREE_ROUTER_MODEL) is added only when OPENROUTER_API_KEY is set. Used by
 callers that need to send a different prompt per provider (see
 writer_provider_router.route_writer_call) instead of one input across a single
 .with_fallbacks() chain.
@@ -86,6 +88,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from langchain_groq import ChatGroq
 from langchain_openrouter import ChatOpenRouter
+from openrouter.utils import BackoffStrategy, RetryConfig as OpenRouterRetryConfig
 from tenacity import retry_if_exception
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
@@ -98,6 +101,18 @@ logger = logging.getLogger(__name__)
 
 _RETRY_ATTEMPTS = 3
 _TEMPERATURE = 0.7
+# OpenRouter's Free Models Router: picks a random free model that supports the
+# request's features. The last-resort backup on every text LLM path; never vision.
+FREE_ROUTER_MODEL = "openrouter/free"
+# The router often lands on a reasoning model whose thinking counts as output:
+# under [explain]'s 200-token cap it answered empty or mid-thought 4/4 live; with
+# 1500 it parsed 4/5. A floor for this leg only; the route cap still binds the rest.
+_FREE_ROUTER_MIN_TOKENS = 2048
+# Only route to providers that neither store nor train on prompts: user material
+# goes here. Also keeps out nvidia's content-safety model, which answered
+# "User Safety: safe" on ~30% of unfiltered calls (0 of 13 with this, live).
+# ponytail: no output check for that model; add one if it ever shows up in logs.
+FREE_ROUTER_PROVIDER = {"data_collection": "deny"}
 
 
 def _gemini_keys() -> list[str]:
@@ -130,10 +145,9 @@ def _groq_key() -> str:
 
 def _openrouter_keys() -> list[str]:
     """OPENROUTER_API_KEY (comma-separated pool) — same shape as
-    _gemini_keys()/_groq_keys(). Only consumed by _keys_for_provider(), which
-    route_legs()/build_leg() use for whichever chat_models.toml route lists an
-    openrouter model; the old Feed chain (get_chat_model() etc.) never reaches
-    this function."""
+    _gemini_keys()/_groq_keys(). Consumed by _keys_for_provider() (route_legs()/
+    build_leg(), for chat_models.toml's openrouter entries) and by
+    _build_raw_models()'s free-router backup leg."""
     raw = os.getenv("OPENROUTER_API_KEY", "")
     keys = [k.strip() for k in raw.split(",") if k.strip()]
     if not keys:
@@ -361,7 +375,11 @@ def route_legs(route: str) -> list[LegSpec]:
     config = chat_models().routes[route]
     legs: list[LegSpec] = []
     for step, ref in enumerate(config.models, 1):
-        key_count = len(_keys_for_provider(ref.provider))
+        try:
+            key_count = len(_keys_for_provider(ref.provider))
+        except RuntimeError as exc:     # e.g. no OPENROUTER_API_KEY: drop the backup, keep the rest
+            logger.warning("[llm] %s: leaving out %s — %s", route, ref, exc)
+            continue
         if route == "image":
             key_count = 1     # Gemini's Files API scopes an upload to the key that made it
         legs.extend(LegSpec(route, step, ref.provider, ref.model, index) for index in range(key_count))
@@ -401,6 +419,22 @@ def _gemini_deadline(timeout_seconds: float) -> float:
     return max(timeout_seconds, _GEMINI_MIN_DEADLINE_SEC)
 
 
+def _openrouter_model(*, timeout_seconds: float | None = None, **kwargs) -> ChatOpenRouter:
+    """ChatOpenRouter with its two traps defused. Its timeout is in MILLISECONDS
+    (passing seconds gave the 5s popover a 5ms timeout). And max_retries=0 only
+    skips LangChain's retry config, which leaves the openrouter SDK's own default
+    on: retry 5xx + timeouts with backoff for up to an hour (seen live: a hung
+    classifier). Retries belong to run_route()/_QuotaAwareRetry, so the SDK gets none."""
+    if timeout_seconds:
+        kwargs["request_timeout"] = int(timeout_seconds * 1000)
+    if kwargs.get("model") == FREE_ROUTER_MODEL:
+        kwargs["openrouter_provider"] = FREE_ROUTER_PROVIDER
+    model = ChatOpenRouter(max_retries=0, **kwargs)
+    model.client.sdk_configuration.retry_config = OpenRouterRetryConfig(
+        "none", BackoffStrategy(0, 0, 1, 0), False)
+    return model
+
+
 def build_leg(spec: LegSpec, *, streaming: bool = False, thinking: bool = False,
               temperature: float = _TEMPERATURE):
     """One bare chat model for this leg. Bare on purpose: callers attach
@@ -425,10 +459,12 @@ def build_leg(spec: LegSpec, *, streaming: bool = False, thinking: bool = False,
             kwargs["request_timeout"] = config.timeout_seconds
         return ChatGroq(**kwargs)
 
-    kwargs.update(openrouter_api_key=key, max_tokens=config.max_tokens)
-    if config.timeout_seconds:
-        kwargs["request_timeout"] = config.timeout_seconds
-    return ChatOpenRouter(**kwargs)
+    kwargs.pop("max_retries")
+    max_tokens = config.max_tokens
+    if spec.model == FREE_ROUTER_MODEL:
+        max_tokens = max(max_tokens, _FREE_ROUTER_MIN_TOKENS)
+    kwargs.update(openrouter_api_key=key, max_tokens=max_tokens)
+    return _openrouter_model(timeout_seconds=config.timeout_seconds, **kwargs)
 
 
 def route_label(route: str, reason: str, notes: list[str]) -> str:
@@ -535,6 +571,19 @@ def _build_raw_models(
         )
         pairs.append((groq_model, (GroqRateLimitError,)))
         logger.debug("[llm] registered groq leg model=%s", groq_model_name)
+
+    # Last-resort backup after Groq. Skipped silently without a key. legs="gemini"
+    # gets none: its one caller (writer_provider_router) runs the groq chain next.
+    if legs in ("all", "groq", "openrouter") and os.getenv("OPENROUTER_API_KEY", "").strip():
+        for key in _openrouter_keys():
+            backup = _openrouter_model(
+                model=FREE_ROUTER_MODEL,
+                openrouter_api_key=key,
+                temperature=_TEMPERATURE,
+                streaming=streaming,
+            )
+            # Retry predicate (_QuotaAwareRetry) still limits retries to rate_limit/transient.
+            pairs.append((backup, (Exception,)))
 
     if not pairs:
         raise ValueError(f"No legs built for legs={legs!r}")

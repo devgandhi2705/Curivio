@@ -105,7 +105,7 @@ function CalendarTooltip({ tooltip }) {
 
   return (
     <div
-      className="fixed z-[200] pointer-events-none"
+      className="u-pop-num fixed z-[200] pointer-events-none"
       style={{ left: x, top: y - 10, transform: "translate(-50%, -100%)" }}
     >
       <div className="bg-slate-800 border border-slate-700/60 rounded-xl px-3 py-2.5 shadow-2xl min-w-[130px]">
@@ -155,6 +155,7 @@ function CalendarCell({ day, isToday, onEnter, onLeave }) {
     <div
       style={{ width: CELL, height: CELL }}
       className={[
+        "u-cell",
         "rounded-sm cursor-default relative transition-opacity hover:opacity-75",
         LEVEL_BG[level],
         isToday
@@ -269,7 +270,7 @@ export default function LearningCalendar({ data = [], loading = false, projectNa
                     {/* Week columns */}
                     <div className="flex" style={{ gap: GAP }}>
                       {weeks.map((col, wi) => (
-                        <div key={wi} className="flex flex-col" style={{ gap: GAP }}>
+                        <div key={wi} className="flex flex-col" style={{ gap: GAP, "--i": wi }}>
                           {col.map((day, di) => (
                             <CalendarCell
                               key={di}

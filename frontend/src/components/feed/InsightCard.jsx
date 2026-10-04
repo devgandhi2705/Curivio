@@ -16,6 +16,8 @@
 import { useState, useEffect, useRef } from "react"
 import BookmarkButton from "../bookmarks/BookmarkButton.jsx"
 import ShareButton from "../ShareButton.jsx"
+import { m, AnimatePresence, presets } from "../../lib/motion.jsx"
+import { useChangeCount } from "../../hooks/useChangeCount.js"
 
 const DIFF_BADGE = {
   beginner:     "text-emerald-400/60 bg-emerald-900/15 border-emerald-800/25",
@@ -151,7 +153,7 @@ function ImageBlock({ url, sourceId }) {
   const [failed, setFailed] = useState(false)
   if (!url || failed) return null
   return (
-    <div className="mx-3 md:mx-4 mb-2.5">
+    <div className="mx-3 md:mx-5 mb-2.5">
       <img
         src={url}
         alt="Illustrative image for this insight"
@@ -171,7 +173,7 @@ function ImageBlock({ url, sourceId }) {
 function SourceTag({ sourceId, className = "" }) {
   if (!sourceId) return null
   return (
-    <span className={`text-[9px] text-slate-600 ${className}`}>
+    <span className={`text-[10.5px] text-slate-500 ${className}`}>
       Source: {sourceId}
     </span>
   )
@@ -200,8 +202,8 @@ function renderBlock(type, content, key, sourceId) {
   // headline → section sub-heading
   if (type === "headline") {
     return (
-      <div key={key} className="px-3 md:px-4 pt-3 pb-1">
-        <p className="text-[13px] font-semibold text-slate-200 leading-snug">{text}</p>
+      <div key={key} className="px-3 md:px-5 pt-3 pb-1">
+        <p className="u-read-heading text-slate-100">{text}</p>
         <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
       </div>
     )
@@ -210,9 +212,9 @@ function renderBlock(type, content, key, sourceId) {
   // key_takeaway → highlighted callout box
   if (type === "key_takeaway") {
     return (
-      <div key={key} className="mx-3 md:mx-4 mb-2.5">
+      <div key={key} className="mx-3 md:mx-5 mb-2.5">
         <div className="bg-blue-500/[0.07] border border-blue-500/20 rounded-lg px-3 py-2.5">
-          <p className="text-[12px] text-blue-200/75 leading-relaxed">{text}</p>
+          <p className="u-read-body text-blue-200/90">{text}</p>
           <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
@@ -222,10 +224,10 @@ function renderBlock(type, content, key, sourceId) {
   // example → bordered card
   if (type === "example") {
     return (
-      <div key={key} className="mx-3 md:mx-4 mb-2.5">
-        <p className="text-[9px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5 px-0.5">For Example</p>
+      <div key={key} className="mx-3 md:mx-5 mb-2.5">
+        <p className="u-read-label text-slate-500 mb-1.5 px-0.5">For Example</p>
         <div className="border border-slate-700/40 rounded-lg bg-slate-800/20 px-3 py-2.5">
-          <p className="text-[11px] text-slate-400 leading-relaxed">{text}</p>
+          <p className="u-read-body text-slate-300">{text}</p>
           <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
@@ -237,18 +239,18 @@ function renderBlock(type, content, key, sourceId) {
     const items = text.split("\n").map(s => s.trim()).filter(Boolean)
     return (
       <div key={key} className="border-t border-slate-800/50">
-        <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
+        <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
           <ClockIcon className="w-3 h-3 text-slate-600" />
-          <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Timeline</span>
+          <span className="u-read-label text-slate-500">Timeline</span>
           <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
-        <div className="px-3 md:px-4 pb-2.5 space-y-1.5">
+        <div className="px-3 md:px-5 pb-2.5 space-y-1.5">
           {items.length > 0 ? items.map((item, j) => (
             <div key={j} className="flex gap-2.5 items-start">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-600 flex-shrink-0 mt-[5px]" />
-              <p className="text-[11px] text-slate-500 leading-relaxed">{item}</p>
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500 flex-shrink-0 mt-[10px]" />
+              <p className="u-read-body text-slate-300">{item}</p>
             </div>
-          )) : <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>}
+          )) : <p className="u-read-body text-slate-300">{text}</p>}
         </div>
       </div>
     )
@@ -259,17 +261,17 @@ function renderBlock(type, content, key, sourceId) {
     const items = text.split("\n").map(s => s.trim()).filter(Boolean)
     return (
       <div key={key} className="border-t border-slate-800/50">
-        <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
+        <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
           <BookIcon className="w-3 h-3 text-slate-600" />
-          <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Comparison</span>
+          <span className="u-read-label text-slate-500">Comparison</span>
           <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
-        <div className="px-3 md:px-4 pb-2.5 space-y-1">
+        <div className="px-3 md:px-5 pb-2.5 space-y-1">
           {items.length > 1 ? items.map((item, j) => (
             <div key={j} className="bg-slate-800/25 rounded px-2.5 py-1.5">
-              <p className="text-[11px] text-slate-500 leading-relaxed">{item}</p>
+              <p className="u-read-body text-slate-300">{item}</p>
             </div>
-          )) : <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>}
+          )) : <p className="u-read-body text-slate-300">{text}</p>}
         </div>
       </div>
     )
@@ -278,10 +280,10 @@ function renderBlock(type, content, key, sourceId) {
   // warning → amber caution block
   if (type === "warning") {
     return (
-      <div key={key} className="mx-3 md:mx-4 mb-2.5">
+      <div key={key} className="mx-3 md:mx-5 mb-2.5">
         <div className="bg-amber-500/[0.07] border border-amber-500/25 rounded-lg px-3 py-2.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-amber-500/60 mb-1.5">Caution</p>
-          <p className="text-[11px] text-amber-200/60 leading-relaxed">{text}</p>
+          <p className="u-read-label text-amber-500/80 mb-1.5">Caution</p>
+          <p className="u-read-body text-amber-200/85">{text}</p>
           <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
@@ -292,13 +294,13 @@ function renderBlock(type, content, key, sourceId) {
   if (type === "evidence") {
     return (
       <div key={key} className="border-t border-slate-800/50">
-        <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
+        <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
           <GlobeIcon className="w-3 h-3 text-slate-600" />
-          <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Source</span>
+          <span className="u-read-label text-slate-500">Source</span>
           <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
-        <div className="mx-3 md:mx-4 mb-2.5 border-l-2 border-slate-700/50 pl-2.5">
-          <p className="text-[11px] text-slate-500 leading-relaxed italic">{text}</p>
+        <div className="mx-3 md:mx-5 mb-2.5 border-l-2 border-slate-700/50 pl-2.5">
+          <p className="u-read-quote text-slate-400">{text}</p>
         </div>
       </div>
     )
@@ -307,8 +309,8 @@ function renderBlock(type, content, key, sourceId) {
   // reflection → closing italic block with top rule
   if (type === "reflection") {
     return (
-      <div key={key} className="mx-3 md:mx-4 mb-3 mt-0.5 border-t border-slate-800/40 pt-2.5">
-        <p className="text-[11px] text-slate-500/80 leading-relaxed italic">{text}</p>
+      <div key={key} className="mx-3 md:mx-5 mb-3 mt-0.5 border-t border-slate-800/40 pt-2.5">
+        <p className="u-read-quote text-slate-400">{text}</p>
         <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
       </div>
     )
@@ -318,11 +320,11 @@ function renderBlock(type, content, key, sourceId) {
 
   if (type === "mechanism") {
     return (
-      <div key={key} className="mx-3 mb-2.5 md:mx-4 md:mb-3 flex gap-2.5">
+      <div key={key} className="mx-3 mb-2.5 md:mx-5 md:mb-3 flex gap-2.5">
         <div className="w-px flex-shrink-0 self-stretch rounded-full bg-indigo-500/35" />
         <div className="min-w-0 py-0.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-indigo-400/55 mb-1.5">Hidden Mechanism</p>
-          <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>
+          <p className="u-read-label text-indigo-400/75 mb-1.5">Hidden Mechanism</p>
+          <p className="u-read-body text-slate-300">{text}</p>
           <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
@@ -331,11 +333,11 @@ function renderBlock(type, content, key, sourceId) {
 
   if (type === "insight") {
     return (
-      <div key={key} className="mx-3 mb-2.5 md:mx-4 md:mb-3 flex gap-2.5">
+      <div key={key} className="mx-3 mb-2.5 md:mx-5 md:mb-3 flex gap-2.5">
         <div className="w-px flex-shrink-0 self-stretch rounded-full bg-blue-500/35" />
         <div className="min-w-0 py-0.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-blue-400/55 mb-1.5">Insight</p>
-          <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>
+          <p className="u-read-label text-blue-400/75 mb-1.5">Insight</p>
+          <p className="u-read-body text-slate-300">{text}</p>
           <SourceTag sourceId={sourceId} className="mt-1 block text-right" />
         </div>
       </div>
@@ -346,18 +348,18 @@ function renderBlock(type, content, key, sourceId) {
     const steps = text.split("\n").map(s => s.replace(/^\d+\.\s*/, "").trim()).filter(Boolean)
     return (
       <div key={key} className="border-t border-slate-800/50">
-        <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
+        <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
           <BookIcon className="w-3 h-3 text-slate-600" />
-          <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">Steps</span>
+          <span className="u-read-label text-slate-500">Steps</span>
           <SourceTag sourceId={sourceId} className="ml-auto" />
         </div>
-        <div className="px-3 md:px-4 pb-2.5 space-y-1.5">
+        <div className="px-3 md:px-5 pb-2.5 space-y-1.5">
           {steps.length > 0 ? steps.map((step, j) => (
             <div key={j} className="flex gap-2.5 items-start">
-              <span className="text-[9px] font-bold text-slate-600 flex-shrink-0 mt-[3px] w-3.5 text-right">{j + 1}.</span>
-              <p className="text-[11px] text-slate-500 leading-relaxed">{step}</p>
+              <span className="u-read-body font-semibold text-slate-500 flex-shrink-0 w-4 text-right tabular-nums">{j + 1}.</span>
+              <p className="u-read-body text-slate-300">{step}</p>
             </div>
-          )) : <p className="text-[11px] text-slate-500 leading-relaxed">{text}</p>}
+          )) : <p className="u-read-body text-slate-300">{text}</p>}
         </div>
       </div>
     )
@@ -372,13 +374,13 @@ function renderBlock(type, content, key, sourceId) {
   const cfg = LABELED[type] || { label: type || "Note", Icon: BookIcon }
   return (
     <div key={key} className="border-t border-slate-800/50">
-      <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
+      <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
         <cfg.Icon className="w-3 h-3 text-slate-600" />
-        <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">{cfg.label}</span>
+        <span className="u-read-label text-slate-500">{cfg.label}</span>
         <SourceTag sourceId={sourceId} className="ml-auto" />
       </div>
-      <div className="px-3 md:px-4 pb-2.5 md:pb-3.5">
-        <p className="text-[12px] md:text-xs text-slate-500 md:text-slate-400 leading-relaxed">{text}</p>
+      <div className="px-3 md:px-5 pb-2.5 md:pb-3.5">
+        <p className="u-read-body text-slate-300">{text}</p>
       </div>
     </div>
   )
@@ -414,7 +416,8 @@ function _extractPublisher(url, title) {
 
 // ─── Source section ───────────────────────────────────────────────────────────
 
-function SourceSection({ sourceLinks, cardTitle }) {
+// `aside`: Reading mode's side column — the full link list under a heading.
+function SourceSection({ sourceLinks, cardTitle, aside = false }) {
   const [expanded, setExpanded] = useState(false)
 
   const valid = (sourceLinks ?? []).filter(s => _isValidSourceUrl(s?.url))
@@ -428,17 +431,42 @@ function SourceSection({ sourceLinks, cardTitle }) {
 
   const enriched = valid.map(s => ({ ...s, publisher: _extractPublisher(s.url, s.title) }))
 
+  if (aside) {
+    return (
+      <div>
+        <p className="u-read-label text-slate-500 mb-2">Sources</p>
+        <div className="space-y-0.5">
+          {enriched.map((s, i) => (
+            <a
+              key={i}
+              href={s.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-2 py-1.5 text-[12.5px] leading-snug text-slate-400 hover:text-slate-100 transition-colors group"
+            >
+              <ExternalLinkIcon className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-600 group-hover:text-blue-400" />
+              <span className="min-w-0">
+                <span className="block line-clamp-2">{s.title || s.publisher}</span>
+                <span className="block text-[11px] text-slate-600">{s.publisher}</span>
+              </span>
+            </a>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="border-t border-slate-800/40">
       {/* Compact row — publisher pills + toggle */}
-      <div className="px-3 md:px-4 pt-2 pb-1.5 flex items-center gap-2 flex-wrap">
-        <span className="text-[9px] font-semibold uppercase tracking-widest text-slate-600 flex-shrink-0">
+      <div className="px-3 md:px-5 pt-2 pb-1.5 flex items-center gap-2 flex-wrap">
+        <span className="u-read-label text-slate-500 flex-shrink-0">
           Sources
         </span>
         {enriched.map((s, i) => (
           <span
             key={i}
-            className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-500 bg-slate-800/60 border border-slate-700/30"
+            className="px-1.5 py-0.5 rounded text-[10.5px] font-medium text-slate-500 bg-slate-800/60 border border-slate-700/30"
           >
             {s.publisher}
           </span>
@@ -455,7 +483,7 @@ function SourceSection({ sourceLinks, cardTitle }) {
 
       {/* Expanded: full links */}
       {expanded && (
-        <div className="px-3 md:px-4 pb-2.5 space-y-0.5">
+        <div className="px-3 md:px-5 pb-2.5 space-y-0.5">
           {enriched.map((s, i) => (
             <a
               key={i}
@@ -466,7 +494,7 @@ function SourceSection({ sourceLinks, cardTitle }) {
             >
               <ExternalLinkIcon className="w-2.5 h-2.5 flex-shrink-0 group-hover:text-blue-400" />
               <span className="truncate flex-1">{s.title || s.publisher}</span>
-              <span className="text-[9px] text-slate-700 flex-shrink-0 ml-1">{s.publisher}</span>
+              <span className="text-[10px] text-slate-600 flex-shrink-0 ml-1">{s.publisher}</span>
             </a>
           ))}
         </div>
@@ -477,16 +505,17 @@ function SourceSection({ sourceLinks, cardTitle }) {
 
 // ─── Inline note textarea (rendered below action bar when open) ───────────────
 
-function NoteArea({ draft, onChange }) {
+function NoteArea({ draft, onChange, aside = false, autoFocus = true }) {
   return (
-    <div className="px-3 py-2 md:px-4 md:py-3 border-t border-slate-800/80 bg-slate-800/20">
+    <div className={aside ? "" : "px-3 py-2 md:px-5 md:py-3 border-t border-slate-800/80 bg-slate-800/20"}>
+      {aside && <p className="u-read-label text-slate-500 mb-2">Your note</p>}
       <textarea
         className="w-full bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-amber-500/40 focus:bg-slate-800/70 resize-none transition-colors"
-        rows={3}
+        rows={aside ? 5 : 3}
         placeholder="Your thoughts on this card…"
         value={draft}
         onChange={onChange}
-        autoFocus
+        autoFocus={autoFocus}
       />
       <p className="text-[10px] text-slate-600 mt-1">
         {draft.trim() ? "Auto-saved" : "Start typing to save a note"}
@@ -504,8 +533,8 @@ const INTERACTION_LABELS = {
   explain_simply: "Explained simply",
 }
 
-function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
-  const [open, setOpen] = useState(false)
+function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat, aside = false }) {
+  const [open, setOpen] = useState(aside)
 
   useEffect(() => {
     if (relatedChats === null && onLoadRelatedChats) {
@@ -523,10 +552,12 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
   const count = relatedChats?.length ?? 0
 
   return (
-    <div className="border-t border-slate-800/50">
+    <div className={aside ? "" : "border-t border-slate-800/50"}>
       <button
         onClick={handleToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 md:px-4 hover:bg-slate-800/20 transition-colors text-left"
+        className={aside
+          ? "w-full flex items-center justify-between py-1 transition-colors text-left"
+          : "w-full flex items-center justify-between px-3 py-1.5 md:px-5 hover:bg-slate-800/20 transition-colors text-left"}
       >
         <div className="flex items-center gap-1.5">
           <ChatIcon className="w-3 h-3 text-slate-600" />
@@ -542,7 +573,7 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
       </button>
 
       {open && (
-        <div className="px-3 pb-2 md:px-4 md:pb-3 space-y-1.5">
+        <div className={aside ? "pt-1.5 space-y-1" : "px-3 pb-2 md:px-5 md:pb-3 space-y-1.5"}>
           {relatedChats === null ? (
             <p className="text-[11px] text-slate-600 animate-pulse">Loading…</p>
           ) : relatedChats.length === 0 ? (
@@ -566,6 +597,29 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── Reading-mode rail action ─────────────────────────────────────────────────
+
+const RAIL_TONE = {
+  emerald: "text-emerald-400",
+  amber:   "text-amber-400",
+}
+
+function RailAction({ icon, label, onClick, active = false, tone, disabled = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={tone ? active : undefined}
+      title={disabled ? "Requires an internet connection" : undefined}
+      className={`u-rc-act ${active && tone ? RAIL_TONE[tone] : "text-slate-400 hover:text-slate-100"} disabled:opacity-40 disabled:cursor-not-allowed`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   )
 }
 
@@ -596,6 +650,10 @@ export default function InsightCard({
   // Notes-only feed opens the note inline: the whole point of that view is
   // reading notes, so making the user click the pencil on every card is noise.
   defaultNoteOpen = false,
+  // Reading mode: the slide is the page, so no card chrome — and no Share there.
+  bare        = false,
+  hideShare   = false,
+  eyebrow     = null,   // Reading mode: "Article 1 of 4", shown in the left column
 }) {
 
   const type   = TYPE_CONFIG[card.content_type] || TYPE_CONFIG.news
@@ -627,14 +685,140 @@ export default function InsightCard({
 
   const hasNote = (note ?? "").trim().length > 0
 
+  // One-shot reactions keyed on real changes — never on first render.
+  const readChanges  = useChangeCount(isRead)
+  const queueChanges = useChangeCount(isQueued)
+
   function handleReadToggle(e) {
     e.stopPropagation()
     if (isRead) onMarkUnread?.()
     else onMarkRead?.()
   }
 
+  const bookmarkData = {
+    title:              card.title,
+    summary:            card.summary || '',
+    content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
+    source_url:         card.source_links?.[0]?.url || '',
+    project_id:          projectId,
+    project_name:        projectName,
+    ai_generated_notes:  note?.trim() || card.why_it_matters || '',
+    related_topics:     card.related_topics || [],
+    source_type:        'feed',
+    tags:                [card.category, card.content_type].filter(Boolean),
+    retrieval_metadata:  { insight_id: day ?? null, article_key: articleKey || '' },
+  }
+
+  // Content blocks — new schema; fallback to legacy flat fields
+  const blocksEl = (
+    card.blocks?.length > 0 ? (
+      card.blocks.map((b, i) => renderBlock(b.type || "", b.content || "", i, b.source_id))
+    ) : (
+      <>
+        {card.educational_explanation && (
+          <div className="border-t border-slate-800/50">
+            <div className="flex items-center gap-2 px-3 md:px-5 py-1.5 md:py-2">
+              <LightbulbIcon className="w-3 h-3 text-slate-600" />
+              <span className="u-read-label text-slate-500">
+                {card.content_type === "educational" ? "Deep Dive" : "Why This Works"}
+              </span>
+            </div>
+            <div className="px-3 md:px-5 pb-2.5 md:pb-3.5">
+              <p className="u-read-body text-slate-300">{card.educational_explanation}</p>
+            </div>
+          </div>
+        )}
+        {card.why_it_matters && (
+          <div className="mx-3 mb-2.5 md:mx-5 md:mb-3 flex gap-2.5">
+            <div className="w-px flex-shrink-0 self-stretch rounded-full bg-indigo-500/35" />
+            <div className="min-w-0 py-0.5">
+              <p className="u-read-label text-indigo-400/75 mb-1.5">
+                Hidden Mechanism
+              </p>
+              <p className="u-read-body text-slate-300">{card.why_it_matters}</p>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  )
+
+  // Reading mode on a wide screen is a spread, not a card: the left column
+  // holds what the article is and what you can do with it, the centre holds
+  // only what you read, the right holds reference (sources, note, discussions).
+  // index.css (.u-reader-card) stacks the same pieces into one column on
+  // narrow screens, in the card's usual order.
+  if (bare) {
+    const canRead = !readOnly && (onMarkRead || onMarkUnread)
+    const showNote = !readOnly && (noteOpen || hasNote) && (onSaveNote || onDeleteNote || note)
+    return (
+      <article className="u-reader-card">
+        <aside className="u-rc-rail">
+          {eyebrow && <p className="u-rc-eyebrow u-read-label text-slate-500">{eyebrow}</p>}
+          <div className="u-rc-meta flex gap-1.5">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${type.labelColor}`}>
+              {type.label}
+            </span>
+            {card.category && <span className="text-[12px] leading-snug text-slate-500">{card.category}</span>}
+          </div>
+          {!readOnly && (
+            <div className="u-rc-actions">
+              {canRead && (
+                <RailAction onClick={handleReadToggle} active={isRead} tone="emerald"
+                  icon={isRead ? <CheckCircleIcon className={`w-3.5 h-3.5 ${readChanges ? "u-stamp" : ""}`} /> : <CircleIcon className="w-3.5 h-3.5" />}
+                  label={isRead ? "Read" : "Mark as read"} />
+              )}
+              <div className="u-rc-bm"><BookmarkButton label bookmarkData={bookmarkData} /></div>
+              {onToggleQueue && (
+                <RailAction onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }} active={isQueued} tone="amber"
+                  icon={<ClockIcon key={queueChanges} className={`w-3.5 h-3.5 ${queueChanges ? "u-spin-once" : ""}`} />}
+                  label={isQueued ? "In Read later" : "Read later"} />
+              )}
+              {(onSaveNote || onDeleteNote || note) && (
+                <RailAction onClick={() => setNoteOpen(o => !o)} active={noteOpen || hasNote} tone="amber"
+                  icon={<PencilIcon className="w-3.5 h-3.5" />} label={hasNote ? "Your note" : "Add note"} />
+              )}
+              {(onAskAbout || onExplainSimply) && <span className="u-rc-sep" aria-hidden="true" />}
+              {onAskAbout && (
+                <RailAction onClick={() => onAskAbout(card)} disabled={offlineDisabled}
+                  icon={<ChatIcon className="w-3.5 h-3.5" />} label="Ask about this" />
+              )}
+              {onExplainSimply && (
+                <RailAction onClick={() => onExplainSimply(card)} disabled={offlineDisabled}
+                  icon={<LightbulbIcon className="w-3.5 h-3.5" />} label="Explain simply" />
+              )}
+              {isOfflineAvailable && (
+                <p className="u-rc-offline flex items-center gap-2 px-2.5 pt-1 text-[11.5px] text-slate-600">
+                  <CloudCheckIcon className="w-3.5 h-3.5" /> Saved for offline
+                </p>
+              )}
+            </div>
+          )}
+        </aside>
+
+        <div className="u-rc-main">
+          <h3 className="u-read-title text-slate-100 px-3 md:px-5">{card.title}</h3>
+          <div className="px-3 md:px-5 pt-3 pb-2 md:pb-3">
+            <p className="u-read-lead text-slate-300">{card.summary}</p>
+          </div>
+          {blocksEl}
+        </div>
+
+        <aside className="u-rc-aside">
+          <div className="u-rc-sources"><SourceSection aside sourceLinks={card.source_links} cardTitle={card.title} /></div>
+          {showNote && (
+            <div className="u-rc-note"><NoteArea aside draft={noteDraft} onChange={handleNoteChange} autoFocus={noteOpen} /></div>
+          )}
+          <div className="u-rc-related">
+            <RelatedChats aside relatedChats={relatedChats} onLoadRelatedChats={onLoadRelatedChats} onOpenChat={onOpenChat} />
+          </div>
+        </aside>
+      </article>
+    )
+  }
+
   return (
-    <div className={`rounded-2xl border overflow-hidden flex flex-col transition-colors ${
+    <div className={`u-read-card u-reveal relative rounded-2xl border overflow-hidden flex flex-col ${
       type.borderTop
     } ${card.content_type === "curiosity"
         ? "bg-amber-950/[0.10] border-amber-900/20"
@@ -642,20 +826,20 @@ export default function InsightCard({
     }`}>
 
       {/* Card header */}
-      <div className="px-3 pt-3 pb-1.5 md:px-4 md:pt-4 md:pb-3 flex items-start justify-between gap-2.5">
+      <div className="px-3 pt-3 pb-1.5 md:px-5 md:pt-4 md:pb-3 flex items-start justify-between gap-2.5">
         <div className="flex items-start gap-2 md:gap-3 min-w-0">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
-              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide border ${type.labelColor}`}>
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${type.labelColor}`}>
                 {type.label}
               </span>
               {card.category && (
-                <span className="inline-flex items-center text-[10px] text-slate-500/60 leading-none">
+                <span className="inline-flex items-center text-[11px] text-slate-500 leading-none">
                   {card.category}
                 </span>
               )}
             </div>
-            <h3 className="text-[15px] md:text-sm font-semibold text-slate-100 leading-snug">{card.title}</h3>
+            <h3 className="u-read-title text-slate-100">{card.title}</h3>
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -665,22 +849,10 @@ export default function InsightCard({
           {!readOnly && (
             <BookmarkButton
               className="w-7 h-7 justify-center p-0 [&>svg]:w-3 [&>svg]:h-3"
-              bookmarkData={{
-                title:              card.title,
-                summary:            card.summary || '',
-                content_type:       card.content_type === 'curiosity' ? 'curiosity' : 'feed_article',
-                source_url:         card.source_links?.[0]?.url || '',
-                project_id:          projectId,
-                project_name:        projectName,
-                ai_generated_notes:  note?.trim() || card.why_it_matters || '',
-                related_topics:     card.related_topics || [],
-                source_type:        'feed',
-                tags:                [card.category, card.content_type].filter(Boolean),
-                retrieval_metadata:  { insight_id: day ?? null, article_key: articleKey || '' },
-              }}
+              bookmarkData={bookmarkData}
             />
           )}
-          {shareResourceId && (
+          {shareResourceId && !hideShare && (
             <ShareButton
               type="feed"
               resourceId={shareResourceId}
@@ -693,48 +865,19 @@ export default function InsightCard({
       </div>
 
       {/* Summary */}
-      <div className="px-3 pb-2 md:px-4 md:pb-3">
-        <p className="text-[13px] md:text-sm text-slate-400 leading-relaxed">{card.summary}</p>
+      <div className="px-3 pb-2 md:px-5 md:pb-3">
+        <p className="u-read-lead text-slate-300">{card.summary}</p>
       </div>
 
       {/* Content blocks — new schema; fallback to legacy flat fields */}
-      {card.blocks?.length > 0 ? (
-        card.blocks.map((b, i) => renderBlock(b.type || "", b.content || "", i, b.source_id))
-      ) : (
-        <>
-          {card.educational_explanation && (
-            <div className="border-t border-slate-800/50">
-              <div className="flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2">
-                <LightbulbIcon className="w-3 h-3 text-slate-600" />
-                <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wide">
-                  {card.content_type === "educational" ? "Deep Dive" : "Why This Works"}
-                </span>
-              </div>
-              <div className="px-3 md:px-4 pb-2.5 md:pb-3.5">
-                <p className="text-[12px] md:text-xs text-slate-500 md:text-slate-400 leading-relaxed">{card.educational_explanation}</p>
-              </div>
-            </div>
-          )}
-          {card.why_it_matters && (
-            <div className="mx-3 mb-2.5 md:mx-4 md:mb-3 flex gap-2.5">
-              <div className="w-px flex-shrink-0 self-stretch rounded-full bg-indigo-500/35" />
-              <div className="min-w-0 py-0.5">
-                <p className="text-[9px] font-semibold uppercase tracking-widest text-indigo-400/55 mb-1.5">
-                  Hidden Mechanism
-                </p>
-                <p className="text-[11px] text-slate-500 leading-relaxed">{card.why_it_matters}</p>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      {blocksEl}
 
       {/* Source section — validated, two-tier: publisher pills + expandable URLs */}
       <SourceSection sourceLinks={card.source_links} cardTitle={card.title} />
 
       {/* Bottom action bar */}
       {(hasChatActions || hasNoteActions || (!readOnly && (onMarkRead || onMarkUnread))) && (
-        <div className="border-t border-slate-800/50 px-2.5 md:px-4 py-1.5 md:py-2.5">
+        <div className="border-t border-slate-800/50 px-2.5 md:px-5 py-1.5 md:py-2.5">
           {/* Primary + secondary row — always visible */}
           <div className="flex items-center gap-1 md:gap-1.5 flex-wrap">
             {/* PRIMARY: Ask About */}
@@ -743,7 +886,7 @@ export default function InsightCard({
                 onClick={() => onAskAbout(card)}
                 disabled={offlineDisabled}
                 title={offlineDisabled ? "Requires an internet connection" : undefined}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
+                className="u-btn-2 inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
               >
                 <ChatIcon className="w-3 h-3" />
                 Ask About
@@ -755,7 +898,7 @@ export default function InsightCard({
                 onClick={() => onExplainSimply(card)}
                 disabled={offlineDisabled}
                 title={offlineDisabled ? "Requires an internet connection" : undefined}
-                className="inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/20 hover:bg-amber-500/10 border border-slate-700/20 hover:border-amber-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
+                className="u-btn-2 inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-amber-300 bg-slate-800/20 hover:bg-amber-500/10 border border-slate-700/20 hover:border-amber-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-slate-800/20 disabled:hover:border-slate-700/20"
               >
                 <LightbulbIcon className="w-3 h-3" />
                 Explain Simply
@@ -775,7 +918,7 @@ export default function InsightCard({
                       : "text-slate-500 bg-slate-800/40 border-slate-700/40 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30"
                   }`}
                 >
-                  <ClockIcon className="w-3 h-3" />
+                  <ClockIcon key={queueChanges} className={`w-3 h-3 ${queueChanges ? "u-spin-once" : ""}`} />
                 </button>
                 <span className="pointer-events-none absolute right-0 bottom-full z-20 mb-1 whitespace-nowrap rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                   {isQueued ? "Queued" : "Read Later"}
@@ -819,7 +962,7 @@ export default function InsightCard({
                   }`}
                 >
                   {isRead
-                    ? <CheckCircleIcon className="w-3 h-3" />
+                    ? <CheckCircleIcon className={`w-3 h-3 ${readChanges ? "u-stamp" : ""}`} />
                     : <CircleIcon className="w-3 h-3" />
                   }
                 </button>
@@ -834,9 +977,13 @@ export default function InsightCard({
       )}
 
       {/* Note textarea — shown when Add note is toggled */}
-      {noteOpen && (onSaveNote || onDeleteNote || note) && (
-        <NoteArea draft={noteDraft} onChange={handleNoteChange} />
-      )}
+      <AnimatePresence initial={false}>
+        {noteOpen && (onSaveNote || onDeleteNote || note) && (
+          <m.div key="note" {...presets.collapse}>
+            <NoteArea draft={noteDraft} onChange={handleNoteChange} />
+          </m.div>
+        )}
+      </AnimatePresence>
 
       {/* Related discussions */}
       <RelatedChats

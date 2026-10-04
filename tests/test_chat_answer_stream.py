@@ -110,7 +110,8 @@ class TestFallback:
         assert "(budget)" in built[1].configs[0]["metadata"]["route"]
 
     def test_every_leg_failing_raises(self, monkeypatch):
-        _legs(monkeypatch, {step: [RuntimeError("Error code: 400 - nope")] for step in (1, 2, 3)})
+        steps = range(1, len(mp.chat_models().routes["simple"].models) + 1)   # incl. the free router
+        _legs(monkeypatch, {step: [RuntimeError("Error code: 400 - nope")] for step in steps})
         with pytest.raises(mp.AllLegsFailed):
             list(chat_agent.ask_chat_stream(MESSAGES, route="simple"))
 

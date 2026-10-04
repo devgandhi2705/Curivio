@@ -6,6 +6,8 @@
  * Step 2 — Launch:   level · project name · color → generate Day 1
  */
 import { useState, useEffect } from "react"
+import { m, useDialogMotion } from "../../lib/motion.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
 import { suggestKeywords } from "../../api/projects.js"
 import { ONBOARDING_STEPS, onboardingStepIndex } from "../../utils/onboardingRoute.js"
 
@@ -116,6 +118,8 @@ function StepDots({ step, onBack }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function OnboardingModal({ onCreate, creating, userId, step: stepSlug, onGoToStep, onBack }) {
+  // full-screen on phones already; the sheet preset just slides it up. Nothing to swipe away.
+  const dm = useDialogMotion(null, { swipe: false })
   const step = onboardingStepIndex(stepSlug)
   const [draft] = useState(() => loadDraft(userId))
 
@@ -227,11 +231,12 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
 
   return (
     // Mobile: fullscreen. Desktop: centered dialog with backdrop.
-    <div
-      className="fixed inset-0 z-50 md:flex md:items-center md:justify-center md:px-4"
+    <m.div
+      {...dm.root}
+      className="u-motion-managed fixed inset-0 z-50 md:flex md:items-center md:justify-center md:px-4"
       style={{ background: "var(--u-scrim)", backdropFilter: "blur(10px)" }}
     >
-      <div className="
+      <m.div {...dm.card} className="
         w-full h-full flex flex-col
         md:h-auto md:max-h-[90vh] md:max-w-2xl
         bg-slate-900
@@ -309,10 +314,7 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
             <div className="space-y-4 pb-2">
               {suggestLoading && (
                 <div className="flex items-center gap-2.5 text-[13px] text-slate-500 py-2">
-                  <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                    <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <WaveDots />
                   Finding the right topics…
                 </div>
               )}
@@ -565,10 +567,7 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
             >
               {creating ? (
                 <>
-                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                    <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                  <WaveDots />
                   Creating…
                 </>
               ) : "Create & Generate Day 1 →"}
@@ -576,7 +575,7 @@ export default function OnboardingModal({ onCreate, creating, userId, step: step
           )}
         </div>
 
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }

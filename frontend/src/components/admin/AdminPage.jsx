@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { m, AnimatePresence, presets } from "../../lib/motion.jsx"
 import { Link, Navigate, useLocation } from "react-router-dom"
-import { listAdminProjects, listAdminCallsGrouped, getAdminSummary, getAdminOperationSummary, getAdminCallVolume, getAdminCallTree, exportAdminCallsGrouped } from "../../api/admin.js"
+import { listAdminProjects, listAdminCallsGrouped, getAdminSummary, getAdminOperationSummary, getAdminCallVolume, getAdminCallTree, exportAdminCallsGrouped, setAdminStar } from "../../api/admin.js"
 import BackupsPanel from "./BackupsPanel.jsx"
+import CountUp from "../shared/CountUp.jsx"
 
 // Real confirmed default from the live /admin/calls/grouped route (Phase D
 // precondition check) — B2's backend default, not assumed from memory.
@@ -578,11 +580,12 @@ function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSel
   const showBatch = siblings.length > 1
 
   return (
-    <div className="fixed inset-0 z-50">
+    <m.div {...presets.scrim} className="u-motion-managed fixed inset-0 z-50">
       <div className="absolute inset-0" onClick={onClose} />
-      <div
+      <m.div
+        {...presets.panel}
         onClick={e => e.stopPropagation()}
-        className="u-slide-r absolute inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-slate-700/60 shadow-2xl shadow-black/60 flex flex-col"
+        className="absolute inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-slate-700/60 shadow-2xl shadow-black/60 flex flex-col"
       >
         <div className="flex items-start justify-between px-5 py-4 border-b border-slate-800 flex-shrink-0">
           <div className="min-w-0">
@@ -687,8 +690,8 @@ function DetailPanel({ row, surface, batch, batchLoading, search, onClose, onSel
             <CollapsibleBlock label="Output" text={formatOutput(row.output)} query={search} />
           </div>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 
@@ -934,9 +937,9 @@ function Tile({ value, label, sublabel, accent = "text-slate-200", loading }) {
   return (
     <div className="px-3 sm:px-4 py-2.5 sm:py-3">
       <div
-        className={`text-[17px] font-bold leading-none tabular-nums font-mono transition-colors duration-500 ${accent} ${flashing ? "text-slate-100" : ""}`}
+        className={`text-[17px] font-bold leading-none tabular-nums font-mono transition-colors duration-500 ${accent} ${flashing ? "text-slate-100 u-pop-num" : ""}`}
       >
-        {value}
+        <CountUp value={value} />
       </div>
       <div className="text-[10px] text-slate-600 mt-1 truncate">{label}</div>
       {sublabel && <div className="text-[10px] text-slate-700 mt-0.5 truncate">{sublabel}</div>}
@@ -1192,7 +1195,7 @@ function FilterRail({ filters, onChange, projects, userOptions, includeTestData,
 
   const activeCount = [
     filters.dateFrom, filters.dateTo, filters.projectId, filters.userId,
-    filters.status, filters.actionType, filters.dayRef, filters.targetLanguage,
+    filters.status, filters.actionType, filters.dayRef, filters.targetLanguage, filters.starred,
   ].filter(Boolean).length + (includeTestData ? 1 : 0)
 
   return (
@@ -1321,6 +1324,11 @@ function FilterRail({ filters, onChange, projects, userOptions, includeTestData,
           className="accent-blue-500 w-3.5 h-3.5" />
         <span className="text-xs text-slate-400">Include test data</span>
       </label>
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input type="checkbox" checked={filters.starred} onChange={e => onChange({ ...filters, starred: e.target.checked })}
+          className="accent-amber-500 w-3.5 h-3.5" />
+        <span className="text-xs text-slate-400">★ Starred only</span>
+      </label>
       </div>
     </div>
   )
@@ -1419,6 +1427,25 @@ function MobileRowCard({ marker, actionType, callType, hasWebSearch, timestamp, 
   )
 }
 
+// A star sits in its own leading column, beside the row's button — a button
+// can't nest inside a button, and clicking it must never expand or open the row.
+function StarCell({ on, label, onToggle }) {
+  return (
+    <span className="flex w-9 flex-shrink-0 items-start justify-center pt-2">
+      <button type="button" onClick={() => onToggle(!on)} aria-pressed={on} aria-label={label}
+        title={on ? "Starred — click to unstar" : "Star to find this later"}
+        className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+          on ? "text-amber-400 hover:text-amber-300" : "text-slate-600 hover:text-slate-300 hover:bg-slate-800/60"
+        }`}>
+        <svg key={on ? "on" : "off"} className={`w-3.5 h-3.5 ${on ? "u-stamp" : ""}`} viewBox="0 0 16 16"
+          fill={on ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+          <path d="M8 1.6 9.9 5.6l4.3.6-3.1 3 .8 4.3L8 11.4l-3.9 2.1.8-4.3-3.1-3 4.3-.6L8 1.6Z" />
+        </svg>
+      </button>
+    </span>
+  )
+}
+
 function ActionTypeBadge({ actionType }) {
   return (
     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-700/40 border border-slate-600/40 text-slate-300 whitespace-nowrap">
@@ -1459,10 +1486,14 @@ function FeedActionBadge({ agentName }) {
 // "Batch" concept (SiblingRow/DetailPanel) is a different, narrower thing —
 // retry-legs of ONE call — and still only surfaces inside a single row's own
 // DetailPanel, unrelated to this outer grouping.
-function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
+function GroupHeaderRow({ group, groupKey, stars, isExpanded, onToggle, onRowClick, search }) {
   const hasSearchMatch = group.rows.some(row => rowMatchesSearch(row, search))
   return (
     <div className="border-b border-slate-800/40 last:border-0">
+      <div className="flex">
+      <StarCell on={stars.isOn("group", groupKey, group.starred)} label="Star this operation"
+        onToggle={on => stars.toggle("group", groupKey, on)} />
+      <div className="flex-1 min-w-0">
       <button
         onClick={onToggle}
         className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-2.5 text-left hover:bg-slate-800/40 transition-colors ${
@@ -1505,6 +1536,8 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
         onClick={onToggle}
         isSearchMatch={hasSearchMatch}
       />
+      </div>
+      </div>
       {isExpanded && (
         <div className="pb-1.5">
           {/* Phase I — group download lives INSIDE the expanded region, not in
@@ -1539,7 +1572,10 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
               Nesting is signalled by the tick in the marker track and the
               darker ground instead. */}
           {group.rows.map(row => (
-            <div key={row.id}>
+            <div key={row.id} className="flex bg-slate-950/40">
+              <StarCell on={stars.isOn("row", String(row.id), row.starred)} label="Star this call"
+                onToggle={on => stars.toggle("row", String(row.id), on)} />
+              <div className="flex-1 min-w-0">
               {(() => {
                 const isSearchMatch = rowMatchesSearch(row, search)
                 return (
@@ -1593,6 +1629,7 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
                   </>
                 )
               })()}
+              </div>
             </div>
           ))}
         </div>
@@ -1603,13 +1640,16 @@ function GroupHeaderRow({ group, isExpanded, onToggle, onRowClick, search }) {
 
 // Singleton (row_count === 1): a plain row, no expand chevron — there's
 // nothing to expand (design decision 6).
-function SingletonRow({ group, onRowClick, search }) {
+function SingletonRow({ group, groupKey, stars, onRowClick, search }) {
   const row = group.rows[0]
   return (
-    <>
+    <div className="flex border-b border-slate-800/40 last:border-0">
+      <StarCell on={stars.isOn("group", groupKey, group.starred)} label="Star this call"
+        onToggle={on => stars.toggle("group", groupKey, on)} />
+      <div className="flex-1 min-w-0">
       <button
         onClick={() => onRowClick(row, group.action_type)}
-        className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-2.5 text-left hover:bg-slate-800/40 transition-colors border-b border-slate-800/40 last:border-0`}
+        className={`hidden sm:grid ${ROW_GRID} w-full px-3 py-2.5 text-left hover:bg-slate-800/40 transition-colors`}
       >
         <span aria-hidden="true" />
         <span className="text-[11px] text-slate-400 font-mono tabular-nums truncate">{formatTimestamp(group.started_at)}</span>
@@ -1657,7 +1697,8 @@ function SingletonRow({ group, onRowClick, search }) {
         success={row.success}
         onClick={() => onRowClick(row, group.action_type)}
       />
-    </>
+      </div>
+    </div>
   )
 }
 
@@ -1696,7 +1737,9 @@ function SortableHeaderCell({ column, label, align, sortBy, sortOrder, onSort })
 function ColumnHeader({ sortBy, sortOrder, onSort }) {
   const cell = "text-[9px] font-semibold uppercase tracking-widest text-slate-600"
   return (
-    <div className={`hidden sm:grid ${ROW_GRID} px-3 py-2 border-b border-slate-800/60 bg-slate-950/40`}>
+    <div className="hidden sm:flex border-b border-slate-800/60 bg-slate-950/40">
+    <span className="w-9 flex-shrink-0" aria-hidden="true" />
+    <div className={`grid ${ROW_GRID} flex-1 min-w-0 px-3 py-2`}>
       <span aria-hidden="true" />
       <SortableHeaderCell column="timestamp" label="Timestamp" sortBy={sortBy} sortOrder={sortOrder} onSort={onSort} />
       <SortableHeaderCell column="user" label="User" sortBy={sortBy} sortOrder={sortOrder} onSort={onSort} />
@@ -1706,10 +1749,11 @@ function ColumnHeader({ sortBy, sortOrder, onSort }) {
       <SortableHeaderCell column="tokens" label="Tokens" align="right" sortBy={sortBy} sortOrder={sortOrder} onSort={onSort} />
       <SortableHeaderCell column="status" label="Status" align="end" sortBy={sortBy} sortOrder={sortOrder} onSort={onSort} />
     </div>
+    </div>
   )
 }
 
-function GroupedCallsList({ groups, loading, error, expandedKeys, onToggleGroup, onRowClick, search, sortBy, sortOrder, onSort }) {
+function GroupedCallsList({ groups, stars, loading, error, expandedKeys, onToggleGroup, onRowClick, search, sortBy, sortOrder, onSort }) {
   if (loading) return <Skeleton className="h-[420px]" />
 
   if (error) {
@@ -1752,11 +1796,13 @@ function GroupedCallsList({ groups, loading, error, expandedKeys, onToggleGroup,
           {groups.map(g => {
             const key = g.trace_id ?? `row-${g.rows[0]?.id}`
             return g.row_count === 1
-              ? <SingletonRow key={key} group={g} onRowClick={onRowClick} />
+              ? <SingletonRow key={key} group={g} groupKey={key} stars={stars} onRowClick={onRowClick} />
               : (
                 <GroupHeaderRow
                   key={key}
                   group={g}
+                  groupKey={key}
+                  stars={stars}
                   isExpanded={expandedKeys.has(key)}
                   onToggle={() => onToggleGroup(key)}
                   onRowClick={onRowClick}
@@ -1791,6 +1837,7 @@ function BulkExport({ filters, dateToInclusive, includeTestData, total }) {
         dayRef: filters.dayRef || undefined,
         targetLanguage: filters.targetLanguage || undefined,
         search: filters.search || undefined,
+        starred: filters.starred,
       })
       const groups = data.groups
       const rowCount = groups.reduce((n, g) => n + g.rows.length, 0)
@@ -1906,6 +1953,7 @@ export default function AdminPage() {
     return {
       dateFrom: from, dateTo: to, projectId: "", userId: "",
       status: "", actionType: "", dayRef: "", targetLanguage: "", search: "",
+      starred: false,
     }
   })
   const [includeTestData, setIncludeTestData] = useState(false)
@@ -1952,6 +2000,23 @@ export default function AdminPage() {
     }
     setOffset(0)
   }
+
+  // Admin log stars (docs/superpowers/specs/2026-10-03-admin-log-stars-design.md).
+  // A star flips at once and reverts — with a short note — if saving fails.
+  const [starOverrides, setStarOverrides] = useState({})
+  const [starError, setStarError] = useState(null)
+  const stars = useMemo(() => ({
+    isOn: (kind, key, saved) => starOverrides[`${kind}:${key}`] ?? Boolean(saved),
+    toggle: (kind, key, on) => {
+      const id = `${kind}:${key}`
+      setStarOverrides(o => ({ ...o, [id]: on }))
+      setAdminStar(kind, key, on).catch(e => {
+        setStarOverrides(o => ({ ...o, [id]: !on }))
+        setStarError(e.message || "Couldn't save the star")
+        setTimeout(() => setStarError(null), 3500)
+      })
+    },
+  }), [starOverrides])
 
   const [selectedRow, setSelectedRow] = useState(null)
   // Phase O-Task2 — surface for the DetailPanel username's fallback label.
@@ -2025,6 +2090,7 @@ export default function AdminPage() {
       status: filters.status, actionType: filters.actionType,
       dayRef: filters.dayRef || undefined, targetLanguage: filters.targetLanguage || undefined,
       search: filters.search || undefined,
+      starred: filters.starred,
     })
       .then(setSummary).catch(() => setSummary(null))
       .finally(() => setSummaryLoading(false))
@@ -2037,6 +2103,7 @@ export default function AdminPage() {
       status: filters.status, actionType: filters.actionType,
       dayRef: filters.dayRef || undefined, targetLanguage: filters.targetLanguage || undefined,
       search: filters.search || undefined,
+      starred: filters.starred,
     })
       .then(setOpSummary).catch(() => setOpSummary(null))
       .finally(() => setOpSummaryLoading(false))
@@ -2051,6 +2118,7 @@ export default function AdminPage() {
       status: filters.status, actionType: filters.actionType,
       dayRef: filters.dayRef || undefined, targetLanguage: filters.targetLanguage || undefined,
       search: filters.search || undefined,
+      starred: filters.starred,
     })
       .then(d => { setDailyVolume(d.by_day); setVolumeGranularity(d.granularity) })
       .catch(() => { setDailyVolume([]); setVolumeGranularity("day") })
@@ -2062,7 +2130,7 @@ export default function AdminPage() {
   }, [
     filters.dateFrom, filters.dateTo, filters.projectId, filters.userId,
     filters.status, filters.actionType, filters.dayRef, filters.targetLanguage,
-    filters.search, includeTestData,
+    filters.search, filters.starred, includeTestData,
   ])
 
   // Grouped calls page — refetch on filters or pagination change. Groups, not
@@ -2077,6 +2145,7 @@ export default function AdminPage() {
       status: filters.status, actionType: filters.actionType,
       dayRef: filters.dayRef || undefined, targetLanguage: filters.targetLanguage || undefined,
       search: filters.search || undefined,
+      starred: filters.starred,
       limit: GROUP_PAGE_SIZE, offset, sortBy, sortOrder,
     })
       .then(d => { setGroups(d.groups); setGroupsTotal(d.total) })
@@ -2086,7 +2155,7 @@ export default function AdminPage() {
   }, [
     filters.dateFrom, filters.dateTo, filters.projectId, filters.userId,
     filters.status, filters.actionType, filters.dayRef, filters.targetLanguage,
-    filters.search, includeTestData, offset, sortBy, sortOrder,
+    filters.search, filters.starred, includeTestData, offset, sortBy, sortOrder,
   ])
 
   // Bare /admin, a trailing slash, or an unknown sub-path all land on the
@@ -2144,8 +2213,10 @@ export default function AdminPage() {
             includeTestData={includeTestData}
             total={groupsTotal}
           />
+          {starError && <p role="alert" className="text-xs text-red-400">{starError}</p>}
           <GroupedCallsList
             groups={groups}
+            stars={stars}
             loading={groupsLoading}
             error={groupsError}
             expandedKeys={expandedKeys}
@@ -2160,8 +2231,10 @@ export default function AdminPage() {
         </div>
       </div>
 
+      <AnimatePresence>
       {selectedRow && (
         <DetailPanel
+          key="detail"
           row={selectedRow}
           surface={selectedRowSurface}
           batch={batch}
@@ -2171,6 +2244,7 @@ export default function AdminPage() {
           onSelectSibling={handleSelectSibling}
         />
       )}
+      </AnimatePresence>
     </div>
   )
 }

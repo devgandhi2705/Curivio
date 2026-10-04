@@ -15,8 +15,9 @@ from botocore.exceptions import ClientError
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Literal, Optional
+from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from typing import Annotated, Literal, Optional
 
 logger = logging.getLogger(__name__)
 from slowapi import _rate_limit_exceeded_handler
@@ -93,7 +94,7 @@ from .services.digest_storage_service import (
 )
 from .services.unpack_service import explain_stream
 from .services.translate_service import translate_term
-from .services.tts_service import synthesize_speech
+from .services.tts_service import open_speech_stream, list_voices
 from .services import document_extraction_service, document_memory_service
 # Feed v2 (Phase 5): the app layer may import feed_v2; the isolation boundary only
 # blocks the reverse (feed_v2 importing legacy services/llm).
@@ -227,6 +228,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Read Aloud tells the Settings test whether the backup voice played.
+    expose_headers=["X-Read-Aloud-Source"],
 )
 
 
@@ -262,20 +265,38 @@ class UserInput(BaseModel):
     interests: str
 
 
+# Longest selection Unpack accepts — a long paragraph. Mirrors
+# MAX_SELECTION_LENGTH in frontend/src/hooks/useTextSelection.js; this is the
+# real limit, since each call costs LLM tokens, DeepL or Deepgram characters.
+UNPACK_MAX_TERM_CHARS = 1000
+UnpackTerm = Annotated[str, StringConstraints(max_length=UNPACK_MAX_TERM_CHARS)]
+
+
 class UnpackExplainRequest(BaseModel):
-    term: str
+    term: UnpackTerm
     sentence: str = ""
     prev_sentence: str = ""
     next_sentence: str = ""
 
 
 class UnpackTranslateRequest(BaseModel):
-    term: str
+    term: UnpackTerm
     target_language: Literal["hi", "gu", "fr", "de"]
 
 
+class ReadAloudVoiceOptions(BaseModel):
+    """The user's Read Aloud choices (Settings → Read Aloud): a Flux voice,
+    speed and expressivity. Format, bit rate and the training opt-out are
+    fixed in tts_service and can't be sent."""
+    model_config = ConfigDict(extra="forbid")
+    model:        Annotated[str, StringConstraints(pattern=r"^flux-[a-z]{1,30}-[a-z]{2}$")] | None = None
+    speed:        float | None = Field(None, ge=0.5, le=1.5)
+    expressivity: int | None = Field(None, ge=-2, le=2)
+
+
 class UnpackReadAloudRequest(BaseModel):
-    term: str
+    term: UnpackTerm
+    options: ReadAloudVoiceOptions | None = None
 
 
 # --- Feed models ---
@@ -1860,14 +1881,43 @@ async def unpack_read_aloud_endpoint(
     data: UnpackReadAloudRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Synthesize speech for a selected term/phrase via Deepgram Aura. Plain JSON — no streaming."""
+    """Speak a selected term/phrase via Deepgram in the user's chosen voice.
+    Streams the MP3 as Deepgram produces it, so playback starts in ~2.5s even
+    for a long paragraph. Errors (incl. the Flux → Aura-2 fallback) resolve
+    before the first byte, so they still arrive as a normal HTTP error.
+    X-Read-Aloud-Source: deepgram_tts | deepgram_tts_fallback | cache."""
     try:
-        return synthesize_speech(data.term, current_user["user_id"])
+        options = data.options.model_dump(exclude_none=True) if data.options else None
+        # Opening the stream blocks on Deepgram's first response; keep it off the event loop.
+        chunks, mime_type, source = await run_in_threadpool(open_speech_stream, data.term, current_user["user_id"], options)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         logger.warning("[unpack] read-aloud failed: %s", exc)
         raise HTTPException(status_code=502, detail="Read aloud is temporarily unavailable.")
+    return StreamingResponse(
+        chunks,
+        media_type=mime_type,
+        headers={
+            "X-Read-Aloud-Source": source,
+            "X-Accel-Buffering":   "no",
+            "Cache-Control":       "no-store",
+        },
+    )
+
+
+@app.get("/unpack/voices")
+@limiter.limit(UNPACK_RATE_LIMIT)
+async def unpack_voices_endpoint(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Every Deepgram Flux TTS voice, for the Read Aloud voice picker in Settings."""
+    try:
+        return {"voices": list_voices()}
+    except Exception as exc:
+        logger.warning("[unpack] voice list failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Could not load voices from Deepgram.")
 
 
 @app.get("/chat/sessions", response_model=list[ChatSessionSummary])
@@ -1944,7 +1994,7 @@ async def delete_chat_history(
     current_user: dict = Depends(get_current_user),
 ):
     _require_session_access(session_id, current_user["user_id"])
-    deleted = clear_chat_history(session_id)
+    deleted = await run_in_threadpool(clear_chat_history, session_id)
     return {"session_id": session_id, "deleted_count": deleted}
 
 
@@ -1956,15 +2006,11 @@ async def delete_session_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     _require_session_access(session_id, current_user["user_id"])
-    from .utils.db import get_connection as _gc
-    with _gc() as conn:
-        conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM chat_sessions  WHERE session_id = ?", (session_id,))
-        conn.execute(
-            "UPDATE bookmarks SET conversation_reference = '' WHERE conversation_reference = ?",
-            (session_id,),
-        )
-    return {"session_id": session_id, "deleted": True}
+    # Everything the conversation owns goes with it — attached files in R2, their
+    # extracted text + embeddings, derived memories (chat_service.purge_session).
+    from .services.chat_service import delete_session as _delete_session
+    result = await run_in_threadpool(_delete_session, session_id)
+    return {"session_id": session_id, "deleted": True, "files_removed": result["files_removed"]}
 
 
 @app.delete("/chat/sessions/{session_id}/last_turn")
@@ -1975,6 +2021,8 @@ async def delete_last_turn_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     _require_session_access(session_id, current_user["user_id"])
+    # Files attached in this turn are NOT removed: Retry re-sends the same
+    # attachments with the new turn (ChatWorkspace.handleRetry).
     from .utils.db import get_connection as _gc
     with _gc() as conn:
         rows = conn.execute(

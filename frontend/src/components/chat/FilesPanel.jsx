@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { m, AnimatePresence, useDialogMotion } from "../../lib/motion.jsx"
 import { fetchSessionAttachments, fetchAttachmentBlob } from "../../api/chat.js"
 import { AttachmentPreviewModal, isAttachmentPastRetention } from "./ChatMessage.jsx"
 
@@ -74,6 +75,7 @@ function Thumbnail({ attachment, shareToken }) {
  * response, so no separate share-scoped endpoint is needed.
  */
 export default function FilesPanel({ sessionId, messages, shareToken, onClose }) {
+  const dm = useDialogMotion(onClose)
   const [attachments, setAttachments] = useState(null) // null = loading
   const [previewAttachment, setPreviewAttachment] = useState(null)
 
@@ -92,12 +94,14 @@ export default function FilesPanel({ sessionId, messages, shareToken, onClose })
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div
-        className="relative w-full max-w-md max-h-[80vh] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col"
+      <m.div
+        {...dm.card}
+        className="u-sheet relative w-full max-w-md max-h-[80vh] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col"
         onClick={e => e.stopPropagation()}
       >
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-800 flex-shrink-0">
           <h2 className="text-sm font-semibold text-slate-200">Files</h2>
           <button
@@ -139,12 +143,14 @@ export default function FilesPanel({ sessionId, messages, shareToken, onClose })
             })
           )}
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
 
-    {previewAttachment && (
-      <AttachmentPreviewModal attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} shareToken={shareToken} />
-    )}
+    <AnimatePresence>
+      {previewAttachment && (
+        <AttachmentPreviewModal key="preview" attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} shareToken={shareToken} />
+      )}
+    </AnimatePresence>
     </>
   )
 }

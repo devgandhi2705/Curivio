@@ -7,6 +7,7 @@ import { articleKeyFromTitle } from "../api/feed.js"
 import InsightCard from "../components/feed/InsightCard.jsx"
 import ChatMessage from "../components/chat/ChatMessage.jsx"
 import FilesPanel, { FilesIcon } from "../components/chat/FilesPanel.jsx"
+import { AnimatePresence } from "../lib/motion.jsx"
 import LoadingState from "../components/LoadingState.jsx"
 import LearningCalendar from "../components/feed/LearningCalendar.jsx"
 import {
@@ -211,9 +212,11 @@ function ChatShare({ token, messages }) {
         )}
       </div>
 
-      {filesPanelOpen && (
-        <FilesPanel messages={messages} shareToken={token} onClose={() => setFilesPanelOpen(false)} />
-      )}
+      <AnimatePresence>
+        {filesPanelOpen && (
+          <FilesPanel key="files" messages={messages} shareToken={token} onClose={() => setFilesPanelOpen(false)} />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

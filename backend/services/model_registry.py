@@ -171,6 +171,18 @@ _REGISTRY: dict[str, ModelConfig] = {
         default_provider_tier = "on_demand",
     ),
 
+    # ── OpenRouter Free Models Router ─────────────────────────────────────────
+    # A random free model per call, so the window is the smallest it may pick:
+    # 32K (the smallest seen live). No tier cap — the free limit is per day, not per minute.
+    "openrouter/free": ModelConfig(
+        model_name       = "openrouter/free",
+        provider         = "openrouter",
+        context_window   = 32_768,
+        safe_utilization = 0.80,
+        output_reserve   = 4_000,
+        safety_buffer    = 1_000,
+    ),
+
     # ── OpenAI ────────────────────────────────────────────────────────────────
     "gpt-4o": ModelConfig(
         model_name       = "gpt-4o",

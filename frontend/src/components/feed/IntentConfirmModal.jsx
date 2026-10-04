@@ -12,6 +12,8 @@
  *   saving      — boolean, true while save API call is in flight
  */
 import { useState } from "react"
+import { m, useDialogMotion } from "../../lib/motion.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
 
 const LENS_OPTIONS = [
   "Educational",
@@ -39,6 +41,7 @@ const INPUT_CLS = "w-full px-3 py-2 bg-slate-800 border border-slate-700/60 roun
 const TEXTAREA_CLS = INPUT_CLS + " resize-none leading-relaxed"
 
 export default function IntentConfirmModal({ project, mode = "confirm", onSave, onCancel, saving }) {
+  const dm = useDialogMotion(onCancel, { sheet: false })
   const src = project?.intent_profile ?? {}
 
   const [fields, setFields] = useState({
@@ -63,11 +66,12 @@ export default function IntentConfirmModal({ project, mode = "confirm", onSave, 
   const hasProfile = !!project?.intent_profile
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+    <m.div
+      {...dm.root}
+      className="u-motion-managed fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
       onClick={handleBackdrop}
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+      <m.div {...dm.card} className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
 
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-4 flex-shrink-0">
@@ -197,16 +201,13 @@ export default function IntentConfirmModal({ project, mode = "confirm", onSave, 
           >
             {saving ? (
               <>
-                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                  <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
+                <WaveDots />
                 Saving…
               </>
             ) : isConfirm ? "Confirm & Continue →" : "Save Persona"}
           </button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }

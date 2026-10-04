@@ -1,19 +1,20 @@
-import { useState } from "react"
+import { useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "../../contexts/AuthContext"
 import { forgotPassword, verifyResetCode, resetPassword, sendVerifyEmail } from "../../api/auth"
 import { forkSharedChat } from "../../api/share"
 import Plate from "../shared/Plate.jsx"
 import LogoMark from "../shared/LogoMark.jsx"
+import { useChangeCount } from "../../hooks/useChangeCount.js"
 
 function EyeIcon({ open }) {
   return open ? (
-    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+    <svg key="open" className="u-hop w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
       <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
       <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" clipRule="evenodd" />
     </svg>
   ) : (
-    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+    <svg key="shut" className="u-hop w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
       <path fillRule="evenodd" d="M3.28 2.22a.75.75 0 0 0-1.06 1.06l14.5 14.5a.75.75 0 1 0 1.06-1.06l-1.745-1.745a10.029 10.029 0 0 0 3.3-4.38 1.651 1.651 0 0 0 0-1.185A10.004 10.004 0 0 0 9.999 3a9.956 9.956 0 0 0-4.744 1.194L3.28 2.22ZM7.752 6.69l1.092 1.092a2.5 2.5 0 0 1 3.374 3.373l1.091 1.092a4 4 0 0 0-5.557-5.557Z" clipRule="evenodd" />
       <path d="M10.748 13.93l2.523 2.523a10.003 10.003 0 0 1-3.27.547c-4.258 0-7.894-2.66-9.337-6.41a1.651 1.651 0 0 1 0-1.186A10.007 10.007 0 0 1 2.839 6.02L6.07 9.252a4 4 0 0 0 4.678 4.678Z" />
     </svg>
@@ -61,6 +62,17 @@ export default function AuthPage() {
 
   // signup email verification state
   const [signupStep,    setSignupStep]    = useState("form")  // "form" | "verify"
+  const formChanges = useChangeCount(mode + signupStep)
+  // Replays the slide on the same node: re-keying it would remount
+  // PasswordInput and drop its show/hide state when switching tabs.
+  const formRef = useRef(null)
+  useLayoutEffect(() => {
+    const el = formRef.current
+    if (!formChanges || !el) return
+    el.classList.remove("u-step-fwd")
+    void el.offsetWidth
+    el.classList.add("u-step-fwd")
+  }, [formChanges])
   const [signupCode,    setSignupCode]    = useState("")
   const [signupErr,     setSignupErr]     = useState("")
   const [signupLoading, setSignupLoading] = useState(false)
@@ -283,7 +295,7 @@ export default function AuthPage() {
         <Plate seed={58} count={18}       className="u-auth-plate u-auth-plate-c" />
       </div>
 
-      <div className="relative z-10 w-full max-w-md">
+      <div className="u-rise relative z-10 w-full max-w-md">
         {/* Logo / brand */}
         <div className="text-center mb-8">
           <LogoMark size={52} className="mx-auto mb-4" />
@@ -295,6 +307,7 @@ export default function AuthPage() {
         <div className="bg-slate-900 border border-white/10 rounded-2xl px-5 py-6 sm:p-8">
 
           {/* ── Forgot password flow ── */}
+          <div ref={formRef}>
           {mode === "forgot" ? (
             <div className="space-y-3">
               {/* Header */}
@@ -436,7 +449,7 @@ export default function AuthPage() {
                     onClick={() => switchMode(m)}
                     className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
                       mode === m
-                        ? "bg-blue-600 text-white"
+                        ? "u-flat bg-blue-600 text-white"
                         : "text-gray-400 hover:text-white"
                     }`}
                   >
@@ -603,6 +616,7 @@ export default function AuthPage() {
               )}
             </>
           )}
+          </div>
         </div>
       </div>
     </div>

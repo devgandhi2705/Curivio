@@ -11,6 +11,8 @@
  *   onSave(fields) → Promise — called with updated fields; throws on error
  */
 import { useState } from "react"
+import { m, useDialogMotion } from "../../lib/motion.jsx"
+import WaveDots from "../shared/WaveDots.jsx"
 import { suggestKeywords } from "../../api/projects.js"
 
 // ── Constants (shared with CreateProjectModal) ────────────────────────────────
@@ -104,6 +106,7 @@ function TagInput({ value, onChange, onAdd, placeholder }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function EditProjectModal({ project, onClose, onSave, onEditPersona }) {
+  const dm = useDialogMotion(onClose, { sheet: false })
   // ── State — pre-populated from project ─────────────────────────────────────
   const [name,                  setName]                  = useState(project.name || "")
   const [description,           setDescription]           = useState(project.description || "")
@@ -172,12 +175,13 @@ export default function EditProjectModal({ project, onClose, onSave, onEditPerso
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div
+    <m.div
+      {...dm.root}
       data-no-unpack
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      className="u-motion-managed fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
       onClick={handleBackdrop}
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden">
+      <m.div {...dm.card} className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
@@ -318,10 +322,7 @@ export default function EditProjectModal({ project, onClose, onSave, onEditPerso
                   >
                     {suggestLoading ? (
                       <>
-                        <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                          <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
+                        <WaveDots />
                         Generating keywords…
                       </>
                     ) : (
@@ -464,10 +465,7 @@ export default function EditProjectModal({ project, onClose, onSave, onEditPerso
               >
                 {saving ? (
                   <>
-                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                      <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                    <WaveDots />
                     Saving…
                   </>
                 ) : (
@@ -477,8 +475,8 @@ export default function EditProjectModal({ project, onClose, onSave, onEditPerso
             </div>
           </div>
         </form>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 

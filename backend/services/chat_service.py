@@ -8,7 +8,8 @@ Public API
 ----------
 chat_stream(session_id, message, topic_hint=None) -> Iterator[str]
 get_history(session_id, limit=20) -> list[dict]
-clear_history(session_id) -> int
+clear_history(session_id) -> int        messages AND everything derived from them (purge_session)
+delete_session(session_id) -> dict      the session, its messages and everything derived
 list_sessions(limit=20) -> list[dict]
 sweep_expired_attachments() -> dict   Chat-R13 admin cleanup — see docstring below.
 attachment_belongs_to_session(session_id, attachment_id) -> bool   Chat-R15a ownership check.
@@ -819,13 +820,89 @@ def get_history(session_id: str, limit: int = 20) -> list[dict]:
 
 
 def clear_history(session_id: str) -> int:
-    """Delete all messages for *session_id* and return the number of rows deleted."""
+    """Delete all messages for *session_id* — and the files, extracted text and
+    memories that came from them — and return the number of messages deleted.
+    The session itself stays (it's still in the sidebar, now empty)."""
+    return purge_session(session_id, delete_session=False)["messages"]
+
+
+def delete_session(session_id: str) -> dict:
+    """Delete the session entirely: purge_session plus the session row."""
+    return purge_session(session_id, delete_session=True)
+
+
+def _session_attachment_files(conn, session_id: str) -> tuple[list[str], set[str]]:
+    """(R2 keys, document attachment ids) for every attachment this session's
+    messages carry, plus documents whose message entry the retention sweep already
+    dropped (their chunks outlive the original file, see document_attachment_sessions)."""
+    keys: list[str] = []
+    doc_ids: set[str] = set()
+    for row in conn.execute(
+            "SELECT attachments FROM chat_messages WHERE session_id = ? AND attachments IS NOT NULL AND attachments != ''",
+            (session_id,)):
+        try:
+            attachments = json.loads(row["attachments"]) or []
+        except (TypeError, ValueError):
+            continue
+        for a in attachments:
+            uri = a.get("uri") or ""
+            if uri.startswith(("doc://", "file://")):
+                aid = uri.split("://", 1)[1]
+                keys.append(_r2_key_for(aid, a.get("filename")))
+                if uri.startswith("doc://"):
+                    doc_ids.add(aid)
+            if a.get("r2_attachment_id"):
+                keys.append(_r2_key_for(a["r2_attachment_id"], a.get("filename")))
+    doc_ids |= {r["attachment_id"] for r in conn.execute(
+        "SELECT attachment_id FROM document_attachment_sessions WHERE session_id = ?", (session_id,))}
+    return keys, doc_ids
+
+
+def purge_session(session_id: str, *, delete_session: bool) -> dict:
+    """Remove a conversation and everything that exists only because of it, in one
+    transaction: its messages, the extracted text + embeddings of documents
+    attached in it, the memories derived from it (semantic memory rows, concept
+    memory, prior recommendations, knowledge state), feed "ask about" links into it,
+    and its share links. Then — after the commit, best-effort — the attached files
+    themselves from R2. Before this, deleting a chat removed only two rows and left
+    every attached file in the bucket and every embedding in the vector index.
+
+    Kept: llm_call_log (the admin cost/audit log). Bookmarks that point at the
+    conversation keep their own saved copy; only the reference is cleared."""
     with get_connection() as conn:
-        cur = conn.execute(
-            "DELETE FROM chat_messages WHERE session_id = ?",
-            (session_id,),
-        )
-        return cur.rowcount
+        keys, doc_ids = _session_attachment_files(conn, session_id)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        vec_rows = 0
+        for aid in doc_ids:
+            for (rowid,) in conn.execute("SELECT rowid FROM document_chunks_vec WHERE attachment_id = ?", (aid,)).fetchall():
+                conn.execute("DELETE FROM document_chunks_vec WHERE rowid = ?", (rowid,))
+                vec_rows += 1
+        if "conversation_memory_vec" in tables:
+            for (rowid,) in conn.execute("SELECT rowid FROM conversation_memory_vec WHERE session_id = ?",
+                                         (session_id,)).fetchall():
+                conn.execute("DELETE FROM conversation_memory_vec WHERE rowid = ?", (rowid,))
+        for table in ("document_attachment_sessions", "concept_memory", "prior_recommendations",
+                      "conversation_knowledge_state", "feed_chat_links"):
+            if table in tables:
+                conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
+        if "share_links" in tables:
+            conn.execute("DELETE FROM share_links WHERE type = 'chat' AND resource_id = ?", (session_id,))
+        messages = conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,)).rowcount
+        if delete_session:
+            conn.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+            conn.execute("UPDATE bookmarks SET conversation_reference = '' WHERE conversation_reference = ?",
+                         (session_id,))
+    removed = 0
+    for key in dict.fromkeys(keys):
+        try:
+            r2_storage_service.delete(key)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001 — the rows are gone; an orphan is logged, not fatal
+            logger.warning("[chat] purge: R2 delete failed for %s: %s", key, exc)
+    logger.info("[chat] purged session %s: %d message(s), %d document chunk(s), %d/%d file(s) removed from R2",
+                session_id, messages, vec_rows, removed, len(dict.fromkeys(keys)))
+    return {"session_id": session_id, "messages": messages, "document_chunks": vec_rows,
+            "files_removed": removed, "files": len(dict.fromkeys(keys))}
 
 
 def list_sessions(limit: int = 20, user_id: str | None = None) -> list[dict]:

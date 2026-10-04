@@ -12,6 +12,7 @@
  * dark at sunset should not silently repaint an app they set to light.
  */
 
+
 export const UI_MODES = ['light', 'dark', 'legacy']
 
 export const UI_MODE_LABELS = {
@@ -55,9 +56,6 @@ function paint(mode) {
  */
 export function setUiTheme(mode, origin) {
   if (!UI_MODES.includes(mode) || mode === getUiTheme()) return
-
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  if (reduced) { paint(mode); return }
 
   const root = document.documentElement
   if (origin) {

@@ -8,8 +8,11 @@ Every writer LLM call goes through route_writer_call():
   1. Tries Gemini 3.1-flash-lite via the shared factory (Gemini-pool legs only,
      each retried with backoff, logged to llm_call_log).
   2. On 429 / RESOURCE_EXHAUSTED only (after the pool is exhausted): falls back
-     to Groq via the shared factory, using the caller-supplied compressed prompt.
-  3. Any other Gemini error: re-raised immediately, no fallback.
+     to Groq via the shared factory, using the caller-supplied compressed prompt
+     (that Groq chain ends on the OpenRouter free router itself).
+  3. Any other Gemini error, or a compressed prompt Groq's budget refuses: the
+     OpenRouter free router answers instead; if it fails too, the original error
+     is raised.
 
 Public API
 ----------
@@ -138,6 +141,18 @@ def format_articles_full(
     return "\n\n".join(parts), citable
 
 
+def _free_router_backup(prompt: str, json_mode: bool, meta: dict, *, original: Exception) -> tuple[str, str]:
+    """The last resort when neither Gemini nor Groq can take the call. Raises
+    `original` (the reason we got here) if the free router fails too."""
+    from ..llm import get_chat_model, extract_text
+    try:
+        resp = get_chat_model(legs="openrouter", json_mode=json_mode).invoke(prompt, config={"metadata": meta})
+    except Exception:
+        logger.exception("[writer_router] free router backup failed")
+        raise original
+    return extract_text(resp), "openrouter"
+
+
 def route_writer_call(
     gemini_prompt: str,
     groq_prompt:   str,
@@ -163,11 +178,12 @@ def route_writer_call(
 
     Returns
     -------
-    (response_text, provider)  where provider is "gemini" or "groq".
+    (response_text, provider)  where provider is "gemini", "groq" or "openrouter".
 
     Raises
     ------
-    Any non-quota Gemini error is re-raised immediately without falling back.
+    The non-quota Gemini error (or Groq's budget refusal) when the free router
+    backup fails too.
     """
     from ..llm import get_chat_model, extract_text
 
@@ -187,10 +203,10 @@ def route_writer_call(
     except Exception as exc:
         if not _is_quota_error(exc):
             logger.error(
-                "[writer_router] Gemini non-quota error (model=%s) — raising without fallback: %s",
+                "[writer_router] Gemini non-quota error (model=%s) — free router backup: %s",
                 _GEMINI_WRITER_MODEL, exc,
             )
-            raise
+            return _free_router_backup(groq_prompt, json_mode, meta, original=exc)
         logger.warning(
             "[writer_router] Gemini quota/rate-limit — falling back to Groq: %s", exc,
         )
@@ -198,7 +214,11 @@ def route_writer_call(
     # Same guard ask_grok used to run internally before every Groq call —
     # preserved here since Groq is reached directly via the shared factory now.
     from .grok_service import _preflight_check
-    _preflight_check(f"route_writer_call:{call_type}:groq_fallback", prompt=groq_prompt)
+    try:
+        _preflight_check(f"route_writer_call:{call_type}:groq_fallback", prompt=groq_prompt)
+    except RuntimeError as exc:
+        logger.warning("[writer_router] Groq budget refused the prompt — free router backup: %s", exc)
+        return _free_router_backup(groq_prompt, json_mode, meta, original=exc)
 
     t_fallback = time.monotonic()
     model = get_chat_model(legs="groq", json_mode=json_mode)

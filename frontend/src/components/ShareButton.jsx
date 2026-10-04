@@ -1,10 +1,13 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react"
 import { createPortal } from "react-dom"
+import { m, AnimatePresence, EXIT } from "../lib/motion.jsx"
 import { createShareLink } from "../api/share.js"
 
 const webShareSupported = typeof navigator !== "undefined" && typeof navigator.share === "function"
+// Phones hand off to the OS share sheet — it lists the apps actually installed.
+const nativeSheet = webShareSupported && typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches
 
-const POPOVER_WIDTH = 256 // w-64
+const POPOVER_WIDTH = 288 // w-72
 const MARGIN = 8
 
 const PLATFORMS = [
@@ -88,6 +91,15 @@ const PLATFORMS = [
 ]
 
 const ACTION_BTN_CLASS = "inline-flex items-center gap-1 md:gap-1.5 px-2 py-0.5 md:px-2.5 md:py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-blue-300 bg-slate-800/20 hover:bg-blue-500/10 border border-slate-700/20 hover:border-blue-500/30 md:bg-slate-800/40 md:border-slate-700/40 transition-all"
+
+function CheckIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  )
+}
 
 function ShareLinkIcon({ size = 16 }) {
   return (
@@ -215,6 +227,7 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
     <div ref={wrapperRef} className={`relative ${menuItem ? "block w-full" : "inline-block"} ${className}`}>
       <button
         onClick={handleTriggerClick}
+        aria-label={label ? undefined : "Share"}
         className={`${menuItem ? "w-full text-left px-3.5 py-2 text-[13px] transition-colors text-slate-300 hover:text-slate-100 hover:bg-white/[0.05]" : ACTION_BTN_CLASS} ${buttonClassName}`}
       >
         {!menuItem && (isLoading ? <span className="share-spinner" /> : <ShareLinkIcon />)}
@@ -225,12 +238,20 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
         <span className="absolute top-full right-0 mt-1 text-[10px] text-red-400 whitespace-nowrap z-50">{error}</span>
       )}
 
-      {isOpen && createPortal(
-        <div
+      {createPortal(
+        <AnimatePresence>
+          {isOpen && (
+        // The inline opacity drives measure-then-show positioning, so Motion
+        // springs only scale/y on the way in and owns opacity only on exit.
+        <m.div
+          key="share"
           ref={popoverRef}
           data-share-popover
+          initial={{ scale: 0.92, y: -6 }}
+          animate={{ scale: 1, y: 0, transition: { type: 'spring', stiffness: 520, damping: 26 } }}
+          exit={{ opacity: 0, scale: 0.96, pointerEvents: 'none', transition: EXIT }}
           style={{ position: "fixed", top: popoverStyle.top, left: popoverStyle.left, opacity: popoverStyle.opacity }}
-          className="z-50 w-64 rounded-xl bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden transition-opacity duration-100"
+          className="origin-top z-50 w-72 rounded-xl bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden transition-opacity duration-100"
         >
           <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
             <span className="text-[11px] font-semibold text-slate-400">Share</span>
@@ -242,45 +263,53 @@ export default function ShareButton({ type, resourceId, shareTitle = "", shareTe
             </button>
           </div>
 
-          <div className="px-3 py-3">
-            <div className="grid grid-cols-4 gap-2">
-              {PLATFORMS.map(p => (
-                <a
-                  key={p.id}
-                  href={p.buildUrl(shareUrl, shareTitle, shareText)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={p.label}
-                  title={p.label}
-                  className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-300 bg-slate-800/40 hover:bg-blue-500/10 border border-slate-700/40 hover:border-blue-500/30 transition-all"
-                >
-                  {p.icon}
-                </a>
-              ))}
+          <div className="p-3">
+            {/* What is being shared, as the recipient will see it. */}
+            <div className="rounded-lg bg-white/[0.04] border border-white/[0.06] px-3 py-2.5">
+              <p className="text-[13px] font-semibold text-slate-100 leading-snug line-clamp-2">{shareTitle || "Curivio"}</p>
+              {shareText && <p className="mt-1 text-[11px] text-slate-400 leading-relaxed line-clamp-2">{shareText}</p>}
+              <p className="mt-1.5 text-[10px] text-slate-500 truncate">{shareUrl.replace(/^https?:\/\//, "")}</p>
             </div>
 
-            <button onClick={handleCopy} className={`mt-3 w-full justify-between ${ACTION_BTN_CLASS}`}>
-              <span className="inline-flex items-center gap-1.5">
-                <ShareLinkIcon size={14} />
-                Copy link
+            <button
+              onClick={handleCopy}
+              className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium transition-colors"
+            >
+              <span key={copied ? "done" : "copy"} className="u-pop-num">
+                <span className="flex items-center gap-2">
+                  {copied ? <><CheckIcon size={14} /> Copied</> : <><ShareLinkIcon size={14} /> Copy link</>}
+                </span>
               </span>
-              {copied && <span>Copied!</span>}
             </button>
 
-            {webShareSupported && (
-              <button onClick={handleWebShare} className={`mt-2 w-full justify-center ${ACTION_BTN_CLASS}`}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>
-                  <circle cx="18" cy="19" r="3"/>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
-                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                </svg>
-                Share via...
+            {nativeSheet ? (
+              <button
+                onClick={handleWebShare}
+                className="mt-2 w-full py-2 rounded-lg text-[13px] text-slate-300 hover:text-slate-100 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+              >
+                Share to apps…
               </button>
+            ) : (
+              <div className="mt-3 flex items-center justify-center gap-1.5">
+                {PLATFORMS.map(p => (
+                  <a
+                    key={p.id}
+                    href={p.buildUrl(shareUrl, shareTitle, shareText)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={p.label}
+                    title={p.label}
+                    className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-100 bg-white/[0.04] hover:bg-white/[0.10] hover:-translate-y-0.5 transition-all [&_svg]:w-4 [&_svg]:h-4"
+                  >
+                    {p.icon}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
-        </div>,
+        </m.div>
+          )}
+        </AnimatePresence>,
         document.body
       )}
 

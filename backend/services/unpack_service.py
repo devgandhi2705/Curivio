@@ -107,18 +107,30 @@ def _extract_partial_meaning(buffer: str) -> str | None:
 # (the chat default of 0.7 is tuned for prose, not for a small strict schema).
 _TEMPERATURE = 0.3
 _CALL_TYPE = "explain"
+# One wall clock for the whole popover, across every leg: past it the user gets
+# the dictionary instead. The route's 5s timeout is per network read, so a
+# streaming free-router leg ran 36s live, and two pooled keys meant two of them.
+# Groq/Gemini answer (or fail) in 1-2s and never meet it.
+_DEADLINE_SEC = 12
 
 
-def _stream_leg(spec, messages, strict_messages, base_meta, notes):
+class DeadlineExceeded(RuntimeError):
+    """This popover is past _DEADLINE_SEC — stop calling models."""
+    kind = "fatal"      # rate_limits: no retry, park nothing
+
+
+def _stream_leg(spec, messages, strict_messages, base_meta, notes, deadline):
     """One [explain] leg: stream the JSON, reveal meaning_in_context as it
     arrives, then parse. A model that answers in the wrong shape gets one
-    stricter, non-streaming retry on the same leg — that is a formatting slip,
-    not an unavailable model. Yields ("chunk", text), then ("done", parsed) or
-    ("invalid", raw)."""
+    stricter retry on the same leg — that is a formatting slip, not an
+    unavailable model. Both calls stop at `deadline` (the popover's wall clock).
+    Yields ("chunk", text), then ("done", parsed) or ("invalid", raw)."""
     from ..llm.model_provider import build_leg, extract_text, route_label
 
+    if time.monotonic() > deadline:
+        raise DeadlineExceeded(f"popover past {_DEADLINE_SEC}s — {spec} not called")
     # One build for this leg, reused for both the stream and (if needed) the
-    # retry invoke() below — a second build_leg() call here would count as a
+    # strict retry below — a second build_leg() call here would count as a
     # second leg attempt to callers walking `built`/call-log rows per leg.
     model = build_leg(spec, streaming=True, temperature=_TEMPERATURE)
     # Gemini honours an OpenAI-style json_object request; Groq streams the
@@ -130,9 +142,17 @@ def _stream_leg(spec, messages, strict_messages, base_meta, notes):
               "metadata": {**base_meta, "agent_name": "explain_stream",
                            "route": route_label("explain", "", notes), "route_step": spec.step}}
 
+    def _within_deadline(chunks):
+        # Checked per chunk: reasoning models stream empty chunks while thinking,
+        # so a slow leg still reaches this check (the SDK timeout is per read).
+        for chunk in chunks:
+            if time.monotonic() > deadline:
+                raise DeadlineExceeded(f"{spec} still answering at the {_DEADLINE_SEC}s popover deadline")
+            yield extract_text(chunk)
+
     buffer, sent = "", 0
-    for chunk in model.stream(messages, config=config):
-        buffer += extract_text(chunk)
+    for text in _within_deadline(model.stream(messages, config=config)):
+        buffer += text
         partial = _extract_partial_meaning(buffer)
         if partial and len(partial) > sent:
             yield "chunk", partial[sent:]
@@ -141,7 +161,9 @@ def _stream_leg(spec, messages, strict_messages, base_meta, notes):
     parsed = _parse_response(buffer)
     if parsed is None:
         retry_config = {**config, "metadata": {**config["metadata"], "agent_name": "explain_strict_retry"}}
-        parsed = _parse_response(extract_text(model.invoke(strict_messages, config=retry_config)))
+        # Streamed (not invoke()) so the deadline is checked here too: with an
+        # unbounded invoke() retry a free-router popover took 20s live.
+        parsed = _parse_response("".join(_within_deadline(model.stream(strict_messages, config=retry_config))))
     if parsed is None:
         yield "invalid", buffer
         return
@@ -229,6 +251,7 @@ def explain_stream(
 
     from ..llm.model_provider import AllLegsFailed, route_legs, run_route
     legs = iter(route_legs("explain"))     # shared: each attempt resumes where the last stopped
+    deadline = time.monotonic() + _DEADLINE_SEC
     notes: list[str] = []
     result: dict | None = None
     provider_used: str | None = None
@@ -236,7 +259,7 @@ def explain_stream(
     while result is None:
         try:
             spec, events = run_route(
-                "explain", lambda s: _stream_leg(s, messages, strict_messages, base_meta, notes),
+                "explain", lambda s: _stream_leg(s, messages, strict_messages, base_meta, notes, deadline),
                 notes=notes, legs=legs)
         except AllLegsFailed:
             break

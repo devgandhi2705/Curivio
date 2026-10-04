@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, useEffect } from "react"
 import { createPortal } from "react-dom"
+import { m, presets } from "../../lib/motion.jsx"
 
 const POPOVER_WIDTH = 288
 const MARGIN = 8
@@ -24,12 +25,16 @@ function useIsMobile() {
 /**
  * Positioned popover shell — a compact floating popover clamped to the
  * viewport near the selection rect. Outside-click and Escape both dismiss.
- * Content is passed in as children.
+ * Content is passed in as children; `onBack`, when given, shows a back arrow.
+ *
+ * The outer box only positions (and stays invisible until placed); the inner
+ * Motion layer pops in from the selection and shrinks away when the parent's
+ * AnimatePresence drops it.
  */
-export default function UnpackPopover({ rect, onClose, children }) {
+export default function UnpackPopover({ rect, onClose, onBack, children }) {
   const ref = useRef(null)
   const isMobile = useIsMobile()
-  const [style, setStyle] = useState({ top: -9999, left: -9999, opacity: 0 })
+  const [style, setStyle] = useState({ top: -9999, left: -9999, opacity: 0, above: false })
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -46,12 +51,13 @@ export default function UnpackPopover({ rect, onClose, children }) {
       left = Math.min(Math.max(left, MARGIN), window.innerWidth - POPOVER_WIDTH - MARGIN)
 
       let top = rect.bottom + MARGIN
+      let above = false
       if (top + height > window.innerHeight - MARGIN) {
-        const above = rect.top - height - MARGIN
-        if (above >= MARGIN) top = above
+        const y = rect.top - height - MARGIN
+        if (y >= MARGIN) { top = y; above = true }
       }
 
-      setStyle({ top, left, opacity: 1 })
+      setStyle({ top, left, opacity: 1, above })
     }
 
     reposition()
@@ -82,13 +88,25 @@ export default function UnpackPopover({ rect, onClose, children }) {
       ref={ref}
       data-unpack-popover
       style={{ position: "fixed", ...positionStyle, zIndex: 1000 }}
-      className={[
-        "bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden transition-opacity duration-100",
-        "rounded-xl",
-      ].join(" ")}
+      className="transition-opacity duration-100"
+    >
+    <m.div
+      {...presets.menu}
+      style={{ transformOrigin: style.above ? "50% 100%" : "50% 0%" }}
+      className="bg-slate-900 border border-slate-700/60 shadow-2xl shadow-black/60 overflow-hidden rounded-xl"
     >
       <div className="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-slate-400">Unpack</span>
+        <span className="flex items-center gap-1.5">
+          {onBack && (
+            <button onClick={onBack} aria-label="Back"
+              className="u-pop-num -ml-1 p-0.5 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors">
+              <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M7.78 12.53a.75.75 0 0 1-1.06 0L2.47 8.28a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L4.81 7h7.44a.75.75 0 0 1 0 1.5H4.81l2.97 2.97a.75.75 0 0 1 0 1.06Z" />
+              </svg>
+            </button>
+          )}
+          <span className="text-[11px] font-semibold text-slate-400">Unpack</span>
+        </span>
         <button
           onClick={onClose}
           aria-label="Close"
@@ -101,6 +119,7 @@ export default function UnpackPopover({ rect, onClose, children }) {
       </div>
 
       {children}
+    </m.div>
     </div>,
     document.body
   )

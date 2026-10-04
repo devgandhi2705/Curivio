@@ -6,18 +6,24 @@ import './index.css'
 // utilities at equal specificity (.text-white above all), so load order is
 // what decides them.
 import './theme.css'
+// Last: motion utilities read theme.css's variables and must win ties with
+// index.css's base layer by coming later.
+import './motion.css'
 import router from './router/index.jsx'
 import { AuthProvider } from './contexts/AuthContext.jsx'
 import { SidebarSubsectionProvider } from './contexts/SidebarSubsection.jsx'
 import { ContextMenuProvider } from './contexts/ContextMenu.jsx'
 import { registerSW } from './lib/registerSW.js'
+import { MotionProvider } from './lib/motion.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthProvider>
       <SidebarSubsectionProvider>
         <ContextMenuProvider>
-          <RouterProvider router={router} />
+          <MotionProvider>
+            <RouterProvider router={router} />
+          </MotionProvider>
         </ContextMenuProvider>
       </SidebarSubsectionProvider>
     </AuthProvider>

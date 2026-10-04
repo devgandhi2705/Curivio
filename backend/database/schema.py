@@ -1177,6 +1177,20 @@ CREATE TABLE IF NOT EXISTS data_loss_requests (
 );
 """
 
+# Admin log stars — an admin marks an operation group or a single call to find
+# again later (docs/superpowers/specs/2026-10-03-admin-log-stars-design.md).
+# 'group' keys COALESCE(trace_id, 'row-' || id), the grouped list's own key;
+# 'row' keys llm_call_log.id. Shared across admins; llm_call_log is untouched.
+CREATE_ADMIN_LOG_STARS = """
+CREATE TABLE IF NOT EXISTS admin_log_stars (
+    target_kind TEXT NOT NULL CHECK (target_kind IN ('group', 'row')),
+    target_key  TEXT NOT NULL,
+    starred_by  TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (target_kind, target_key)
+);
+"""
+
 CREATE_DATA_LOSS_REQUESTS_IDX = """
 CREATE INDEX IF NOT EXISTS idx_data_loss_requests_status
     ON data_loss_requests (status, created_at DESC);
@@ -1317,4 +1331,5 @@ ALL_TABLES = [
     CREATE_RESTORE_LOG,
     CREATE_DATA_LOSS_REQUESTS,
     CREATE_DATA_LOSS_REQUESTS_IDX,
+    CREATE_ADMIN_LOG_STARS,
 ]

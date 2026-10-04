@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import { m, AnimatePresence, useDialogMotion } from "../../lib/motion.jsx"
 import { useNavigate } from "react-router-dom"
 import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
@@ -19,10 +20,12 @@ function RenameModal({ heading, initialValue, onConfirm, onClose }) {
     if (e.key === 'Escape') onClose()
     e.stopPropagation()
   }
+  const dm = useDialogMotion(onClose)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <m.div {...dm.root} className="u-motion-managed u-sheet-root fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+      <m.div {...dm.card} className="u-sheet relative w-full max-w-xs bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        {dm.phone && <div className="u-sheet-handle" aria-hidden="true" />}
         <h2 className="text-sm font-semibold text-slate-200">{heading}</h2>
         <input
           ref={inputRef}
@@ -33,11 +36,11 @@ function RenameModal({ heading, initialValue, onConfirm, onClose }) {
           className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500/60"
         />
         <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onClick={onClose} className="u-btn-2 flex-1 py-2 text-sm rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Cancel</button>
           <button onClick={() => value.trim() && onConfirm(value.trim())} disabled={!value.trim()} className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium transition-colors">Rename</button>
         </div>
-      </div>
-    </div>
+      </m.div>
+    </m.div>
   )
 }
 
@@ -568,14 +571,17 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   return (
     <div className="flex flex-col h-full">
 
-      {showRenameModal && (
-        <RenameModal
-          heading="Rename chat"
-          initialValue={renameDraft}
-          onConfirm={async (value) => { await handleRename(renamingSessionId ?? sessionId, value); setShowRenameModal(false) }}
-          onClose={() => setShowRenameModal(false)}
-        />
-      )}
+      <AnimatePresence>
+        {showRenameModal && (
+          <RenameModal
+            key="rename"
+            heading="Rename chat"
+            initialValue={renameDraft}
+            onConfirm={async (value) => { await handleRename(renamingSessionId ?? sessionId, value); setShowRenameModal(false) }}
+            onClose={() => setShowRenameModal(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Files panel toggle + share current thread — desktop controls */}
       {messages.length > 0 && (
@@ -610,9 +616,11 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         </>
       )}
 
-      {filesPanelOpen && (
-        <FilesPanel sessionId={sessionId} onClose={() => setFilesPanelOpen(false)} />
-      )}
+      <AnimatePresence>
+        {filesPanelOpen && (
+          <FilesPanel key="files" sessionId={sessionId} onClose={() => setFilesPanelOpen(false)} />
+        )}
+      </AnimatePresence>
 
       {/* Feed context header */}
       <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
@@ -814,12 +822,12 @@ function EmptyState({ onSend, sessions = [], activeFeedCtx, onSelectSession, use
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-1.5 w-full max-w-[280px]">
+        <div className="u-stagger flex flex-col gap-1.5 w-full max-w-[280px]">
           {SUGGESTIONS.map((s, i) => (
             <button
               key={i}
               onClick={() => onSend(s.text)}
-              className="group text-left px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.05] hover:border-white/[0.08] hover:bg-white/[0.06] transition-all"
+              className="u-tilt group text-left px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.05] hover:border-white/[0.08] hover:bg-white/[0.06] transition-all"
             >
               <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors leading-snug block">
                 {s.text}
