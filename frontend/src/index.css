@@ -30,11 +30,10 @@
     scale: .98;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    body:not(:has(.lp)) button:not(:disabled):active { scale: none; }
-  }
-
-  /* Primary buttons stand above the surface and drop onto their ledge on press. */
+  /* ── The ledge: primary, danger and opted-in secondary buttons stand on a
+     3px shelf in a darker shade of their own fill, lift on hover and drop
+     onto it when pressed. Written by selector so the ~55 existing buttons
+     change without edits; `u-flat` opts a cramped one out. ── */
   body:not(:has(.lp)) :is(button, a).bg-blue-600:not(.u-flat) { box-shadow: 0 3px 0 color-mix(in srgb, rgb(var(--u-blue-600, 37 99 235)) 55%, black); }
   body:not(:has(.lp)) :is(button, a).bg-red-600:not(.u-flat)  { box-shadow: 0 3px 0 color-mix(in srgb, rgb(var(--u-red-600, 220 38 38)) 55%, black); }
   body:not(:has(.lp)) .u-btn-2:not(.u-flat)                   { box-shadow: 0 3px 0 rgb(var(--u-slate-700, 51 65 85)); }
@@ -49,7 +48,11 @@
   }
   body:not(:has(.lp)) :is(button.bg-blue-600, button.bg-red-600, button.u-btn-2):disabled { box-shadow: none; }
 
-  /* A single keyboard focus ring, with a softer treatment for text fields. */
+  /* ── One focus ring for keyboard users everywhere. This also overrides the
+     `focus:outline-none` that left 33 controls with no indicator. Text fields
+     glow instead of ringing: bordered ones outside, borderless ones (sidebar
+     filters) as an inset hairline. `u-bare` marks a field that sits inside a
+     composer whose own border already shows focus. ── */
   body:not(:has(.lp)) :focus-visible {
     outline: 2px solid rgb(var(--u-blue-400, 96 165 250));
     outline-offset: 2px;
@@ -62,6 +65,8 @@
     box-shadow: 0 0 0 4px color-mix(in srgb, rgb(var(--u-blue-400, 96 165 250)) 22%, transparent);
     transition: box-shadow var(--m-settle, 400ms) var(--m-spring, ease);
   }
+  /* Same :is() list as above — :is() takes its most specific argument's
+     weight, so a bare `.u-bare` selector would lose to both field rules. */
   body:not(:has(.lp)) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select).u-bare:focus-visible { box-shadow: none; }
 }
 
@@ -81,6 +86,8 @@
    and wires up safe-area-inset support.
    ============================================================ */
 
+/* clip, not hidden: hidden makes body a scroll container, which captures
+   position: sticky (the app sidebar, the feed's side rails) so it never sticks. */
 html {
   overflow-x: clip;
   /* Prevent tap highlight on mobile */
@@ -155,6 +162,8 @@ body {
 body {
   font-family: var(--font-sans);
   line-height: 1.6;
+  /* Inter's own tracking for ~14px. Tighter (-0.011em) fused "rn" into "m" at
+     the 11–13px sizes most of the UI uses. */
   letter-spacing: -0.006em;
   font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
   -webkit-font-smoothing: antialiased;
@@ -167,21 +176,30 @@ code, pre, kbd, samp {
   font-feature-settings: 'liga' 1, 'calt' 1;
 }
 
-/* ── Reading type ───────────────────────────────────────────── */
+/* ── Reading type ─────────────────────────────────────────────
+   The scale for anything read rather than operated: the legacy feed today,
+   Feed v2 later. Headings are Newsreader (the serif the landing page already
+   uses, loaded in index.html); running text stays Inter. Colour comes from the
+   theme's slate utilities on the element, never from here. */
 :root { --font-serif: 'Newsreader', 'Iowan Old Style', Georgia, serif; }
 
 .u-read-display, .u-read-title, .u-read-heading, .u-read-quote {
   font-family: var(--font-serif);
   font-optical-sizing: auto;
 }
-.u-read-display { font-size: clamp(23px, 15px + 1.1vw, 32px); font-weight: 600; line-height: 1.2; letter-spacing: -0.012em; }
-.u-read-title   { font-size: clamp(19px, 15.5px + 0.4vw, 21.5px); font-weight: 600; line-height: 1.28; letter-spacing: -0.006em; }
-.u-read-heading { font-size: clamp(16.5px, 15px + 0.15vw, 17.5px); font-weight: 600; line-height: 1.35; letter-spacing: 0; }
-.u-read-lead    { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px); line-height: 1.7; letter-spacing: -0.008em; }
-.u-read-body    { font-size: clamp(14.5px, 13.4px + 0.13vw, 15.5px); line-height: 1.7; letter-spacing: -0.004em; }
-.u-read-quote   { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px); line-height: 1.6; font-style: italic; }
-.u-read-label   { font-size: 10.5px; font-weight: 600; line-height: 1.3; letter-spacing: 0.08em; text-transform: uppercase; }
+/* Sizes grow gently with the window (phone → wide monitor) and stop at sensible limits. */
+.u-read-display { font-size: clamp(23px, 15px + 1.1vw, 32px);       font-weight: 600; line-height: 1.2;  letter-spacing: -0.012em; }
+.u-read-title   { font-size: clamp(19px, 15.5px + 0.4vw, 21.5px);   font-weight: 600; line-height: 1.28; letter-spacing: -0.006em; }
+.u-read-heading { font-size: clamp(16.5px, 15px + 0.15vw, 17.5px);  font-weight: 600; line-height: 1.35; letter-spacing: 0; }
+.u-read-lead    { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px);   line-height: 1.7;  letter-spacing: -0.008em; }
+.u-read-body    { font-size: clamp(14.5px, 13.4px + 0.13vw, 15.5px); line-height: 1.7;  letter-spacing: -0.004em; }
+.u-read-quote   { font-size: clamp(16px, 14.4px + 0.2vw, 17.5px);   line-height: 1.6;  font-style: italic; }
+.u-read-label   { font-size: 10.5px; font-weight: 600;  line-height: 1.3; letter-spacing: 0.08em; text-transform: uppercase; }
 
+/* ── Feed column ──────────────────────────────────────────────
+   800px of reading. When the day's article list sits on the right
+   (.u-day-rail, 240px + 40px gap), the column and list centre as one group
+   and the column gives up width first, down to 720px. */
 .u-feed-col { max-width: 800px; margin-inline: auto; width: 100%; }
 .u-feed-col:has(.u-day-rail) {
   max-width: min(800px, 100% - 280px);
@@ -189,6 +207,9 @@ code, pre, kbd, samp {
   margin-right: auto;
 }
 
+/* ── Reading mode type ────────────────────────────────────────
+   Every value comes from the reader's settings (readerPrefs.js → --r-*),
+   scoped to .u-reader so the normal feed never changes. */
 .u-reader .u-read-body,
 .u-reader .u-read-lead {
   font-family: var(--r-font); font-size: var(--r-size); line-height: var(--r-lh);
@@ -202,6 +223,12 @@ code, pre, kbd, samp {
 .u-reader .u-read-label   { font-size: max(10.5px, calc(var(--r-size) * 0.6)); }
 .u-rc-main > * + *        { margin-top: var(--r-para); }
 
+/* ── Reading mode spread (InsightCard `bare`) ─────────────────
+   Phone/tablet: one column in the card's usual order — the rail and aside
+   dissolve (display: contents) and `order` puts each piece back in place.
+   ≥1024px: rail | text, reference drops under the text.
+   ≥1280px: rail | text | reference. Rail and reference stay in view while
+   the text scrolls; their top clears the floating toolbar. */
 .u-rc-wrap { max-width: calc(var(--r-width) + 4rem); }
 .u-reader-card { display: flex; flex-direction: column; gap: 1.25rem; }
 .u-rc-rail, .u-rc-aside { display: contents; }
@@ -221,11 +248,81 @@ code, pre, kbd, samp {
 }
 .u-rc-act:hover:not(:disabled) { background: rgb(var(--u-white, 255 255 255) / 0.06); }
 .u-rc-act:active:not(:disabled) { transform: scale(.97); }
+/* The bookmark button keeps its own behaviour; here it just takes the row's shape. */
 .u-reader .u-rc-bm > button {
   height: 36px; padding: 0 0.625rem; gap: 0.6rem; font-size: 13px;
   border-color: transparent; background: transparent;
 }
 .u-reader .u-rc-bm > button:hover { background: rgb(var(--u-white, 255 255 255) / 0.06); }
+
+/* Folding section body (Sources, Discussions): rows animate from 0 to the
+   content's height; closed content is hidden from tab order too. */
+.u-rc-fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms var(--m-out, ease); }
+.u-rc-fold[data-open="true"] { grid-template-rows: 1fr; }
+.u-rc-fold > * { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s 300ms; }
+.u-rc-fold[data-open="true"] > * { visibility: visible; transition-delay: 0s; }
+
+/* Phones: the actions follow the text as one even row (icon over label),
+   then the note, then Sources and Discussions as one grouped card of
+   folding rows. Ask / Explain move to Reading mode's bottom dock, offline
+   status to the "Article n of m" line. */
+@media (max-width: 1023.98px) {
+  .u-rc-actions { order: 2; }
+  .u-rc-note    { order: 3; }
+  .u-rc-ref     { order: 4; }
+  .u-rc-actions {
+    display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px;
+    padding: 0.25rem 0.5rem;
+    border-block: 1px solid rgb(var(--u-slate-800, 30 41 59));
+  }
+  .u-rc-ai, .u-rc-offline { display: none; }
+  .u-reader .u-rc-bm { display: flex; }
+  .u-rc-act,
+  .u-reader .u-rc-bm > button {
+    width: 100%; height: auto; min-height: 52px; padding: 6px 2px;
+    flex-direction: column; justify-content: center; gap: 5px;
+    font-size: 11.5px; text-align: center; white-space: nowrap;
+  }
+
+  /* The grouped card. Fill is an ink film rather than --u-surface: Reading
+     mode's own themes set --u-surface to the page colour itself. */
+  .u-rc-ref {
+    margin-inline: 0.75rem; border-radius: 1rem; overflow: hidden;
+    background: rgb(var(--u-white, 255 255 255) / 0.035);
+    border: 1px solid rgb(var(--u-slate-800, 30 41 59));
+    box-shadow: var(--u-card-shadow, none);
+  }
+  .u-rc-ref:not(:has(button)) { display: none; }
+  .u-rc-ref > .u-rc-sources, .u-rc-ref > .u-rc-related { padding: 0; }
+  .u-rc-ref > :empty { display: none; }
+  .u-rc-ref > :not(:empty) ~ :not(:empty) { border-top: 1px solid rgb(var(--u-slate-800, 30 41 59)); }
+
+  .u-rc-row {
+    display: flex; align-items: center; justify-content: flex-start; gap: 0.75rem;
+    width: 100%; min-height: 64px; padding: 0.75rem 0.875rem; text-align: left;
+    transition: background-color var(--m-hover, 150ms) ease;
+  }
+  .u-rc-row:hover { background: rgb(var(--u-white, 255 255 255) / 0.03); }
+  .u-rc-tile {
+    display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px;
+    color: rgb(var(--u-blue-400, 96 165 250));
+    background: rgb(var(--u-blue-500, 59 130 246) / 0.12);
+    box-shadow: inset 0 0 0 1px rgb(var(--u-blue-500, 59 130 246) / 0.18);
+  }
+  .u-rc-count {
+    flex-shrink: 0; min-width: 22px; height: 22px; padding-inline: 7px; border-radius: 9999px;
+    display: grid; place-items: center; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+    color: rgb(var(--u-slate-300, 203 213 225));
+    background: rgb(var(--u-white, 255 255 255) / 0.06);
+  }
+  .u-rc-chev {
+    display: grid; place-items: center; flex-shrink: 0; width: 26px; height: 26px; border-radius: 9999px;
+    color: rgb(var(--u-slate-400, 148 163 184));
+    background: rgb(var(--u-white, 255 255 255) / 0.05);
+    transition: transform 300ms var(--m-out, ease), background-color var(--m-hover, 150ms) ease;
+  }
+  .u-rc-row:hover .u-rc-chev { background: rgb(var(--u-white, 255 255 255) / 0.09); }
+}
 
 @media (min-width: 1024px) {
   .u-reader .u-rc-wrap { max-width: calc(var(--r-width) + 330px); }
@@ -248,9 +345,13 @@ code, pre, kbd, samp {
   .u-rc-main { grid-column: 2; grid-row: 1; }
   .u-rc-aside {
     display: flex; flex-direction: column; gap: 2rem;
-    grid-column: 2; grid-row: 2; padding-inline: 1.25rem;
+    grid-column: 2; grid-row: 2; padding-inline: 1.25rem;   /* = the text's md:px-5 */
   }
   .u-rc-aside > * { padding-inline: 0; }
+  .u-rc-ref { display: contents; }
+  .u-rc-ref > * { padding-inline: 0; }
+  .u-rc-sources .u-rc-fold { grid-template-rows: 1fr; }
+  .u-rc-sources .u-rc-fold > * { visibility: visible; }
 }
 @media (min-width: 1280px) {
   .u-reader .u-rc-wrap { max-width: calc(var(--r-width) + 640px); }
@@ -456,6 +557,3 @@ code, pre, kbd, samp {
 @keyframes chat-filler-fade-out { from { opacity: 1 } to { opacity: 0 } }
 .chat-filler-in  { animation: chat-filler-fade-in  800ms ease forwards; }
 .chat-filler-out { animation: chat-filler-fade-out 800ms ease forwards; }
-@media (prefers-reduced-motion: reduce) {
-  .chat-filler-in, .chat-filler-out { animation-duration: 1ms; }
-}

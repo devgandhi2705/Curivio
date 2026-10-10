@@ -1,6 +1,6 @@
 /**
  * An uploaded document's text, shown the way the document looks — used by the
- * chat attachments.
+ * chat's attachment preview and by Feed v2's material preview.
  *
  * Word and PowerPoint files are stored as Markdown (backend/utils/office_markdown.py),
  * so both render as Markdown (MarkdownDocument: CommonMark + GFM): headings, lists, bold, tables.

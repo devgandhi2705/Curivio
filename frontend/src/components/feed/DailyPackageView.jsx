@@ -379,23 +379,32 @@ function CuriositySectionHeader() {
   )
 }
 
+// A day of the feed, optionally scrolled to one article and/or in Reading mode.
+function feedUrl(projectId, dayId, articleKey = null, read = false) {
+  return `/feed/${encodeURIComponent(projectId || "")}/${dayId}`
+    + (articleKey ? `/${encodeURIComponent(articleKey)}` : "")
+    + (read ? "?read=1" : "")
+}
+
 // InsightCard props for one card — shared by the feed and Reading mode.
+// Every way into chat carries `from` (this card's URL) so chat can link back.
 function buildCardProps(card, {
   pkg, project, readKeys, onMarkRead, onMarkUnread, onOpenInChat, relatedChatsMap,
   onLoadRelatedChats, onOpenChat, notesMap, onSaveNote, onDeleteNote, queuedKeys,
-  onToggleQueue, isOnline = true, offlineIds,
+  onToggleQueue, isOnline = true, offlineIds, reader = false,
 }) {
   const ak = articleKeyFromTitle(card.title || "")
+  const chat = { insight_id: pkg.id, from: feedUrl(project?.project_id, pkg.id, ak, reader) }
   return {
     card,
     isRead:             readKeys?.has(ak) ?? false,
     onMarkRead:         onMarkRead   ? () => onMarkRead(pkg.id, ak, card.title || "") : undefined,
     onMarkUnread:       onMarkUnread ? () => onMarkUnread(pkg.id, ak)                 : undefined,
-    onAskAbout:         onOpenInChat ? (c) => onOpenInChat(c, "ask_about")         : undefined,
-    onExplainSimply:    onOpenInChat ? (c) => onOpenInChat(c, "explain_simply")    : undefined,
+    onAskAbout:         onOpenInChat ? (c) => onOpenInChat(c, "ask_about", chat)      : undefined,
+    onExplainSimply:    onOpenInChat ? (c) => onOpenInChat(c, "explain_simply", chat) : undefined,
     relatedChats:       relatedChatsMap?.get(ak) ?? null,
     onLoadRelatedChats: onLoadRelatedChats ? () => onLoadRelatedChats(pkg.id, ak)    : undefined,
-    onOpenChat,
+    onOpenChat:         onOpenChat ? (sid, title) => onOpenChat(sid, title, chat.from) : undefined,
     projectId:   project?.project_id || '',
     projectName: project?.name       || '',
     note:         notesMap?.get(ak) ?? null,
@@ -757,6 +766,8 @@ export default function DailyPackageView({
   // Set<articleKey> — synced from localStorage queue
   const [queuedKeys, setQueuedKeys] = useState(() => new Set(getQueue().map(i => i.articleKey)))
   const navigate = useNavigate()
+  // Reading mode is open while the URL says ?read=1 (see "Reading mode" below).
+  const readParam = new URLSearchParams(useLocation().search).get("read") === "1"
 
   const selected = packages.find(p => p.id === selectedId) ?? packages[0] ?? null
   const latestId = packages[0]?.id ?? null
@@ -766,7 +777,7 @@ export default function DailyPackageView({
 
   const selectPackage = (id) => {
     setSelectedId(id)
-    navigate(`/feed/${project?.project_id || ''}/${id}`)
+    navigate(feedUrl(project?.project_id, id, null, readParam))
   }
 
   // Keep queuedKeys in sync with localStorage changes from other components
@@ -789,7 +800,7 @@ export default function DailyPackageView({
     // to move too, or a finished generation snaps straight back to the old day.
     const pid = project?.project_id
     if (pid && targetInsightId && targetInsightId !== newest) {
-      navigate(`/feed/${encodeURIComponent(pid)}/${newest}`, { replace: true })
+      navigate(feedUrl(pid, newest, null, readParam), { replace: true })
     }
   }, [packages[0]?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -916,11 +927,18 @@ export default function DailyPackageView({
   }, [selected?.id, project?.project_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reading mode ──────────────────────────────────────────────────────────
-  // { start, origin } while open. It opens on the card in view and, on exit,
-  // the feed scrolls to the card that was last on screen.
-  const [reading, setReading] = useState(null)
+  // Open while the URL is /feed/<project>/<day>/<article>?read=1, so a
+  // refresh, Back from chat or a shared link lands in it again. It opens on
+  // the card in view, the URL follows each slide, and on exit the feed scrolls
+  // to the card last on screen. Leaving the feed (Ask opens chat, another
+  // project) drops ?read=1 and so closes it.
+  const [readerOrigin, setReaderOrigin] = useState(null)
   const [readerDayOpen, setReaderDayOpen] = useState(false)
   const readerCards = selected ? cardsInPageOrder(selected) : { core: [], cards: [] }
+  // Wait for the URL's day to be selected, or it would open on another day.
+  const reading = readParam && !!selected && (!targetInsightId || selected.id === targetInsightId)
+  const readerStart = Math.max(0, readerCards.cards.findIndex(c => articleKeyFromTitle(c.title || "") === targetArticleKey))
+  const readerUrl = (articleKey, read = true) => feedUrl(project?.project_id, selected.id, articleKey, read)
 
   function openReading(e) {
     const r = e.currentTarget.getBoundingClientRect()
@@ -931,25 +949,23 @@ export default function DailyPackageView({
       if (el && el.getBoundingClientRect().top <= line) start = i
     })
     setDayMenuOpen(false)
-    setReading({ start, origin: { x: r.left + r.width / 2, y: r.top + r.height / 2 } })
+    setReaderOrigin({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
+    const first = readerCards.cards[start]
+    navigate(readerUrl(first ? articleKeyFromTitle(first.title || "") : null), { replace: true })
   }
 
   function exitReading(articleKey) {
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
-    setReading(null)
-    setReaderDayOpen(false)
     // Behind the closing reveal, so the feed is already in place when it clears.
     if (articleKey) document.getElementById(`queue-card-${articleKey}`)?.scrollIntoView({ block: "start" })
+    navigate(readerUrl(null, false), { replace: true })
   }
 
-  // Leaving the feed (Ask About opens chat, the back button, another project)
-  // closes Reading mode — it belongs to this project's days only.
-  const { pathname } = useLocation()
-  const onFeed = pathname.startsWith("/feed")
+  // However it closes, full screen and the reader's day menu go with it.
   useEffect(() => {
-    if (!onFeed && reading) exitReading(null)
-  }, [onFeed]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setReading(null) }, [project?.project_id])
+    if (reading) return
+    setReaderDayOpen(false)
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
+  }, [reading])
 
   const readerCardProps = (card) => buildCardProps(card, {
     pkg: selected, project,
@@ -958,7 +974,7 @@ export default function DailyPackageView({
     onMarkUnread: isLatest ? onMarkUnread : undefined,
     onOpenInChat, relatedChatsMap, onLoadRelatedChats, onOpenChat,
     notesMap, onSaveNote: handleSaveNote, onDeleteNote: handleDeleteNote,
-    queuedKeys, onToggleQueue: handleToggleQueue, isOnline, offlineIds,
+    queuedKeys, onToggleQueue: handleToggleQueue, isOnline, offlineIds, reader: true,
   })
 
   if (packages.length === 0) {
@@ -1061,12 +1077,13 @@ export default function DailyPackageView({
               pkg={selected}
               cards={readerCards.cards}
               coreCount={readerCards.core.length}
-              startIndex={reading.start}
-              origin={reading.origin}
+              startIndex={readerStart}
+              origin={readerOrigin}
               dayLabel={displayLabels.get(selected.id)}
               readKeys={isLatest ? readKeys : undefined}
               cardProps={readerCardProps}
               onExit={exitReading}
+              onSlide={c => navigate(readerUrl(c ? articleKeyFromTitle(c.title || "") : null), { replace: true })}
               daySwitcher={
                 <DayDropdown
                   packages={packages}

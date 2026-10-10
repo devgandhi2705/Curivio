@@ -414,6 +414,30 @@ function _extractPublisher(url, title) {
   }
 }
 
+// Reading mode's reference sections start open where the spread has room
+// (≥1024px, same breakpoint as index.css) and closed on phones.
+const readerWide = () => window.matchMedia?.("(min-width: 1024px)").matches ?? true
+
+// Phones: the row heading a Reading-mode reference section, inside the
+// grouped card (.u-rc-ref in index.css). Its parts hide at ≥1024px, where
+// `children` — the desktop heading — shows instead.
+function RefRow({ icon, title, sub, count, open, onClick, className = "", children }) {
+  return (
+    <button type="button" onClick={onClick} aria-expanded={open} className={`u-rc-row ${className}`}>
+      <span className="u-rc-tile lg:hidden" aria-hidden="true">{icon}</span>
+      <span className="flex-1 min-w-0 lg:hidden">
+        <span className="block text-[14px] font-medium leading-tight text-slate-200">{title}</span>
+        {sub && <span className="block mt-1 truncate text-[12px] leading-tight text-slate-500">{sub}</span>}
+      </span>
+      {count > 0 && <span className="u-rc-count lg:hidden">{count}</span>}
+      <span className={`u-rc-chev lg:hidden ${open ? "rotate-180" : ""}`} aria-hidden="true">
+        <ChevronIcon className="w-3.5 h-3.5" />
+      </span>
+      {children}
+    </button>
+  )
+}
+
 // ─── Source section ───────────────────────────────────────────────────────────
 
 // `aside`: Reading mode's side column — the full link list under a heading.
@@ -431,26 +455,36 @@ function SourceSection({ sourceLinks, cardTitle, aside = false }) {
 
   const enriched = valid.map(s => ({ ...s, publisher: _extractPublisher(s.url, s.title) }))
 
+  // Phones: a closed row (publishers, count) that folds open to the list.
+  // ≥1024px: a plain heading and the list, always shown (index.css).
   if (aside) {
+    const names = [...new Set(enriched.map(s => s.publisher))]
     return (
       <div>
-        <p className="u-read-label text-slate-500 mb-2">Sources</p>
-        <div className="space-y-0.5">
-          {enriched.map((s, i) => (
-            <a
-              key={i}
-              href={s.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-start gap-2 py-1.5 text-[12.5px] leading-snug text-slate-400 hover:text-slate-100 transition-colors group"
-            >
-              <ExternalLinkIcon className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-600 group-hover:text-blue-400" />
-              <span className="min-w-0">
-                <span className="block line-clamp-2">{s.title || s.publisher}</span>
-                <span className="block text-[11px] text-slate-600">{s.publisher}</span>
-              </span>
-            </a>
-          ))}
+        <p className="hidden lg:block u-read-label text-slate-500 mb-2">Sources</p>
+        <RefRow icon={<ExternalLinkIcon className="w-3.5 h-3.5" />} title="Sources"
+          sub={names.slice(0, 3).join(" · ") + (names.length > 3 ? ` +${names.length - 3}` : "")}
+          count={enriched.length} open={expanded} onClick={() => setExpanded(o => !o)} className="lg:hidden" />
+        <div className="u-rc-fold" data-open={expanded}>
+          <div>
+            <div className="space-y-0.5 px-2 pb-2 lg:p-0">
+              {enriched.map((s, i) => (
+                <a
+                  key={i}
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-start gap-3 rounded-lg px-2.5 py-2 text-[13px] text-slate-300 hover:bg-white/[0.04] lg:gap-2 lg:rounded-none lg:px-0 lg:py-1.5 lg:text-[12.5px] lg:text-slate-400 lg:hover:bg-transparent leading-snug hover:text-slate-100 transition-colors"
+                >
+                  <ExternalLinkIcon className="order-last lg:order-first w-3 h-3 mt-0.5 flex-shrink-0 text-slate-600 group-hover:text-blue-400" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block line-clamp-2">{s.title || s.publisher}</span>
+                    <span className="block text-[11px] text-slate-600">{s.publisher}</span>
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -534,7 +568,7 @@ const INTERACTION_LABELS = {
 }
 
 function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat, aside = false }) {
-  const [open, setOpen] = useState(aside)
+  const [open, setOpen] = useState(() => aside && readerWide())
 
   useEffect(() => {
     if (relatedChats === null && onLoadRelatedChats) {
@@ -550,52 +584,71 @@ function RelatedChats({ relatedChats, onLoadRelatedChats, onOpenChat, aside = fa
   if (!onLoadRelatedChats && !relatedChats?.length) return null
 
   const count = relatedChats?.length ?? 0
+  const heading = (
+    <span className="flex items-center gap-1.5">
+      <ChatIcon className="w-3 h-3 text-slate-600" />
+      <span className="text-[11px] font-medium text-slate-500">
+        {relatedChats === null
+          ? "Related discussions"
+          : count === 0
+            ? "No related discussions yet"
+            : `${count} related discussion${count !== 1 ? "s" : ""}`}
+      </span>
+    </span>
+  )
+  const chevron = <ChevronIcon className={`w-3 h-3 text-slate-600 transition-transform ${open ? "rotate-180" : ""}`} />
+  const body = (
+    <div className={aside ? "px-2 pb-2 space-y-0.5 lg:p-0 lg:pt-1.5 lg:space-y-1" : "px-3 pb-2 md:px-5 md:pb-3 space-y-1.5"}>
+      {relatedChats === null ? (
+        <p className={`text-[11px] text-slate-600 animate-pulse ${aside ? "px-2.5 py-1 lg:p-0" : ""}`}>Loading…</p>
+      ) : relatedChats.length === 0 ? (
+        <p className={`text-[11px] text-slate-600 ${aside ? "px-2.5 py-1 lg:p-0" : ""}`}>Start a chat from this card to see it here.</p>
+      ) : (
+        relatedChats.map((link) => (
+          <button
+            key={link.id}
+            onClick={() => onOpenChat?.(link.session_id, link.session_title)}
+            className="w-full text-left flex items-start gap-2 p-2 rounded-lg hover:bg-slate-800/60 transition-colors group"
+          >
+            <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 w-16 flex-shrink-0">
+              {INTERACTION_LABELS[link.interaction_type] ?? "Chat"}
+            </span>
+            <span className="text-[11px] text-slate-400 group-hover:text-slate-200 transition-colors leading-snug">
+              {link.session_title || "Untitled session"}
+            </span>
+          </button>
+        ))
+      )}
+    </div>
+  )
+
+  // Reading mode: the phone row folds the list open; ≥1024px keeps the plain heading.
+  if (aside) {
+    return (
+      <div>
+        <RefRow icon={<ChatIcon className="w-3.5 h-3.5" />} title="Discussions" count={count} open={open} onClick={handleToggle}
+          sub={relatedChats === null ? "Loading…"
+            : count === 0 ? "None yet · tap Ask to start one"
+            : relatedChats[0].session_title || "Untitled session"}
+          className="w-full flex items-center justify-between py-1 transition-colors text-left">
+          <span className="hidden lg:flex w-full items-center justify-between">{heading}{chevron}</span>
+        </RefRow>
+        <div className="u-rc-fold" data-open={open}><div>{body}</div></div>
+      </div>
+    )
+  }
 
   return (
-    <div className={aside ? "" : "border-t border-slate-800/50"}>
+    <div className="border-t border-slate-800/50">
       <button
         onClick={handleToggle}
-        className={aside
-          ? "w-full flex items-center justify-between py-1 transition-colors text-left"
-          : "w-full flex items-center justify-between px-3 py-1.5 md:px-5 hover:bg-slate-800/20 transition-colors text-left"}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between px-3 py-1.5 md:px-5 hover:bg-slate-800/20 transition-colors text-left"
       >
-        <div className="flex items-center gap-1.5">
-          <ChatIcon className="w-3 h-3 text-slate-600" />
-          <span className="text-[11px] font-medium text-slate-500">
-            {relatedChats === null
-              ? "Related discussions"
-              : count === 0
-                ? "No related discussions yet"
-                : `${count} related discussion${count !== 1 ? "s" : ""}`}
-          </span>
-        </div>
-        <ChevronIcon className={`w-3 h-3 text-slate-600 transition-transform ${open ? "rotate-180" : ""}`} />
+        {heading}
+        {chevron}
       </button>
-
-      {open && (
-        <div className={aside ? "pt-1.5 space-y-1" : "px-3 pb-2 md:px-5 md:pb-3 space-y-1.5"}>
-          {relatedChats === null ? (
-            <p className="text-[11px] text-slate-600 animate-pulse">Loading…</p>
-          ) : relatedChats.length === 0 ? (
-            <p className="text-[11px] text-slate-600">Start a chat from this card to see it here.</p>
-          ) : (
-            relatedChats.map((link) => (
-              <button
-                key={link.id}
-                onClick={() => onOpenChat?.(link.session_id, link.session_title)}
-                className="w-full text-left flex items-start gap-2 p-2 rounded-lg hover:bg-slate-800/60 transition-colors group"
-              >
-                <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 w-16 flex-shrink-0">
-                  {INTERACTION_LABELS[link.interaction_type] ?? "Chat"}
-                </span>
-                <span className="text-[11px] text-slate-400 group-hover:text-slate-200 transition-colors leading-snug">
-                  {link.session_title || "Untitled session"}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
+      {open && body}
     </div>
   )
 }
@@ -607,18 +660,22 @@ const RAIL_TONE = {
   amber:   "text-amber-400",
 }
 
-function RailAction({ icon, label, onClick, active = false, tone, disabled = false }) {
+// `short`: the label under the icon in the phone action row (index.css).
+function RailAction({ icon, label, short, onClick, active = false, tone, disabled = false, className = "" }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       aria-pressed={tone ? active : undefined}
+      aria-label={short ? label : undefined}
       title={disabled ? "Requires an internet connection" : undefined}
-      className={`u-rc-act ${active && tone ? RAIL_TONE[tone] : "text-slate-400 hover:text-slate-100"} disabled:opacity-40 disabled:cursor-not-allowed`}
+      className={`u-rc-act ${active && tone ? RAIL_TONE[tone] : "text-slate-400 hover:text-slate-100"} disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
     >
       {icon}
-      <span>{label}</span>
+      {short
+        ? <><span className="lg:hidden">{short}</span><span className="hidden lg:inline">{label}</span></>
+        : <span>{label}</span>}
     </button>
   )
 }
@@ -754,7 +811,17 @@ export default function InsightCard({
     return (
       <article className="u-reader-card">
         <aside className="u-rc-rail">
-          {eyebrow && <p className="u-rc-eyebrow u-read-label text-slate-500">{eyebrow}</p>}
+          {eyebrow && (
+            <p className="u-rc-eyebrow u-read-label text-slate-500 flex items-center gap-2">
+              {eyebrow}
+              {/* Phones; the rail says "Saved for offline" under its actions */}
+              {!readOnly && isOfflineAvailable && (
+                <span className="lg:hidden inline-flex items-center gap-1.5 text-slate-600">
+                  <span aria-hidden="true">·</span><CloudCheckIcon className="w-3 h-3" />Offline
+                </span>
+              )}
+            </p>
+          )}
           <div className="u-rc-meta flex gap-1.5">
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${type.labelColor}`}>
               {type.label}
@@ -766,25 +833,26 @@ export default function InsightCard({
               {canRead && (
                 <RailAction onClick={handleReadToggle} active={isRead} tone="emerald"
                   icon={isRead ? <CheckCircleIcon className={`w-3.5 h-3.5 ${readChanges ? "u-stamp" : ""}`} /> : <CircleIcon className="w-3.5 h-3.5" />}
-                  label={isRead ? "Read" : "Mark as read"} />
+                  label={isRead ? "Read" : "Mark as read"} short={isRead ? "Read" : "Mark read"} />
               )}
               <div className="u-rc-bm"><BookmarkButton label bookmarkData={bookmarkData} /></div>
               {onToggleQueue && (
                 <RailAction onClick={(e) => { e.stopPropagation(); onToggleQueue(card) }} active={isQueued} tone="amber"
                   icon={<ClockIcon key={queueChanges} className={`w-3.5 h-3.5 ${queueChanges ? "u-spin-once" : ""}`} />}
-                  label={isQueued ? "In Read later" : "Read later"} />
+                  label={isQueued ? "In Read later" : "Read later"} short="Later" />
               )}
               {(onSaveNote || onDeleteNote || note) && (
                 <RailAction onClick={() => setNoteOpen(o => !o)} active={noteOpen || hasNote} tone="amber"
-                  icon={<PencilIcon className="w-3.5 h-3.5" />} label={hasNote ? "Your note" : "Add note"} />
+                  icon={<PencilIcon className="w-3.5 h-3.5" />} label={hasNote ? "Your note" : "Add note"} short="Note" />
               )}
-              {(onAskAbout || onExplainSimply) && <span className="u-rc-sep" aria-hidden="true" />}
+              {/* Phones get Ask / Explain from Reading mode's bottom dock instead (.u-rc-ai) */}
+              {(onAskAbout || onExplainSimply) && <span className="u-rc-sep u-rc-ai" aria-hidden="true" />}
               {onAskAbout && (
-                <RailAction onClick={() => onAskAbout(card)} disabled={offlineDisabled}
+                <RailAction onClick={() => onAskAbout(card)} disabled={offlineDisabled} className="u-rc-ai"
                   icon={<ChatIcon className="w-3.5 h-3.5" />} label="Ask about this" />
               )}
               {onExplainSimply && (
-                <RailAction onClick={() => onExplainSimply(card)} disabled={offlineDisabled}
+                <RailAction onClick={() => onExplainSimply(card)} disabled={offlineDisabled} className="u-rc-ai"
                   icon={<LightbulbIcon className="w-3.5 h-3.5" />} label="Explain simply" />
               )}
               {isOfflineAvailable && (
@@ -805,13 +873,16 @@ export default function InsightCard({
         </div>
 
         <aside className="u-rc-aside">
-          <div className="u-rc-sources"><SourceSection aside sourceLinks={card.source_links} cardTitle={card.title} /></div>
+          {/* One grouped card on phones; ≥1024px it dissolves (display: contents) */}
+          <div className="u-rc-ref">
+            <div className="u-rc-sources"><SourceSection aside sourceLinks={card.source_links} cardTitle={card.title} /></div>
+            <div className="u-rc-related">
+              <RelatedChats aside relatedChats={relatedChats} onLoadRelatedChats={onLoadRelatedChats} onOpenChat={onOpenChat} />
+            </div>
+          </div>
           {showNote && (
             <div className="u-rc-note"><NoteArea aside draft={noteDraft} onChange={handleNoteChange} autoFocus={noteOpen} /></div>
           )}
-          <div className="u-rc-related">
-            <RelatedChats aside relatedChats={relatedChats} onLoadRelatedChats={onLoadRelatedChats} onOpenChat={onOpenChat} />
-          </div>
         </aside>
       </article>
     )

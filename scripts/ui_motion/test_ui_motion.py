@@ -483,3 +483,470 @@ def test_animations_run_even_with_device_reduce_motion(browser):
     control = page.get_by_role("radiogroup", name="Motion").count()
     page.context.close()
     assert entering and control == 0, (entering, control)
+
+
+def _open_reader(browser, width):
+    page, _ = new_page(browser, "dark", width)
+    goto(page, "/feed")
+    page.get_by_label("Reading mode").first.click()
+    page.wait_for_selector(".u-reader-card", timeout=15000)
+    page.wait_for_timeout(1200)
+    return page
+
+
+def test_reader_phone_tucks_reference_and_docks_ai_actions(browser):
+    """Phone reading mode: sources and discussions start closed, the card's
+    actions sit in one row, and Ask / Explain live in the bottom dock."""
+    page = _open_reader(browser, "phone")
+    card = page.locator(".u-reader-card")
+    link = card.locator(".u-rc-sources a").first
+    sources_closed = not link.is_visible()
+    card.locator(".u-rc-sources button[aria-expanded]").click()
+    sources_open = link.is_visible()
+    related = card.locator(".u-rc-related button[aria-expanded]").get_attribute("aria-expanded")
+    rows = card.locator(".u-rc-actions > *").evaluate_all(
+        "els => new Set(els.filter(e => e.getClientRects().length).map(e => Math.round(e.getBoundingClientRect().top))).size")
+    rail_ask = card.get_by_role("button", name="Ask about this").is_visible()
+    dock = page.locator(".u-reader footer")
+    dock_ask = dock.get_by_role("button", name="Ask", exact=True).is_visible()
+    dock_explain = dock.get_by_role("button", name="Explain simply").is_visible()
+    page.context.close()
+    assert (sources_closed, sources_open, related, rows, rail_ask, dock_ask, dock_explain) == (
+        True, True, "false", 1, False, True, True)
+
+
+def test_reader_desktop_keeps_reference_open_and_actions_in_rail(browser):
+    page = _open_reader(browser, "desktop")
+    card = page.locator(".u-reader-card")
+    sources_open = card.locator(".u-rc-sources a").first.is_visible()
+    related = card.locator(".u-rc-related button[aria-expanded]").get_attribute("aria-expanded")
+    rail_ask = card.get_by_role("button", name="Ask about this").is_visible()
+    dock_ask = page.locator(".u-reader footer").get_by_role("button", name="Ask", exact=True).count()
+    page.context.close()
+    assert (sources_open, related, rail_ask, dock_ask) == (True, "true", True, 0)
+
+
+def _reader_title(page):
+    return page.locator(".u-reader-card .u-read-title").inner_text()
+
+
+def _wake(page):
+    """The reader's toolbar and dock tuck away after 2.5s still (autoHide is
+    the default); any movement brings them back, as a touch would."""
+    page.mouse.move(5, 5)
+    page.mouse.move(6, 6)
+    page.wait_for_timeout(150)
+
+
+def _next_article(page):
+    _wake(page)
+    page.locator(".u-reader footer").get_by_label("Next article").click()
+    page.wait_for_timeout(900)
+
+
+def test_reader_phone_offline_mark_and_grouped_reference(browser):
+    """Offline status sits on the "Article n of m" line; Sources and
+    Discussions are one grouped card."""
+    page = _open_reader(browser, "phone")
+    eyebrow = page.locator(".u-reader-card .u-rc-eyebrow").inner_text()
+    meta = page.locator(".u-reader-card .u-rc-meta").inner_text()
+    grouped = page.locator(".u-reader-card .u-rc-ref").evaluate(
+        "g => !!(g.querySelector('.u-rc-sources') && g.querySelector('.u-rc-related'))")
+    page.context.close()
+    assert ("offline" in eyebrow.lower(), "offline" in meta.lower(), grouped) == (True, False, True)
+
+
+def test_reader_url_survives_refresh(browser):
+    page = _open_reader(browser, "phone")
+    _next_article(page)
+    title, url = _reader_title(page), page.url
+    page.reload()
+    page.wait_for_selector(".u-reader-card", timeout=30000)
+    page.wait_for_timeout(1200)
+    title_after = _reader_title(page)
+    _wake(page)
+    page.locator(".u-reader header").get_by_title("Exit reading mode (Esc)").click()
+    page.wait_for_timeout(900)
+    exited, still_open = page.url, page.locator(".u-reader").count()
+    page.context.close()
+    assert ("read=1" in url, title_after, "read=" in exited, still_open) == (True, title, False, 0)
+
+
+def test_chat_from_reader_links_back_to_the_article(browser):
+    """Ask from the reader: chat's URL names where it came from and survives
+    the first send and a reload; its back link reopens the reader on the same
+    article. Reopened without ?from (chat history), the backend's record of the
+    source still links back to the card."""
+    page = _open_reader(browser, "phone")
+    # The chat stream is faked, so its session never reaches the database and
+    # the backend (rightly) refuses to link it to a card. Stand in for the link
+    # store; the real routes are covered by tests/test_chat_feed_link_security.py
+    # and TestChatSessionSourceEndpoint.
+    saved = {}
+
+    def link_store(route):
+        if route.request.method != "POST":
+            return route.fallback()
+        saved.update(json.loads(route.request.post_data))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({"id": 1, **saved}))
+    page.route(f"{API_URL}/feed-chat-links", link_store)
+    page.route(_re.compile(r".*/chat/sessions/[^/?]+/source$"), lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({k: saved.get(k) for k in ("project_id", "insight_id", "article_key", "article_title")} if saved else None)))
+    _next_article(page)
+    title = _reader_title(page)
+    _wake(page)
+    page.locator(".u-reader footer").get_by_role("button", name="Ask", exact=True).click()
+    page.wait_for_url("**/chat?from=*", timeout=10000)
+    box = page.get_by_placeholder(_re.compile("Ask anything", _re.I)).first
+    box.fill("Why does this matter?")
+    page.keyboard.press("Enter")
+    page.get_by_text("choke points", exact=False).first.wait_for(timeout=15000)
+    page.wait_for_url(_re.compile(r"/chat/[^/?]+\?from="), timeout=10000)
+    page.wait_for_timeout(800)   # the feed→chat link is saved after the stream ends
+    from_url = page.url[len(APP_URL):]
+
+    goto(page, from_url.split("?")[0])
+    back = page.get_by_role("link", name=_re.compile("Back to article", _re.I))
+    back.wait_for(timeout=10000)
+    history_href = back.get_attribute("href")
+
+    goto(page, from_url)
+    page.get_by_role("link", name=_re.compile("Back to article", _re.I)).click()
+    page.wait_for_selector(".u-reader-card", timeout=15000)
+    page.wait_for_timeout(1200)
+    title_back = _reader_title(page)
+    page.context.close()
+    assert (title_back, history_href.startswith("/feed/"), "read=" in history_href) == (title, True, False)
+
+
+def test_unsent_card_context_does_not_follow_into_a_later_chat(browser):
+    """Ask from a card, go back without asking, then open Chat normally: the
+    card's "Asking about" header must be gone (the chat view stays mounted)."""
+    page = _open_reader(browser, "desktop")
+    _wake(page)
+    page.locator(".u-reader-card").get_by_role("button", name="Ask about this").click()
+    page.wait_for_url("**/chat?from=*", timeout=10000)
+    page.get_by_text("Asking about", exact=False).first.wait_for(timeout=10000)
+    page.get_by_role("link", name=_re.compile("Back to article", _re.I)).first.click()
+    page.wait_for_selector(".u-reader-card", timeout=15000)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(900)
+    page.locator("aside").get_by_role("link", name="Chat", exact=True).first.click()
+    page.wait_for_timeout(1200)
+    still = page.get_by_text("Asking about", exact=False).count()
+    page.context.close()
+    assert still == 0
+
+
+def _select_card_text(page, end=12):
+    """Select the first words of a feed card the way a reader would, which is
+    what opens Unpack (useTextSelection listens for mouseup)."""
+    page.evaluate("""() => {
+      const p = [...document.querySelectorAll('.u-read-card p')].find(e => e.textContent.trim().length > 40)
+      const node = [...p.childNodes].find(n => n.nodeType === 3 && n.textContent.trim().length > 20)
+      const r = document.createRange(); r.setStart(node, 0); r.setEnd(node, END)
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    }""".replace("END", str(end)))
+    page.locator("[data-unpack-popover]").wait_for(timeout=5000)
+
+
+def _running(page, name):
+    return page.evaluate(f"() => document.getAnimations().some(a => a.animationName === '{name}')")
+
+
+def _open_share(browser, width):
+    page, _ = new_page(browser, "dark", width)
+    page.route(f"{API_URL}/share/create", _ok({"token": "abc123def456ghi789"}))
+    if width == "phone":                          # a phone browser with a native share sheet
+        page.add_init_script("navigator.share = () => Promise.resolve()")
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    goto(page, "/feed")
+    card = page.locator(".u-read-card").first
+    title = card.locator("h3, h2").first.inner_text().strip()
+    card.get_by_role("button", name="Share", exact=True).click()
+    pop = page.locator("[data-share-popover]")
+    pop.wait_for(timeout=5000)
+    page.wait_for_timeout(400)
+    return page, pop, title
+
+
+def _ok(body):
+    return lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+
+def _admin_page(browser, put_status=204):
+    """/admin/calls with every admin endpoint stubbed (the harness account isn't an
+    admin): one two-call operation group and one single call."""
+    page, _ = new_page(browser, "dark", "desktop")
+    seen = {"grouped": [], "put": [], "delete": []}
+    groups = [
+        {"trace_id": "tA", "surface": "explain", "action_type": "explain", "started_at": "2026-10-01 10:00:00",
+         "ended_at": "2026-10-01 10:00:05", "row_count": 2, "all_succeeded": True, "has_web_search": False,
+         "user_email": "a@example.com", "op_latency_ms": 240, "op_tokens": 20, "starred": False,
+         "rows": [_admin_row(1, "tA"), _admin_row(2, "tA")]},
+        {"trace_id": None, "surface": "explain", "action_type": "explain", "started_at": "2026-10-01 09:00:00",
+         "ended_at": "2026-10-01 09:00:01", "row_count": 1, "all_succeeded": True, "has_web_search": False,
+         "user_email": "a@example.com", "op_latency_ms": 120, "op_tokens": 10, "starred": True,
+         "rows": [_admin_row(3, None)]},
+    ]
+    summary = {"total_calls": 3, "success_count": 3, "error_count": 0, "success_rate": 1.0, "total_tokens": 30,
+               "avg_latency_ms": 120, "by_call_type": [], "by_model": [], "by_surface": [], "by_error_type": []}
+    ops = {"total_operations": 2, "succeeded_operations": 2, "failed_operations": 0,
+           "operation_success_rate": 1.0, "avg_latency_per_operation_ms": 180}
+
+    def admin(r):
+        url = r.request.url
+        if "/admin/stars" in url:
+            seen["put" if r.request.method == "PUT" else "delete"].append(r.request.post_data or url)
+            return r.fulfill(status=put_status, body="" if put_status == 204 else '{"detail": "nope"}',
+                             content_type="application/json")
+        if "/admin/calls/grouped" in url:
+            seen["grouped"].append(url)
+            return _ok({"total": 2, "limit": 20, "offset": 0, "groups": groups})(r)
+        if "/admin/operations/summary" in url:
+            return _ok(ops)(r)
+        if "/admin/summary" in url:
+            return _ok(summary)(r)
+        if "/admin/calls/volume" in url:
+            return _ok({"total": 3, "granularity": "day", "by_day": []})(r)
+        if "/admin/projects" in url:
+            return _ok({"projects": []})(r)
+        return _ok({})(r)
+    page.route(f"{API_URL}/admin/**", admin)
+    goto(page, "/admin/calls")
+    page.get_by_role("button", name="Star this operation").first.wait_for(timeout=10000)
+    return page, seen
+
+
+def test_admin_rows_can_be_starred_and_filtered(browser):
+    page, seen = _admin_page(browser)
+    op = page.get_by_role("button", name="Star this operation").first
+    single = page.get_by_role("button", name="Star this call").first
+    initial = (op.get_attribute("aria-pressed"), single.get_attribute("aria-pressed"))
+    op.click()
+    page.wait_for_timeout(200)
+    after = op.get_attribute("aria-pressed")
+    body = seen["put"][0] if seen["put"] else None
+    expanded_rows_have_stars = None
+    page.get_by_text("2 calls").first.click()                     # expand the group
+    page.wait_for_timeout(300)
+    expanded_rows_have_stars = page.get_by_role("button", name="Star this call").count() == 3
+    page.get_by_label("★ Starred only").check()
+    page.wait_for_timeout(500)
+    filtered = any("starred=true" in u for u in seen["grouped"])
+    page.context.close()
+    got = dict(initial=initial == ("false", "true"), starred=after == "true",
+               body=bool(body) and json.loads(body) == {"kind": "group", "key": "tA"},
+               nested=expanded_rows_have_stars, filtered=filtered)
+    assert all(got.values()), got
+
+
+def test_admin_star_reverts_when_saving_fails(browser):
+    page, _ = _admin_page(browser, put_status=500)
+    op = page.get_by_role("button", name="Star this operation").first
+    op.click()
+    page.wait_for_timeout(600)
+    pressed = op.get_attribute("aria-pressed")
+    alert = page.get_by_role("alert").count()
+    page.context.close()
+    assert pressed == "false" and alert == 1, (pressed, alert)
+
+
+@pytest.mark.parametrize("width", list(WIDTHS))
+def test_feed_reads_at_reading_sizes(browser, width):
+    """The feed's reading scale: serif titles above a 16px summary, running
+    text at 14px or more, and a column narrow enough for ~75-character lines."""
+    page, _ = new_page(browser, "dark", width)
+    goto(page, "/feed")
+    got = page.evaluate("""() => {
+        const card = document.querySelector('.u-read-card')
+        const px = el => parseFloat(getComputedStyle(el).fontSize)
+        const title = card.querySelector('h3'), lead = card.querySelector('.u-read-lead')
+        const body = [...card.querySelectorAll('p')].filter(p => p.closest('.u-read-card') === card && p.textContent.length > 40)
+        return {
+            serif: getComputedStyle(title).fontFamily.includes('Newsreader'),
+            title_over_lead: px(title) > px(lead),
+            lead: px(lead) >= 16,
+            body: body.every(p => px(p) >= 14),
+            column: card.getBoundingClientRect().width <= 720,
+        }
+    }""")
+    page.context.close()
+    assert all(got.values()), got
+
+
+def test_next_day_is_generated_from_the_day_menu(browser):
+    """The generate button moved from the bottom of the newest day into the Day
+    menu. Marks the UI-check account's newest day read, then puts it back; the
+    generate call itself is stubbed, so no package is really built."""
+    page, _ = new_page(browser, "light", "desktop")
+    posts = []
+    page.route(f"{API_URL}/projects/*/insights/generate",
+               lambda r: (posts.append(r.request.url), _ok({"id": 999999, "day_number": 99, "generated_at": "2026-10-03T00:00:00",
+                                                           "status": "generating"})(r)))
+    page.route(f"{API_URL}/projects/*/insights/999999/status", _ok({"status": "generating", "stage": "searching"}))
+    goto(page, "/feed")
+    day = page.get_by_role("button", name=DAY_BUTTON).first
+    got = {}
+    try:
+        _mark_all(page, "Read")                                   # start from all-unread
+        got["no_bottom_button"] = page.get_by_role("button", name=_re.compile(r"^generate day", _re.I)).count() == 0
+        got["no_dot_when_locked"] = day.get_attribute("data-next") == "locked"
+        day.click()
+        page.wait_for_timeout(400)
+        row = page.locator(".u-menu").get_by_role("button", name=GENERATE_ROW)
+        got["locked_row"] = row.is_disabled() and "to unlock" in row.inner_text()
+        page.mouse.click(5, 300)
+        page.wait_for_timeout(500)
+
+        _mark_all(page, "Mark as Read")
+        got["dot_when_ready"] = day.get_attribute("data-next") == "ready"
+        page.get_by_role("button", name=_re.compile(r"unlocked", _re.I)).click()  # the progress bar's nudge opens the menu
+        page.wait_for_timeout(400)
+        row = page.locator(".u-menu").get_by_role("button", name=GENERATE_ROW)
+        got["ready_row"] = row.is_enabled()
+        row.click()
+        page.locator(".u-menu").get_by_role("button", name="Yes").click()
+        page.wait_for_timeout(6500)                               # one status poll
+        got["posted"] = len(posts) == 1
+        got["building"] = day.get_attribute("data-next") == "building"
+        day.click()
+        page.wait_for_timeout(400)
+        got["building_row"] = "scanning sources" in page.locator(".u-menu").inner_text().lower()
+    finally:
+        page.context.close()
+    page, _ = new_page(browser, "light", "desktop")              # a fresh page: the stubbed run isn't polled any more
+    goto(page, "/feed")
+    _mark_all(page, "Read")
+    page.context.close()
+    assert all(got.values()), got
+
+
+def test_share_on_a_phone_hands_off_to_the_native_sheet(browser):
+    page, pop, _ = _open_share(browser, "phone")
+    got = {"no_platform_grid": pop.get_by_role("link").count() == 0,
+           "native": pop.get_by_role("button", name=_re.compile("share to apps", _re.I)).count() == 1}
+    page.context.close()
+    assert all(got.values()), got
+
+
+def test_share_opens_on_a_preview_of_what_is_shared(browser):
+    page, pop, title = _open_share(browser, "desktop")
+    got = {"preview": title[:30] in pop.inner_text(), "url": "/share/abc123" in pop.inner_text()}
+    copy = pop.get_by_role("button", name=_re.compile("copy link", _re.I)).element_handle()  # its name changes
+    copy.click()
+    page.wait_for_timeout(200)
+    got["copied"] = "Copied" in copy.inner_text()
+    got["clipboard"] = page.evaluate("navigator.clipboard.readText()").endswith("/share/abc123def456ghi789")
+    got["platforms"] = pop.get_by_role("link").count() == 7
+    page.wait_for_timeout(2300)
+    got["reverts"] = "Copy link" in copy.inner_text()
+    page.context.close()
+    assert all(got.values()), got
+
+
+def test_unpack_popover_moves(browser):
+    """Unpack gets the app's motion: a livelier menu, slides between steps with a
+    Back arrow, wave dots then a word-by-word answer, an exit on close, and sound
+    bars while Read Aloud plays. Every /unpack call is stubbed."""
+    page, _ = new_page(browser, "dark", "desktop")
+    held = []
+    page.route(f"{API_URL}/unpack/explain", lambda r: held.append(r))
+    page.route(f"{API_URL}/unpack/read-aloud", _ok({"term": "x", "audio_base64": "SUQzBAAAAAAA"}))
+    goto(page, "/feed")
+    _select_card_text(page)
+    pop = page.locator("[data-unpack-popover]")
+    menu = pop.locator(".u-menu")
+    menu_ok = menu.count() == 1 and menu.locator(".u-hover-pill").count() == 1 \
+        and menu.locator("button svg").count() == 3
+    pop.get_by_role("button", name="Translate").click()
+    page.wait_for_timeout(30)
+    slid_fwd = _running(page, "m-slide-fwd")
+    pop.get_by_role("button", name="Back").click()
+    page.wait_for_timeout(30)
+    slid_back = _running(page, "m-slide-back") and pop.get_by_role("button", name="Explain").count() == 1
+    page.wait_for_timeout(500)
+    pop.get_by_role("button", name="Explain").click()
+    page.wait_for_timeout(300)
+    waving = pop.locator(".u-wave").count() == 1
+    held[0].fulfill(status=200, content_type="application/x-ndjson", body=(
+        json.dumps({"t": "chunk", "v": "Ports were choke points where every cargo passed."}) + "\n"
+        + json.dumps({"t": "done", "meaning_in_context": "Ports were choke points where every cargo passed."}) + "\n"))
+    page.wait_for_timeout(600)
+    words = pop.locator(".u-word").count()
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(40)
+    leaving = page.locator("[data-unpack-popover]").count() == 1
+    page.wait_for_timeout(600)
+    gone = page.locator("[data-unpack-popover]").count() == 0
+    _select_card_text(page, end=18)        # a new selection: the closed one's echo is ignored on purpose
+    pop.get_by_role("button", name="Read Aloud").click()
+    pop.locator("audio").wait_for(state="attached", timeout=5000)
+    pop.locator("audio").evaluate("a => a.dispatchEvent(new Event('play'))")
+    page.wait_for_timeout(100)
+    bars_on = pop.locator(".u-eq").count() == 1
+    pop.locator("audio").evaluate("a => a.dispatchEvent(new Event('pause'))")
+    page.wait_for_timeout(100)
+    bars_off = pop.locator(".u-eq").count() == 0
+    page.context.close()
+    got = dict(menu_ok=menu_ok, slid_fwd=slid_fwd, slid_back=slid_back, waving=waving, words=words >= 6,
+               leaving=leaving, gone=gone, bars_on=bars_on, bars_off=bars_off)
+    assert all(got.values()), got
+
+
+def test_wide_screens_put_the_side_space_to_work(browser):
+    """At 1920px the main area has room for rails: a sticky outline of the day
+    (jumps to a card, marks the one being read) and the path ahead. At 1440 with
+    the sidebar open there isn't, and the page stays one column."""
+    page, _ = new_page(browser, "dark", "desktop")
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    goto(page, "/feed")
+    outline = page.get_by_role("navigation", name="Today's cards")
+    got = {"outline": outline.is_visible(),
+           "items": outline.get_by_role("button").count() == page.locator(".u-read-card").count()}
+    target = outline.get_by_role("button").nth(2)
+    target.click()
+    page.wait_for_timeout(1200)
+    got["jumps"] = target.get_attribute("aria-current") == "true"
+    got["sticky"] = outline.bounding_box()["y"] < 200
+    got["path_in_rail"] = page.get_by_role("complementary", name="Your path").count() == 1
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.wait_for_timeout(400)
+    got["narrow_hides"] = page.get_by_role("navigation", name="Today's cards").count() == 0
+    page.context.close()
+    assert all(got.values()), got
+
+
+def test_your_path_numbers_match_the_day_menu(browser):
+    """The path's first entry is the next lesson to generate (the server calls it
+    "today"), and its later entries carry the server's internal lesson count —
+    neither matched the Day labels the rest of the feed uses."""
+    page, _ = new_page(browser, "dark", "desktop")
+    goto(page, "/feed")
+    path = page.get_by_text("Your path", exact=True).locator("xpath=..")
+    path.wait_for(timeout=10000)
+    text = path.inner_text()
+    page.get_by_role("button", name=DAY_BUTTON).first.click()
+    page.wait_for_timeout(400)
+    row = page.locator(".u-menu").get_by_role("button", name=GENERATE_ROW).inner_text()
+    next_label = _re.search(r"day \d+(\.\d+)?", row, _re.I).group(0)
+    page.context.close()
+    got = {"no_today": "TODAY" not in text.upper().split(),
+           "up_next_matches_menu": f"up next · {next_label}".lower() in text.lower(),
+           "no_internal_numbers": not _re.search(r"^day \d+$", text, _re.I | _re.M)}
+    assert all(got.values()), (got, text, next_label)
+
+
+GENERATE_ROW = _re.compile(r"^(generate|building) day", _re.I)
+
+
+def _admin_row(i, trace, ok=True, starred=False):
+    return {"id": i, "run_id": f"r{i}", "parent_run_id": None, "timestamp_start": "2026-10-01 10:00:00",
+            "timestamp_end": "2026-10-01 10:00:01", "latency_ms": 120, "provider": "gemini",
+            "model_requested": "gemini-2.5-flash", "model_used": "gemini-2.5-flash", "call_type": "explain",
+            "user_id": "u1", "user_email": "a@example.com", "project_id": None, "day_ref": None,
+            "input": "in", "output": "out", "input_tokens": 5, "output_tokens": 5, "total_tokens": 10,
+            "success": ok, "error_type": None, "error_message": None, "retry_count": 0,
+            "created_at": "2026-10-01 10:00:00", "starred": starred}

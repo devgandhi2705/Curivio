@@ -7,6 +7,8 @@ import LearningCalendar from "../feed/LearningCalendar.jsx"
 import ShareButton from "../ShareButton.jsx"
 import NotesModule from "./NotesModule.jsx"
 import { useAuth } from "../../contexts/AuthContext.jsx"
+import CountUp from "../shared/CountUp.jsx"
+import { useCountUp } from "../../hooks/useCountUp.js"
 
 // ── Constants & helpers ───────────────────────────────────────────────────────
 
@@ -111,12 +113,12 @@ export function StatsStrip({ stats, loading }) {
   ]
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 mb-5 rounded-2xl bg-slate-900/60 border border-slate-800/50 overflow-hidden divide-y sm:divide-y-0 sm:divide-x divide-slate-800/50">
+    <div className="u-stagger grid grid-cols-2 sm:grid-cols-5 mb-5 rounded-2xl bg-slate-900/60 border border-slate-800/50 overflow-hidden divide-y sm:divide-y-0 sm:divide-x divide-slate-800/50">
       {tiles.map((t, i) => (
         <div key={i} className={`flex items-center gap-2 sm:gap-2.5 px-3 sm:px-4 py-2.5 sm:py-3 ${t.bg} ${i === tiles.length - 1 ? "col-span-2 sm:col-span-1" : ""}`}>
-          <span className="text-lg leading-none">{t.icon}</span>
+          <span className={`text-lg leading-none ${t.icon === "🔥" ? "u-flame" : ""}`}>{t.icon}</span>
           <div className="min-w-0">
-            <div className={`text-[17px] font-bold leading-none tabular-nums ${t.accent}`}>{t.value}</div>
+            <div className={`text-[17px] font-bold leading-none tabular-nums ${t.accent}`}><CountUp value={t.value} /></div>
             <div className="text-[10px] text-slate-600 mt-0.5 whitespace-nowrap">{t.label}</div>
           </div>
         </div>
@@ -135,6 +137,7 @@ function GoalRing({ current, target }) {
   const circumference = 2 * Math.PI * R
   const offset = circumference * (1 - pct)
   const done = current >= target
+  const shown = useCountUp(current)
 
   return (
     <svg width={116} height={116} viewBox="0 0 116 116">
@@ -145,14 +148,16 @@ function GoalRing({ current, target }) {
         strokeDasharray={circumference}
         strokeDashoffset={offset}
         transform={`rotate(-90 ${cx} ${cy})`}
+        className="u-ring-draw"
         style={{
+          "--ring-c": circumference,
           stroke: done ? "var(--u-success)" : "var(--u-accent)",
           transition: "stroke-dashoffset 0.6s ease, stroke 0.3s",
         }}
       />
       <text x={cx} y={cy - 6} textAnchor="middle"
         style={{ fontSize: 26, fontWeight: 700, fill: done ? "var(--u-success)" : "var(--dk-heading)", fontFamily: "inherit" }}>
-        {current}
+        {Math.round(shown)}
       </text>
       <text x={cx} y={cy + 14} textAnchor="middle"
         style={{ fontSize: 11, fill: "var(--u-axis)", fontFamily: "inherit" }}>
@@ -245,7 +250,7 @@ export function ConsistencyCard({ activityData }) {
           <p className={`text-xs font-semibold mt-1 ${colorClass}`}>{label}</p>
         </div>
         <div className="text-right">
-          <span className={`text-2xl font-bold tabular-nums leading-none ${colorClass}`}>{pct}%</span>
+          <span className={`text-2xl font-bold tabular-nums leading-none ${colorClass}`}><CountUp value={`${pct}%`} /></span>
           <p className="text-[10px] text-slate-600 mt-0.5">{activeDays} / 30 days</p>
         </div>
       </div>
@@ -253,7 +258,8 @@ export function ConsistencyCard({ activityData }) {
         {cells.map((active, i) => (
           <div
             key={i}
-            className={`w-[13px] h-[13px] rounded-sm transition-colors ${active ? "bg-blue-600/80" : "bg-slate-800/60"}`}
+            className={`u-cell w-[13px] h-[13px] rounded-sm transition-colors ${active ? "bg-blue-600/80" : "bg-slate-800/60"}`}
+            style={{ "--i": i }}
           />
         ))}
       </div>
@@ -304,10 +310,10 @@ export function WeekdayChart({ activityData }) {
           >
             <div className="w-full flex items-end flex-1">
               <div
-                className={`w-full rounded-md transition-all duration-500 ${
+                className={`u-grow-y w-full rounded-md transition-all duration-500 ${
                   avg === 0 ? "bg-slate-800/50" : i === bestIdx ? "bg-blue-500" : "bg-blue-700/50"
                 }`}
-                style={{ height: `${Math.max((avg / maxAvg) * 64, avg > 0 ? 6 : 3)}px` }}
+                style={{ height: `${Math.max((avg / maxAvg) * 64, avg > 0 ? 6 : 3)}px`, "--i": i }}
               />
             </div>
             <span className="text-[10px] text-slate-600 leading-none">{name}</span>

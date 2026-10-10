@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import LogoMark from "../components/shared/LogoMark.jsx"
+import Plate from "../components/shared/Plate.jsx"
 import { Link, useParams, useNavigate } from "react-router-dom"
 import { resolveShareLink, forkSharedChat } from "../api/share.js"
 import { getToken } from "../api/auth.js"
@@ -55,7 +56,8 @@ function FeedShare({ resourceId, pkg }) {
   const openHref = getToken() ? `/feed/${resourceId}` : `/login?next=${encodeURIComponent(`/feed/${resourceId}`)}`
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 md:px-8 md:py-10">
+    <div className="relative isolate u-stagger max-w-2xl mx-auto px-4 py-8 md:px-8 md:py-10">
+      <Plate seed={29} count={10} className="u-plate u-plate-hero" />
       <div className="mb-6">
         <Wordmark />
       </div>
@@ -113,7 +115,8 @@ function DashboardShare({ username, stats, activity }) {
   }, [activity])
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 md:px-8 md:py-10">
+    <div className="relative isolate u-stagger max-w-5xl mx-auto px-4 py-8 md:px-8 md:py-10">
+      <Plate seed={29} count={10} className="u-plate u-plate-hero" />
       <div className="mb-6">
         <Wordmark />
       </div>
@@ -172,7 +175,8 @@ function ChatShare({ token, messages }) {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 md:px-8 md:py-10">
+    <div className="relative isolate u-stagger max-w-2xl mx-auto px-4 py-8 md:px-8 md:py-10">
+      <Plate seed={29} count={10} className="u-plate u-plate-hero" />
       <div className="mb-6">
         <Wordmark />
       </div>

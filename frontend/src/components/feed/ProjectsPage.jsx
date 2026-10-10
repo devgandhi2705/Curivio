@@ -776,8 +776,8 @@ export default function ProjectsPage({
     }
   }, [activeId])
 
-  const handleOpenChat = useCallback((sessionId, title) => {
-    onOpenChat?.(sessionId, title)
+  const handleOpenChat = useCallback((sessionId, title, from) => {
+    onOpenChat?.(sessionId, title, from)
   }, [onOpenChat])
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -864,12 +864,14 @@ export default function ProjectsPage({
                 onClearQueueTarget={onClearQueueTarget}
                 onOpenInChat={
                   onOpenInChat
-                    ? (card, action) => onOpenInChat(card, action, {
+                    // `extra` from the card: its own day (insight_id) and `from` URL
+                    ? (card, action, extra) => onOpenInChat(card, action, {
                         name:       activeProject.name,
                         keywords:   activeProject.keywords,
                         domain:     activeProject.domain || "default",
                         project_id: activeProject.project_id,
                         insight_id: insights[0]?.id ?? null,
+                        ...extra,
                       })
                     : undefined
                 }

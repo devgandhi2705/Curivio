@@ -341,6 +341,12 @@ export async function fetchHistory(sessionId, limit = 50) {
   return get(`/chat/history/${encodeURIComponent(sessionId)}?limit=${limit}`)
 }
 
+/** The feed card a session was started from — {project_id, insight_id, article_key, article_title} — or null. */
+export async function fetchSessionSource(sessionId) {
+  if (USE_MOCK) return null
+  return get(`/chat/sessions/${encodeURIComponent(sessionId)}/source`)
+}
+
 /**
  * Chat-R16 files panel: every attachment across the whole session, unbounded
  * — deliberately not fetchHistory, which caps at 50 messages (ChatWorkspace's

@@ -211,12 +211,122 @@ class TestFeedChatLinksEndpointGate:
         assert resp.status_code == 404
         mock_create.assert_not_called()
 
+    def test_create_link_blocks_unowned_session_404(self, client):
+        # The project is the caller's, the session isn't: someone else's chat must
+        # not be attachable to (and listed under) the caller's card.
+        with patch("backend.services.project_service.get_project_owner", return_value="test-user"), \
+             patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.services.feed_chat_link_service.create_link") as mock_create:
+            resp = client.post("/feed-chat-links", json={
+                "session_id": "s1", "project_id": "p1", "article_key": "a1",
+            })
+        assert resp.status_code == 404
+        mock_create.assert_not_called()
+
+    def test_create_link_blocks_ownerless_session_404(self, client):
+        # Strict: a link is only written after the session's first reply, so by
+        # then it always exists and is owned — a NULL owner is never legitimate.
+        with patch("backend.services.project_service.get_project_owner", return_value="test-user"), \
+             patch("backend.services.chat_title_service.get_session_owner", return_value=None), \
+             patch("backend.services.feed_chat_link_service.create_link") as mock_create:
+            resp = client.post("/feed-chat-links", json={
+                "session_id": "s1", "project_id": "p1", "article_key": "a1",
+            })
+        assert resp.status_code == 404
+        mock_create.assert_not_called()
+
+    def test_create_link_allows_owned_project_and_session(self, client):
+        with patch("backend.services.project_service.get_project_owner", return_value="test-user"), \
+             patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.services.feed_chat_link_service.create_link", return_value={"id": 1}) as mock_create:
+            resp = client.post("/feed-chat-links", json={
+                "session_id": "s1", "project_id": "p1", "article_key": "a1",
+            })
+        assert resp.status_code == 200
+        mock_create.assert_called_once()
+
     def test_get_links_blocks_unowned_project_404(self, client):
         with patch("backend.services.project_service.get_project_owner", return_value="someone-else"), \
              patch("backend.services.feed_chat_link_service.get_links_for_article") as mock_get:
             resp = client.get("/feed-chat-links", params={"project_id": "p1", "article_key": "a1"})
         assert resp.status_code == 404
         mock_get.assert_not_called()
+
+
+class TestChatStreamFeedContextGate:
+    """feed_context.project_id is client-supplied, and chat_service loads that
+    project's learning memory into the prompt — it must be the caller's project."""
+
+    def _stream(self, client, project_id):
+        def fake_stream(**kwargs):
+            yield '{"t": "done"}\n'
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.services.chat_title_service.ensure_session_owner"), \
+             patch("backend.main.chat_stream_generator", side_effect=fake_stream) as gen:
+            resp = client.post("/chat/stream", json={
+                "session_id": "s1", "message": "hi",
+                "feed_context": {"action": "ask_about", "insight_title": "t", "project_id": project_id},
+            })
+        return resp, gen
+
+    @pytest.mark.parametrize("owner", ["someone-else", None])
+    def test_foreign_or_ownerless_project_404s_before_the_prompt_is_built(self, client, owner):
+        with patch("backend.services.project_service.get_project_owner", return_value=owner):
+            resp, gen = self._stream(client, "p-other")
+        assert resp.status_code == 404
+        gen.assert_not_called()
+
+    def test_own_project_streams(self, client):
+        with patch("backend.services.project_service.get_project_owner", return_value="test-user"):
+            resp, gen = self._stream(client, "p1")
+        assert resp.status_code == 200
+        assert gen.call_args.kwargs["feed_context"]["project_id"] == "p1"
+
+    def test_no_project_id_skips_the_check(self, client):
+        with patch("backend.services.project_service.get_project_owner") as owner:
+            resp, gen = self._stream(client, "")
+        assert resp.status_code == 200
+        owner.assert_not_called()
+
+
+class TestChatSessionSourceEndpoint:
+    """GET /chat/sessions/{id}/source — the feed card a chat was started from,
+    so the chat can link back to it."""
+    LINK = {"id": 1, "session_id": "s1", "project_id": "p1", "insight_id": 7,
+            "article_key": "a1", "article_title": "A1", "interaction_type": "ask_about",
+            "created_at": "2026-10-10T00:00:00Z"}
+
+    def test_blocks_unowned_session_404(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="someone-else"), \
+             patch("backend.services.feed_chat_link_service.get_link_for_session") as mock_get:
+            resp = client.get("/chat/sessions/s1/source")
+        assert resp.status_code == 404
+        mock_get.assert_not_called()
+
+    def test_returns_link_for_owner(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.services.project_service.get_project_owner", return_value="test-user"), \
+             patch("backend.services.feed_chat_link_service.get_link_for_session", return_value=self.LINK):
+            resp = client.get("/chat/sessions/s1/source")
+        assert resp.status_code == 200
+        assert resp.json() == {"project_id": "p1", "insight_id": 7, "article_key": "a1", "article_title": "A1"}
+
+    def test_null_when_session_has_no_link(self, client):
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.services.feed_chat_link_service.get_link_for_session", return_value=None):
+            resp = client.get("/chat/sessions/s1/source")
+        assert resp.status_code == 200
+        assert resp.json() is None
+
+    def test_null_when_link_points_at_unowned_project(self, client):
+        # POST /feed-chat-links only checks the project, so a link row can name
+        # any session id — never hand out another user's project through it.
+        with patch("backend.services.chat_title_service.get_session_owner", return_value="test-user"), \
+             patch("backend.services.project_service.get_project_owner", return_value="someone-else"), \
+             patch("backend.services.feed_chat_link_service.get_link_for_session", return_value=self.LINK):
+            resp = client.get("/chat/sessions/s1/source")
+        assert resp.status_code == 200
+        assert resp.json() is None
 
 
 class TestShareCreateGate:

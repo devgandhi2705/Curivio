@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { m, AnimatePresence, useDialogMotion } from "../../lib/motion.jsx"
-import { useNavigate } from "react-router-dom"
-import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
+import { useNavigate, useLocation, Link } from "react-router-dom"
+import { sendMessageStream, cancelStream, fetchHistory, fetchSessions, fetchSessionSource, clearHistory, renameSession, deleteSession, deleteLastTurn } from "../../api/chat.js"
 import { createFeedChatLink, articleKeyFromTitle } from "../../api/feed.js"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
 import { useContextMenu } from "../../contexts/ContextMenu.jsx"
@@ -86,7 +86,15 @@ function getGreeting(name, rand) {
 
 export default function ChatWorkspace({ feedContext = null, onClearFeedContext, targetSessionId = null, targetSessionTitle = null, onClearTargetSession, userName, onSidebarClose, onBeforeModal }) {
   const navigate = useNavigate()
+  const { pathname, search } = useLocation()
   const [sessionId, setSessionId]     = useState(() => generateSessionId())
+  // Back to the feed card this chat came from: ?from= (set by the feed; only
+  // /feed/ paths are trusted) or, without it, the backend's record of the
+  // session's source card.
+  const [source, setSource] = useState(null)   // { session_id, href }
+  const fromParam = new URLSearchParams(search).get("from")
+  const backHref = fromParam?.startsWith("/feed/") ? fromParam
+    : source?.session_id === sessionId ? source.href : null
   const [messages, setMessages]       = useState([])
   const [sessions, setSessions]       = useState([])
   const [isLoading, setIsLoading]     = useState(false)
@@ -147,6 +155,13 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedContext])
 
+  // A card context belongs to the visit it was opened for. This view stays
+  // mounted, so leaving chat without asking (Back to article, the sidebar)
+  // has to drop it, or the next plain visit to Chat still shows "Asking about".
+  useEffect(() => {
+    if (!pathname.startsWith("/chat")) setActiveFeedCtx(null)
+  }, [pathname])
+
   // Fire the auto-send once activeFeedCtx is committed to state.
   useEffect(() => {
     if (!autoSendPending || !activeFeedCtx || activeFeedCtx.action !== "explain_simply") return
@@ -171,6 +186,9 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
 
   const handleSend = useCallback((text, attachments = [], { retryMode = false } = {}) => {
     if (isLoading) return
+    // A new chat takes its own URL on the first send, so a reload reopens it
+    // (?from= rides along).
+    if (pathname === "/chat") navigate(`/chat/${encodeURIComponent(sessionId)}${search}`, { replace: true })
     setError(null)
     setStatusMsg(null)
 
@@ -416,7 +434,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
       },
     }, effectiveMode, feedCtx, attachments.map(({ previewUrl, ...a }) => a))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode])
+  }, [sessionId, isLoading, chatMode, activeFeedCtx, conversationMode, pathname, search, navigate])
 
   const handleNewChat = useCallback(() => {
     setSessionId(generateSessionId())
@@ -429,8 +447,15 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
 
   const handleSelectSession = useCallback(async (session) => {
     if (session.session_id === sessionId) return
-    navigate(`/chat/${session.session_id}`)
+    // Already there (a reload, a link from the feed): keep the URL's ?from.
+    if (pathname !== `/chat/${session.session_id}`) navigate(`/chat/${session.session_id}`)
     setSessionId(session.session_id)
+    fetchSessionSource(session.session_id)
+      .then(s => s && setSource({
+        session_id: session.session_id,
+        href: `/feed/${encodeURIComponent(s.project_id)}${s.insight_id != null ? `/${s.insight_id}/${encodeURIComponent(s.article_key)}` : ""}`,
+      }))
+      .catch(() => {})
     setMessages([])
     setError(null)
     setConversationMode(null)
@@ -455,7 +480,7 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
     } finally {
       setIsLoading(false)
     }
-  }, [sessionId, navigate])
+  }, [sessionId, navigate, pathname])
 
   const handleClearSession = useCallback(async () => {
     if (!messages.length) return
@@ -622,11 +647,17 @@ export default function ChatWorkspace({ feedContext = null, onClearFeedContext, 
         )}
       </AnimatePresence>
 
-      {/* Feed context header */}
-      <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} />
+      {/* Back to the card: in the feed context header while it shows, else a
+          pill top centre — where the feed keeps its Day / Reading mode pills */}
+      {backHref && !activeFeedCtx && (
+        <BackToArticle to={backHref} className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50" />
+      )}
 
-      {/* Messages — scrollable */}
-      <div className="flex-1 overflow-y-auto pt-16 pb-3 px-4 sm:pt-5 sm:pb-5 sm:px-4">
+      {/* Feed context header */}
+      <FeedContextHeader ctx={activeFeedCtx} onDismiss={() => setActiveFeedCtx(null)} backHref={backHref} />
+
+      {/* Messages — scrollable (desktop clears the back pill) */}
+      <div className={`flex-1 overflow-y-auto pt-16 pb-3 px-4 sm:pb-5 sm:px-4 ${backHref && !activeFeedCtx ? "sm:pt-14" : "sm:pt-5"}`}>
         <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4">
           {messages.length === 0 && !isLoading && (
             <EmptyState onSend={handleSend} sessions={sessions} activeFeedCtx={activeFeedCtx} userName={userName} greetingRand={greetingRandRef.current} onSelectSession={handleSelectSession} />
@@ -689,7 +720,22 @@ const _ACTION_LABEL = {
   explain_simply: "Explaining simply",
 }
 
-function FeedContextHeader({ ctx, onDismiss }) {
+// Link back to the feed card a chat came from — styled like the feed's top pills.
+function BackToArticle({ to, className = "" }) {
+  return (
+    <Link
+      to={to}
+      className={`inline-flex items-center gap-1.5 px-2.5 h-[26px] rounded-lg bg-white/[0.07] border border-white/[0.11] text-[11px] font-medium text-slate-400 hover:text-slate-100 hover:bg-white/[0.10] hover:border-white/[0.15] active:scale-95 transition-[color,background-color,border-color,transform] whitespace-nowrap ${className}`}
+    >
+      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M10 3 5 8l5 5" />
+      </svg>
+      Back to article
+    </Link>
+  )
+}
+
+function FeedContextHeader({ ctx, onDismiss, backHref }) {
   if (!ctx) return null
 
   const tags = [
@@ -727,6 +773,7 @@ function FeedContextHeader({ ctx, onDismiss }) {
           </div>
         )}
       </div>
+      {backHref && <BackToArticle to={backHref} className="flex-shrink-0" />}
       <button
         onClick={onDismiss}
         title="Dismiss context"

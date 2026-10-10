@@ -15,8 +15,8 @@ from botocore.exceptions import ClientError
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
 from typing import Annotated, Literal, Optional
 
 logger = logging.getLogger(__name__)
@@ -1395,6 +1395,16 @@ async def chat_stream_endpoint(
     _require_session_access(data.session_id, current_user["user_id"])
     from .services.chat_title_service import ensure_session_owner
     ensure_session_owner(data.session_id, current_user["user_id"])
+    # feed_context.project_id is client-supplied, and chat_service uses it to load
+    # that project's learning memory and shared learning context INTO the prompt —
+    # unchecked, a crafted request could read another user's project history back
+    # out through the model. It must be a project the caller owns, strictly: a
+    # NULL-owner (pre-auth) row is rejected too, unlike _require_project_access.
+    fc_project_id = data.feed_context.project_id if data.feed_context else ""
+    if fc_project_id:
+        from .services.project_service import get_project_owner
+        if get_project_owner(fc_project_id) != current_user["user_id"]:
+            raise HTTPException(status_code=404, detail="Project not found")
 
     def generator():
         yield from chat_stream_generator(
@@ -2549,6 +2559,14 @@ async def create_feed_chat_link(
     current_user: dict = Depends(get_current_user),
 ):
     _require_project_access(data.project_id, current_user["user_id"])
+    # The session must be the caller's too — otherwise anyone could attach someone
+    # else's chat session to their own card and have it listed (with its title) as
+    # a related discussion. Strict: the link is only ever written after the
+    # session's first reply, so it always exists and is owned by then
+    # (ensure_session_owner in /chat/stream).
+    from .services.chat_title_service import get_session_owner
+    if get_session_owner(data.session_id) != current_user["user_id"]:
+        raise HTTPException(status_code=404, detail="Session not found")
     from .services.feed_chat_link_service import create_link
     return create_link(
         session_id=data.session_id,
@@ -2571,6 +2589,29 @@ async def get_feed_chat_links(
     _require_project_access(project_id, current_user["user_id"])
     from .services.feed_chat_link_service import get_links_for_article
     return get_links_for_article(project_id, article_key)
+
+
+@app.get("/chat/sessions/{session_id}/source")
+@limiter.limit(PROJECTS_RATE_LIMIT)
+async def get_chat_session_source(
+    request: Request,
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """The feed card a chat session was started from (null if none), so the
+    chat can link back to it."""
+    _require_session_access(session_id, current_user["user_id"])
+    from .services.feed_chat_link_service import get_link_for_session
+    link = get_link_for_session(session_id)
+    if not link:
+        return None
+    # Rows written before POST /feed-chat-links checked the session can still
+    # pair this session with someone else's project — treat that as no source.
+    try:
+        _require_project_access(link["project_id"], current_user["user_id"])
+    except HTTPException:
+        return None
+    return {k: link[k] for k in ("project_id", "insight_id", "article_key", "article_title")}
 
 
 # ── Package export ────────────────────────────────────────────────────────────

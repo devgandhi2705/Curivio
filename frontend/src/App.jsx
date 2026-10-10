@@ -22,6 +22,11 @@ import { raiseDataLossRequest, myDataLossRequests } from './api/backups.js'
 import { parseOnboardingStep, onboardingStepPath } from './utils/onboardingRoute.js'
 import LogoMark from './components/shared/LogoMark.jsx'
 import { UI_MODES, UI_MODE_LABELS, getUiTheme, setUiTheme, subscribeUiTheme } from './lib/uiTheme.js'
+import { m, AnimatePresence, SPRING, presets } from './lib/motion.jsx'
+import PopMenu from './components/shared/PopMenu.jsx'
+import { useChangeCount } from './hooks/useChangeCount.js'
+import { useSwipeDismiss } from './hooks/useSwipeDismiss.js'
+import Plate from './components/shared/Plate.jsx'
 import VoiceSettings from './components/unpack/VoiceSettings.jsx'
 
 // ── data-loss report "seen" tracking (localStorage, per-user) ──────────────
@@ -166,12 +171,12 @@ function PwField({ value, onChange, placeholder, required, className, onKeyDown,
         aria-label={show ? "Hide" : "Show"}
       >
         {show ? (
-          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <svg key="shown" className="u-hop w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
             <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
             <path fillRule="evenodd" d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" clipRule="evenodd" />
           </svg>
         ) : (
-          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <svg key="hidden" className="u-hop w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M3.28 2.22a.75.75 0 0 0-1.06 1.06l14.5 14.5a.75.75 0 1 0 1.06-1.06l-1.745-1.745a10.029 10.029 0 0 0 3.3-4.38 1.651 1.651 0 0 0 0-1.185A10.004 10.004 0 0 0 9.999 3a9.956 9.956 0 0 0-4.744 1.194L3.28 2.22ZM7.752 6.69l1.092 1.092a2.5 2.5 0 0 1 3.374 3.373l1.091 1.092a4 4 0 0 0-5.557-5.557Z" clipRule="evenodd" />
             <path d="M10.748 13.93l2.523 2.523a10.003 10.003 0 0 1-3.27.547c-4.258 0-7.894-2.66-9.337-6.41a1.651 1.651 0 0 1 0-1.186A10.007 10.007 0 0 1 2.839 6.02L6.07 9.252a4 4 0 0 0 4.678 4.678Z" />
           </svg>
@@ -313,28 +318,32 @@ const UI_MODE_ICON = { light: SunIcon, dark: MoonIcon, legacy: DropIcon }
  * belong to one control. Segments are unequal widths, so the pill is measured
  * from the live buttons rather than assuming even thirds.
  */
-function AppearanceControl() {
-  const mode  = useSyncExternalStore(subscribeUiTheme, getUiTheme, () => 'light')
-  const modes = UI_MODES
-
-  const trackRef = useRef(null)
+// Both segmented controls slide one pill under the active segment. Segments
+// are unequal widths, so it is measured from the live buttons.
+function usePillPosition(trackRef, deps) {
   const [pill, setPill] = useState(null)
-
   useLayoutEffect(() => {
     const track = trackRef.current
     if (!track) return
     const measure = () => {
       const active = track.querySelector('[aria-checked="true"]')
       if (!active) return
-      const t = track.getBoundingClientRect()
-      const a = active.getBoundingClientRect()
-      setPill({ left: a.left - t.left, width: a.width })
+      setPill({ left: active.offsetLeft, width: active.offsetWidth })
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(track)
     return () => ro.disconnect()
-  }, [mode, modes.length])
+  }, deps) // eslint-disable-line react-hooks/exhaustive-deps
+  return pill
+}
+
+function AppearanceControl() {
+  const mode  = useSyncExternalStore(subscribeUiTheme, getUiTheme, () => 'light')
+  const modes = UI_MODES
+
+  const trackRef = useRef(null)
+  const pill = usePillPosition(trackRef, [mode, modes.length])
 
   return (
     <div className="px-4 py-2 border-t border-slate-800/60 mt-1">
@@ -350,13 +359,8 @@ function AppearanceControl() {
           {pill && (
             <span
               aria-hidden="true"
-              className="absolute inset-y-1 rounded-md bg-blue-600 shadow-sm"
-              style={{
-                left: 0,
-                width: pill.width,
-                transform: `translateX(${pill.left}px)`,
-                transition: 'transform 420ms cubic-bezier(.32,.72,0,1), width 420ms cubic-bezier(.32,.72,0,1)',
-              }}
+              className="u-pill absolute inset-y-1 rounded-md bg-blue-600 shadow-sm"
+              style={{ left: 0, width: pill.width, transform: `translateX(${pill.left}px)` }}
             />
           )}
           {modes.map(id => {
@@ -396,6 +400,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
   const navigate = useNavigate()
 
   const [section, setSection]           = useState("main")
+  const sectionChanges = useChangeCount(section)
   const [profileName, setProfileName]   = useState(user?.name || "")
 
   // Points at "Report Missing Data" from the main menu, same signal as the
@@ -565,7 +570,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
   const btnPrimary = "w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors"
 
   return (
-    <div className={`${positionClass} u-pop w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
+    <m.div {...presets.menu} data-no-unpack className={`${positionClass} w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
         {section !== "main" && (
           <button onClick={back} className="text-slate-500 hover:text-slate-300 transition-colors mr-1">
@@ -576,6 +581,9 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
         )}
         <span className="text-sm font-semibold text-slate-200">{SECTION_TITLE[section]}</span>
       </div>
+
+      {/* each sub-page renders its own markup; the key only replays the slide */}
+      <div key={section} className={sectionChanges === 0 ? '' : section === 'main' ? 'u-step-back' : 'u-step-fwd'}>
 
       {section === "main" && (
         <>
@@ -639,7 +647,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
               className="w-full text-left px-2 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-800/50 rounded-lg transition-colors flex items-center justify-between">
               Voice &amp; Audio
               <svg className="w-3.5 h-3.5 text-slate-600" viewBox="0 0 16 16" fill="currentColor">
-                <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 1 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
               </svg>
             </button>
           </div>
@@ -656,6 +664,7 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
       )}
 
       {section === "dataloss" && <DataLossSection inputCls={inputCls} btnPrimary={btnPrimary} />}
+
       {section === "voice" && <VoiceSettings inputCls={inputCls} />}
 
       {section === "profile" && (
@@ -812,136 +821,59 @@ function SettingsPanel({ positionClass = "absolute right-0 top-full mt-2 z-40" }
           </button>
         </div>
       )}
-    </div>
-  )
-}
-
-// ── QueuePanel ────────────────────────────────────────────────────────────────
-
-function groupByDate(items) {
-  const today     = new Date(); today.setHours(0,0,0,0)
-  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
-  const groups    = {}
-  items.forEach(item => {
-    const d = item.queuedAt ? new Date(item.queuedAt) : new Date(0)
-    const day = new Date(d); day.setHours(0,0,0,0)
-    let label
-    if (day.getTime() === today.getTime())          label = "Today"
-    else if (day.getTime() === yesterday.getTime()) label = "Yesterday"
-    else label = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined })
-    if (!groups[label]) groups[label] = []
-    groups[label].push(item)
-  })
-  return groups
-}
-
-function QueuePanel({ queue, onItemClick, positionClass = "absolute right-0 top-full mt-2 z-40" }) {
-  const [search, setSearch] = useState("")
-
-  const filtered = search.trim()
-    ? queue.filter(i => i.title?.toLowerCase().includes(search.toLowerCase()) || i.projectName?.toLowerCase().includes(search.toLowerCase()))
-    : queue
-
-  const groups = groupByDate(filtered)
-
-  return (
-    <div className={`${positionClass} u-pop w-72 max-w-[calc(100vw-1rem)] bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden`}>
-      <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <ClockIcon className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-sm font-semibold text-slate-200">Your Queue</span>
-          {queue.length > 0 && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums">
-              {queue.length}
-            </span>
-          )}
-        </div>
-        {queue.length > 1 && (
-          <button onClick={() => clearQueue()} className="text-[11px] text-slate-600 hover:text-slate-400 transition-colors">
-            Clear all
-          </button>
-        )}
       </div>
-
-      {queue.length > 0 && (
-        <div className="px-3 py-2 border-b border-slate-800/60">
-          <div className="relative">
-            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/>
-            </svg>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search queue…"
-              className="w-full pl-7 pr-3 py-1.5 bg-slate-800/60 border border-slate-700/50 rounded-lg text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-600 transition-colors" />
-          </div>
-        </div>
-      )}
-
-      {queue.length === 0 ? (
-        <div className="px-4 py-8 text-center">
-          <p className="text-sm text-slate-500">No cards queued yet.</p>
-          <p className="text-[11px] text-slate-600 mt-1">Click "Read Later" on any card.</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="px-4 py-6 text-center">
-          <p className="text-xs text-slate-500">No results for "{search}"</p>
-        </div>
-      ) : (
-        <div className="max-h-80 overflow-y-auto py-1.5">
-          {Object.entries(groups).map(([label, items]) => (
-            <div key={label}>
-              <p className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600">{label}</p>
-              {items.map(item => (
-                <div key={item.articleKey} className="relative flex items-center hover:bg-slate-800/40 transition-colors group">
-                  <button onClick={() => onItemClick(item)}
-                    className="flex-1 flex items-start gap-2.5 px-4 py-2.5 text-left min-w-0"
-                    title={`Go to: ${item.title}`}>
-                    <div className="flex-1 min-w-0 pr-4">
-                      <p className="text-xs font-medium text-slate-300 leading-snug line-clamp-2 group-hover:text-slate-100 transition-colors">{item.title}</p>
-                      {item.projectName && <p className="text-[10px] text-slate-600 mt-0.5">{item.projectName}</p>}
-                    </div>
-                    <svg className="w-3 h-3 text-slate-700 group-hover:text-slate-500 flex-shrink-0 mt-0.5 transition-colors" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" />
-                    </svg>
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); removeFromQueue(item.articleKey) }}
-                    title="Remove from queue"
-                    className="absolute right-2.5 w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-slate-300 hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-all">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </m.div>
   )
 }
 
 // ── Sidebar components ────────────────────────────────────────────────────────
 
-function NavItem({ item, collapsed, onClick, badge }) {
+function NavItem({ item, collapsed, onClick, badge, index }) {
   const Icon = item.icon
   return (
-    <div className="relative group">
+    <div className="relative group u-drawer-item" style={{ '--i': index }}>
       <NavLink
         to={item.to}
         onClick={onClick}
         className={({ isActive }) => [
-          'w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
+          'relative w-full flex items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors',
           isActive
-            ? 'bg-white/[0.07] text-slate-100'
+            ? 'text-slate-100'
             : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]',
           collapsed ? 'md:justify-center md:w-9 md:h-9 md:p-0 px-3 py-2' : 'px-3 py-2',
         ].join(' ')}
       >
-        <Icon className="w-[15px] h-[15px] flex-shrink-0" />
-        <span className={`flex-1 text-left ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
-        {badge > 0 && (
-          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none ${collapsed ? 'md:hidden' : ''}`}>
-            {badge}
-          </span>
+        {({ isActive }) => (
+          <>
+            {/* One pill, shared across items by layoutId, glides to the active one. */}
+            {isActive && (
+              <m.span
+                layoutId="nav-pill"
+                data-nav-pill
+                transition={SPRING}
+                aria-hidden="true"
+                className="absolute inset-0 rounded-lg bg-white/[0.07]"
+              />
+            )}
+            <Icon className={`relative w-[15px] h-[15px] flex-shrink-0 ${isActive ? 'u-hop' : ''}`} />
+            <span className={`relative flex-1 text-left ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
+            {/* The wrappers own display: u-pop-num sets its own, which beat md:hidden. */}
+            {badge > 0 && (
+              <span className={`relative ${collapsed ? 'md:hidden' : ''}`}>
+                <span key={badge} className="u-pop-num text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 tabular-nums leading-none">
+                  {badge}
+                </span>
+              </span>
+            )}
+            {/* Collapsed rail: a count bubble on the icon's corner instead of a pill beside it. */}
+            {badge > 0 && collapsed && (
+              <span aria-hidden="true" className="hidden md:block absolute -top-1 -right-1">
+                <span key={badge} className="u-pop-num min-w-[16px] h-4 px-1 rounded-full bg-amber-400 text-slate-950 text-[9.5px] font-bold leading-4 text-center tabular-nums">
+                  {badge > 9 ? '9+' : badge}
+                </span>
+              </span>
+            )}
+          </>
         )}
       </NavLink>
       {/* Tooltip — desktop collapsed mode only */}
@@ -997,12 +929,16 @@ function Sidebar({
     setSidebarPendingRemove(prev => { const n = { ...prev }; delete n[key]; return n })
   }
 
-  // Lock body scroll while mobile drawer is open
+  // Lock page scroll while mobile drawer is open. The document scrolls on
+  // <html> (index.css clips overflow-x there), so the lock goes on <html>.
   useEffect(() => {
     if (!open) return
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
+    document.documentElement.style.overflow = 'hidden'
+    return () => { document.documentElement.style.overflow = '' }
   }, [open])
+
+  // Phone: swipe the open drawer left to close it.
+  const drawerRef = useSwipeDismiss({ direction: 'left', onDismiss: () => setOpen(false), enabled: open })
 
   const q = sidebarQuery.trim().toLowerCase()
   const visibleQueue = q
@@ -1026,11 +962,13 @@ function Sidebar({
       />
 
       <aside
+        ref={drawerRef}
+        data-open={open ? 'true' : 'false'}
         className={[
-          'fixed inset-y-0 left-0 z-[56] flex flex-col',
+          'u-drawer fixed inset-y-0 left-0 z-[56] flex flex-col',
           'bg-slate-900 border-r border-white/[0.04]',
           'transition-[width,transform] duration-200 ease-in-out',
-          'md:relative md:translate-x-0',
+          'md:sticky md:top-0 md:h-dvh md:self-start md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
           'w-[280px]',
           collapsed ? 'md:w-[68px]' : 'md:w-[280px]',
@@ -1074,9 +1012,12 @@ function Sidebar({
 
         {/* Zone 2: Primary nav — never scrolls */}
         <nav className={`flex-shrink-0 py-2 space-y-0.5 ${collapsed ? 'md:px-1.5 px-2' : 'px-2'}`}>
-          {NAV_ITEMS.filter(item => item.id !== 'admin' || isAdmin).map(item => (
+          {NAV_ITEMS
+            .filter(item => item.id !== 'admin' || isAdmin)
+            .map((item, i) => (
             <NavItem
               key={item.id}
+              index={i}
               item={item}
               collapsed={collapsed}
               onClick={() => setOpen(false)}
@@ -1133,13 +1074,15 @@ function Sidebar({
               {visibleQueue.length === 0 ? (
                 <p className="text-xs text-slate-600 px-1 py-2">{q ? 'No matches.' : 'No queued items.'}</p>
               ) : (
-                <div className="space-y-0.5">
+                <div className="relative space-y-0.5">
+                  <AnimatePresence mode="popLayout" initial={false}>
                   {visibleQueue.map(item => {
                     const isPending = !!sidebarPendingRemove[item.articleKey]
                     if (isPending) {
                       return (
-                        <div
+                        <m.div
                           key={item.articleKey}
+                          {...presets.listItem}
                           className="flex items-center justify-between px-2 py-2 rounded-lg"
                         >
                           <p className="text-[11px] text-slate-600 italic truncate mr-2 flex-1 min-w-0">{item.title}</p>
@@ -1149,13 +1092,14 @@ function Sidebar({
                           >
                             Undo
                           </button>
-                        </div>
+                        </m.div>
                       )
                     }
                     return (
-                      <div
+                      <m.div
                         key={item.articleKey}
-                        className="group flex items-start gap-2 px-2 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
+                        {...presets.listItem}
+                        className="u-nudge group flex items-start gap-2 px-2 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/[0.04] transition-colors cursor-pointer"
                         onClick={() => onQueueItemClick(item)}
                       >
                         <div className="flex-1 min-w-0">
@@ -1170,9 +1114,10 @@ function Sidebar({
                             <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
                           </svg>
                         </button>
-                      </div>
+                      </m.div>
                     )
                   })}
+                  </AnimatePresence>
                 </div>
               )}
             </div>
@@ -1218,11 +1163,14 @@ function Sidebar({
               <SyncStatus />
               <GearIcon className={`w-3.5 h-3.5 text-slate-600 flex-shrink-0 ${collapsed ? 'md:hidden' : ''}`} />
             </button>
-            {showSettings && (
-              <SettingsPanel
-                positionClass="absolute bottom-full left-0 mb-1.5 z-50"
-              />
-            )}
+            <AnimatePresence>
+              {showSettings && (
+                <SettingsPanel
+                  key="settings"
+                  positionClass="origin-bottom-left absolute bottom-full left-0 mb-1.5 z-50"
+                />
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </aside>
@@ -1300,14 +1248,16 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
           </div>
         </>
       )}
-      <div className="space-y-2 max-w-2xl">
+      <div className="relative space-y-2 max-w-2xl">
+        <AnimatePresence mode="popLayout" initial={false}>
         {queue.map(item => {
           const isRemoving = !!pendingRemove[item.articleKey]
 
           if (isRemoving) {
             return (
-              <div
+              <m.div
                 key={item.articleKey}
+                {...presets.listItem}
                 className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-white/[0.03] bg-white/[0.01]"
               >
                 <p className="text-xs text-slate-600 italic truncate mr-3">{item.title}</p>
@@ -1317,13 +1267,14 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
                 >
                   Undo
                 </button>
-              </div>
+              </m.div>
             )
           }
 
           return (
-            <div
+            <m.div
               key={item.articleKey}
+              {...presets.listItem}
               className="flex items-center gap-4 p-4 bg-white/[0.03] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer"
               onClick={() => onItemClick(item)}
             >
@@ -1349,9 +1300,10 @@ function ReadLaterPage({ queue, onItemClick, onRemove }) {
                   <path fillRule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
                 </svg>
               </div>
-            </div>
+            </m.div>
           )
         })}
+        </AnimatePresence>
       </div>
     </div>
   )
@@ -1390,6 +1342,10 @@ function AdminAccessNotice({ checking, email, onGoToFeed }) {
 }
 
 // ── App root ──────────────────────────────────────────────────────────────────
+
+// `from`: the feed URL a chat was opened from — chat links back to it.
+const chatUrl = (sessionId, from) =>
+  `/chat${sessionId ? `/${encodeURIComponent(sessionId)}` : ''}${from ? `?from=${encodeURIComponent(from)}` : ''}`
 
 export default function AppLayout() {
   const { user } = useAuth()
@@ -1438,6 +1394,17 @@ export default function AppLayout() {
   const targetSessionTitle = location.state?.sessionTitle ?? null
 
   const [feedContext, setFeedContext] = useState(null)
+  // Feed v2 pages don't receive handleOpenInChat — they navigate to /chat with
+  // the seed context in router state instead. Consumed
+  // once, then cleared from history: a refresh or Back must not start yet another
+  // seeded session.
+  useEffect(() => {
+    const ctx = location.state?.feedContext
+    if (!ctx || !pathname.startsWith('/chat')) return
+    setFeedContext(ctx)
+    navigate(pathname, { replace: true, state: null })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, pathname])
   const [showSearch,  setShowSearch]  = useState(false)
   const [queue,        setQueue]      = useState(() => getQueue())
   // Real enforcement is the backend's get_current_admin_user() — every /admin/*
@@ -1580,8 +1547,8 @@ export default function AppLayout() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  const handleOpenChat = useCallback((sessionId, title = null) => {
-    navigate(`/chat/${encodeURIComponent(sessionId)}`, { state: { sessionTitle: title } })
+  const handleOpenChat = useCallback((sessionId, title = null, from = null) => {
+    navigate(chatUrl(sessionId, from), { state: { sessionTitle: title } })
   }, [navigate])
 
   const handleOpenInChat = useCallback(async (card, action, projectMeta = {}) => {
@@ -1594,7 +1561,7 @@ export default function AppLayout() {
         projectMeta.project_id, articleKeyFromTitle(card.title || "")
       )).find(l => l.interaction_type === "explain_simply")
       if (prior) {
-        handleOpenChat(prior.session_id, prior.session_title)
+        handleOpenChat(prior.session_id, prior.session_title, projectMeta.from)
         return
       }
     }
@@ -1618,7 +1585,7 @@ export default function AppLayout() {
       domain:           projectMeta.domain || "default",
     }
     setFeedContext(ctx)
-    navigate('/chat')
+    navigate(chatUrl(null, projectMeta.from))
   }, [navigate, handleOpenChat])
 
   const handleOpenQueueItem = useCallback((item) => {
@@ -1654,9 +1621,12 @@ export default function AppLayout() {
   if (!isKnownSection) return <Navigate to="/feed" replace />
 
   return (
+    // Pages scroll the document (not an inner pane) so the browser, find-in-page
+    // and full-page screenshot tools see the real scroll. Chat keeps a fixed
+    // viewport: its message list scrolls under a pinned composer.
     <div
-      className="flex bg-slate-950 text-slate-100 overflow-hidden"
-      style={{ height: '100dvh' }}
+      className={['flex bg-slate-950 text-slate-100', view === 'chat' ? 'overflow-hidden' : ''].join(' ')}
+      style={view === 'chat' ? { height: '100dvh' } : { minHeight: '100dvh' }}
     >
       <Sidebar
         view={view}
@@ -1715,8 +1685,9 @@ export default function AppLayout() {
               <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM14.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
             </svg>
           </button>
+          <AnimatePresence>
           {showOverflow && (
-            <div className="u-pop absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
+            <PopMenu key="menu" className="origin-top-right absolute top-full right-0 mt-1.5 w-52 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-hidden">
               {(actionsByView[view] ?? []).map((action, i) => (
                 action.share ? (
                   <ShareButton
@@ -1741,8 +1712,9 @@ export default function AppLayout() {
                         <path d="M4.5 6a.75.75 0 0 1 .75 0l3.75 3 3.75-3a.75.75 0 0 1 1.06 1.06l-4.25 3.5a.75.75 0 0 1-1.06 0l-4.25-3.5A.75.75 0 0 1 4.5 6z" />
                       </svg>
                     </button>
+                    <AnimatePresence initial={false}>
                     {openMobileSubmenu === i && (
-                      <div className="bg-slate-800/50 border-t border-slate-700/40">
+                      <m.div key="sub" {...presets.collapse} className="bg-slate-800/50 border-t border-slate-700/40">
                         {action.submenu.map((subaction, j) => (
                           <button
                             key={j}
@@ -1757,8 +1729,9 @@ export default function AppLayout() {
                             {subaction.label}
                           </button>
                         ))}
-                      </div>
+                      </m.div>
                     )}
+                    </AnimatePresence>
                   </div>
                 ) : (
                   <button
@@ -1775,13 +1748,14 @@ export default function AppLayout() {
                   </button>
                 )
               ))}
-            </div>
+            </PopMenu>
           )}
+          </AnimatePresence>
         </div>
       )}
 
       {/* Desktop ⋮ overflow menu — hidden on mobile */}
-      {view === 'feed' && (actionsByView['feed'] ?? []).length > 0 && (
+      {view === 'feed' && (actionsByView[view] ?? []).length > 0 && (
         <div
           ref={desktopOverflowRef}
           className="hidden md:block fixed top-3.5 right-3.5 z-50"
@@ -1801,9 +1775,10 @@ export default function AppLayout() {
               <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM14.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
             </svg>
           </button>
+          <AnimatePresence>
           {showDesktopOverflow && (
-            <div className="u-pop absolute top-full right-0 mt-1.5 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-visible z-50">
-              {(actionsByView['feed'] ?? []).map((action, i) => (
+            <PopMenu key="menu" className="origin-top-right absolute top-full right-0 mt-1.5 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/60 py-1 overflow-visible z-50">
+              {(actionsByView[view] ?? []).map((action, i) => (
                 action.share ? (
                   <ShareButton
                     key={i}
@@ -1833,8 +1808,9 @@ export default function AppLayout() {
                         <path d="M5.75 2.75a.75.75 0 0 0-1.06 1.06l3.75 3.75-3.75 3.75a.75.75 0 1 0 1.06 1.06l4.25-4.25a.75.75 0 0 0 0-1.06L5.75 2.75Z" />
                       </svg>
                     </button>
+                    <AnimatePresence>
                     {openDesktopSubmenu === i && (
-                      <div className="absolute right-full top-0 mr-2 w-auto bg-slate-900 border border-slate-700/60 rounded-lg shadow-2xl shadow-black/60 py-1 z-50 min-w-max">
+                      <PopMenu key="sub" className="origin-top-right absolute right-full top-0 mr-2 w-auto bg-slate-900 border border-slate-700/60 rounded-lg shadow-2xl shadow-black/60 py-1 z-50 min-w-max">
                         {action.submenu.map((subaction, j) => (
                           <button
                             key={j}
@@ -1849,8 +1825,9 @@ export default function AppLayout() {
                             {subaction.label}
                           </button>
                         ))}
-                      </div>
+                      </PopMenu>
                     )}
+                    </AnimatePresence>
                   </div>
                 ) : (
                   <button
@@ -1867,24 +1844,25 @@ export default function AppLayout() {
                   </button>
                 )
               ))}
-            </div>
+            </PopMenu>
           )}
+          </AnimatePresence>
         </div>
       )}
 
       {/* Content area */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className={['flex-1 flex flex-col min-w-0', view === 'chat' ? 'overflow-hidden' : ''].join(' ')}>
 
         {/* Offline banner — auto-hides once back online */}
         {!isOnline && (
-          <div className="flex-shrink-0 px-3 py-1.5 text-center text-[12px] font-medium text-amber-300 bg-amber-500/10 border-b border-amber-500/20">
+          <div className="u-slide-down flex-shrink-0 px-3 py-1.5 text-center text-[12px] font-medium text-amber-300 bg-amber-500/10 border-b border-amber-500/20">
             You're offline — showing saved articles
           </div>
         )}
 
         {/* Chat workspace — fills all space on mobile */}
         <div className={[
-          'overflow-hidden',
+          'u-section overflow-hidden',
           view !== 'chat' ? 'hidden' : 'flex-1 flex flex-col',
         ].join(' ')}>
           <ChatWorkspace
@@ -1901,17 +1879,23 @@ export default function AppLayout() {
 
         {/* Scrollable main — feed, dashboard, bookmarks */}
         <main className={[
-          'flex-1 overflow-y-auto',
+          'flex-1',
           view === 'chat' ? 'hidden' : '',
         ].join(' ')}>
           <div className={[
-            view === 'admin' ? 'max-w-[1600px]' : 'max-w-5xl',
-            'mx-auto w-full',
+            view === 'admin' ? 'max-w-[1600px]' : view === 'feed' ? 'max-w-[1160px]' : 'max-w-5xl',
+            'relative mx-auto w-full',
             view === 'feed' || view === 'dashboard' || view === 'admin' ? 'px-4 pt-16 pb-8 md:px-8 md:pt-16 md:pb-10' : '',
           ].join(' ')}>
 
+          {/* Ambient graph behind the page header. First in the container, so
+              the u-section blocks after it (position: relative) paint over it. */}
+          {['feed', 'dashboard', 'bookmarks', 'readlater'].includes(view) && (
+            <Plate seed={11} count={10} className="u-plate u-plate-header" />
+          )}
+
           {/* Feed — always mounted so generating state survives view switches */}
-          <div className={view !== 'feed' ? 'hidden' : ''}>
+          <div className={view !== 'feed' ? 'u-section hidden' : 'u-section'}>
             <ProjectsPage
               onOpenInChat={handleOpenInChat}
               onOpenChat={handleOpenChat}
@@ -1934,38 +1918,45 @@ export default function AppLayout() {
           </div>
 
           {view === 'dashboard' && (
-            <DashboardPage onGoToFeed={() => navigate('/feed')} userName={user?.name} />
+            <div className="u-section"><DashboardPage onGoToFeed={() => navigate('/feed')} userName={user?.name} /></div>
           )}
 
           {view === 'admin' && (
-            isAdmin
-              ? <AdminPage />
-              : <AdminAccessNotice checking={isAdmin === null} email={user?.email}
-                  onGoToFeed={() => navigate('/feed')} />
+            <div className="u-section">
+              {isAdmin
+                ? <AdminPage />
+                : <AdminAccessNotice checking={isAdmin === null} email={user?.email}
+                    onGoToFeed={() => navigate('/feed')} />}
+            </div>
           )}
 
           {view === 'bookmarks' && (
-            <BookmarksPage onOpenChat={handleOpenChat} onOpenFeed={handleOpenQueueItem} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} />
+            <div className="u-section"><BookmarksPage onOpenChat={handleOpenChat} onOpenFeed={handleOpenQueueItem} onSidebarClose={handleSidebarClose} onBeforeModal={handleBeforeModal} /></div>
           )}
 
           {view === 'readlater' && (
-            <ReadLaterPage
-              queue={queue}
-              onItemClick={handleOpenQueueItem}
-              onRemove={removeFromQueue}
-            />
+            <div className="u-section">
+              <ReadLaterPage
+                queue={queue}
+                onItemClick={handleOpenQueueItem}
+                onRemove={removeFromQueue}
+              />
+            </div>
           )}
 
           </div>
         </main>
       </div>
 
-      {showSearch && (
-        <GlobalSearch
-          onClose={() => setShowSearch(false)}
-          onNavigate={handleSearchNavigate}
-        />
-      )}
+      <AnimatePresence>
+        {showSearch && (
+          <GlobalSearch
+            key="search"
+            onClose={() => setShowSearch(false)}
+            onNavigate={handleSearchNavigate}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Unpack (select text → Explain/Translate/Read Aloud) is reading-surface
           only: feed and chat. Not dashboard/bookmarks/read-later/admin, not the

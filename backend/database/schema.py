@@ -399,7 +399,8 @@ CREATE TABLE IF NOT EXISTS feed_chat_links (
     article_title    TEXT    NOT NULL DEFAULT '',
     interaction_type TEXT    NOT NULL DEFAULT 'ask_about'
                              CHECK(interaction_type IN ('ask_about', 'explain_simply', 'continue_research', 'deep_research')),
-    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(session_id, article_key)
 );
 """
 
@@ -645,6 +646,14 @@ MIGRATE_ADD_CHAT_SESSION_CONVERSATION_MODE = (
 # Extend feed_chat_links.interaction_type CHECK to include 'explain_simply'.
 # SQLite requires a full table-recreation to change a CHECK constraint, so this
 # migration is a list of statements executed in order inside the same connection.
+#
+# This recreation re-runs on EVERY startup (no applied-migrations ledger), and its
+# copy is INSERT OR IGNORE — so the table definition here is the one that's live,
+# and must carry every constraint the table should have. UNIQUE(session_id,
+# article_key) lives here for that reason (it makes create_link's documented
+# idempotency true), and the OR IGNORE copy drops any duplicates an older DB
+# already holds, keeping the earliest row. Pinned by
+# tests/test_chat_feed_link_security.py.
 MIGRATE_FEED_CHAT_LINKS_ADD_EXPLAIN_SIMPLY = [
     "PRAGMA foreign_keys=OFF",
     """CREATE TABLE IF NOT EXISTS feed_chat_links_v2 (
@@ -656,7 +665,8 @@ MIGRATE_FEED_CHAT_LINKS_ADD_EXPLAIN_SIMPLY = [
         article_title    TEXT    NOT NULL DEFAULT '',
         interaction_type TEXT    NOT NULL DEFAULT 'ask_about'
                                  CHECK(interaction_type IN ('ask_about','continue_research','deep_research','explain_simply')),
-        created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(session_id, article_key)
     )""",
     "INSERT OR IGNORE INTO feed_chat_links_v2 SELECT * FROM feed_chat_links",
     "DROP TABLE IF EXISTS feed_chat_links",

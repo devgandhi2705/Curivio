@@ -67,8 +67,9 @@ function SettingsIcon({ className = "w-4 h-4" }) {
 }
 
 const BTN = "h-9 min-w-9 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-lg text-[13px] text-slate-400 hover:text-slate-100 hover:bg-white/[0.06] active:scale-95 transition-[color,background-color,transform]"
+const DOCK_BTN = "h-full px-3.5 inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-200 hover:text-slate-100 hover:bg-white/[0.06] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-[color,background-color,transform]"
 
-export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, origin, dayLabel, daySwitcher, cardProps, readKeys, onExit }) {
+export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, origin, dayLabel, daySwitcher, cardProps, readKeys, onExit, onSlide }) {
   const { user } = useAuth()
   const [prefs, setPrefs] = useState(loadPrefs)
   const [index, setIndex] = useState(Math.min(startIndex, cards.length))
@@ -88,6 +89,9 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
   const total = cards.length + 1
   const atEnd = index >= cards.length
   const card = atEnd ? null : cards[index]
+  const props = card ? cardProps(card) : null
+  // Phones: Ask / Explain sit in the bottom bar, in thumb reach (the card drops them).
+  const dock = props && !props.readOnly && (props.onAskAbout || props.onExplainSimply) ? props : null
 
   const set = useCallback(patch => setPrefs(p => { const next = { ...p, ...patch }; savePrefs(next); return next }), [])
   useEffect(() => { ensureFont(prefs.font) }, [prefs.font])
@@ -120,13 +124,15 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
     onExit(card ? keyOf(card) : cards.length ? keyOf(cards[cards.length - 1]) : null)
   }, [card, cards, onExit])
 
-  // New slide: start at its top and take keyboard focus, so ↑ ↓ Space scroll it.
+  // New slide: start at its top and take keyboard focus, so ↑ ↓ Space scroll
+  // it — and tell the feed, whose URL follows the slide (null: closing slide).
   useEffect(() => {
+    onSlide?.(card)
     const el = scrollerRef.current
     if (!el) return
     el.scrollTop = 0
     el.focus({ preventScroll: true })
-  }, [index, pkg.id])
+  }, [index, pkg.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     function onKey(e) {
@@ -336,11 +342,11 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
               className="u-rc-wrap mx-auto px-4 sm:px-8"
               style={{
                 paddingTop: "calc(3.5rem + env(safe-area-inset-top) + 1rem)",
-                paddingBottom: "calc(4rem + env(safe-area-inset-bottom))",
+                paddingBottom: "calc(5rem + env(safe-area-inset-bottom))",   /* clears the phone dock */
               }}
             >
               {card ? (
-                <InsightCard key={keyOf(card)} {...cardProps(card)} bare hideShare
+                <InsightCard key={keyOf(card)} {...props} bare hideShare
                   eyebrow={index < coreCount ? `Article ${index + 1} of ${coreCount}` : "Curiosity pick"} />
               ) : (
                 <div className="mx-auto" style={{ maxWidth: "var(--r-width)" }}>
@@ -377,6 +383,24 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
         <button type="button" onClick={() => go(index - 1)} disabled={index === 0} className={`${BTN} disabled:opacity-30`} aria-label="Previous article">
           <Icon d="M10 3 5 8l5 5" /><span className="hidden sm:inline">Previous</span>
         </button>
+        {dock && (
+          <div className="lg:hidden flex items-center h-10 rounded-full border border-slate-800 bg-slate-900/90 backdrop-blur-md overflow-hidden"
+            style={{ boxShadow: "var(--u-modal-shadow)" }}>
+            {dock.onAskAbout && (
+              <button type="button" onClick={() => dock.onAskAbout(card)} disabled={dock.offlineDisabled} className={DOCK_BTN}
+                title={dock.offlineDisabled ? "Requires an internet connection" : "Ask about this"}>
+                <Icon d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z" />Ask
+              </button>
+            )}
+            {dock.onAskAbout && dock.onExplainSimply && <span className="w-px h-5 bg-slate-800" aria-hidden="true" />}
+            {dock.onExplainSimply && (
+              <button type="button" onClick={() => dock.onExplainSimply(card)} disabled={dock.offlineDisabled} className={DOCK_BTN}
+                title={dock.offlineDisabled ? "Requires an internet connection" : undefined}>
+                <Icon d="M6 13.5h4M6.5 11.5h3M8 2a3.5 3.5 0 0 0-2 6.4v1.6h4V8.4A3.5 3.5 0 0 0 8 2z" />Explain simply
+              </button>
+            )}
+          </div>
+        )}
         <button type="button" onClick={() => go(index + 1)} disabled={index >= total - 1} className={`${BTN} disabled:opacity-30`} aria-label="Next article">
           <span className="hidden sm:inline">Next</span><Icon d="m6 3 5 5-5 5" />
         </button>
