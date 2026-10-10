@@ -526,6 +526,29 @@ def test_reader_desktop_keeps_reference_open_and_actions_in_rail(browser):
     assert (sources_open, related, rail_ask, dock_ask) == (True, "true", True, 0)
 
 
+def test_reader_settings_brightness_slider_and_transition_preview(browser):
+    """Brightness is a slider that dims the slides; the Transition picker has a
+    looping preview in place of the old Transition time box."""
+    page = _open_reader(browser, "desktop")
+    _wake(page)
+    page.locator(".u-reader header").get_by_title("Reading settings").click()
+    panel = page.get_by_role("dialog", name="Reading settings")
+    dim = panel.get_by_label("Brightness")
+    got = {"slider": dim.get_attribute("type") == "range"}
+    dim.fill("60")
+    got["dims"] = "brightness(0.6)" in page.locator(".u-reader .overflow-hidden").first.evaluate("e => e.style.filter")
+    got["no_time_box"] = panel.get_by_text("Transition time").count() == 0
+    panel.get_by_role("radio", name="Fade").click()
+    seen = set()
+    for _ in range(12):                                          # the loop turns every 1.8s
+        seen.update(t for t in ("Article 1", "Article 2") if panel.get_by_text(t, exact=True).count())
+        page.wait_for_timeout(300)
+    got["preview_turns"] = seen == {"Article 1", "Article 2"}
+    panel.get_by_role("button", name="Reset", exact=True).click()
+    page.context.close()
+    assert all(got.values()), got
+
+
 def _reader_title(page):
     return page.locator(".u-reader-card .u-read-title").inner_text()
 
@@ -811,13 +834,95 @@ def test_next_day_is_generated_from_the_day_menu(browser):
         page.locator(".u-menu").get_by_role("button", name="Yes").click()
         page.wait_for_timeout(6500)                               # one status poll
         got["posted"] = len(posts) == 1
-        got["building"] = day.get_attribute("data-next") == "building"
+        # A later day gets Day 1's progress view, as one more stop in the Day
+        # menu: the pill stays, and every built day is a click away.
+        bg = page.get_by_role("button", name="Continue in background")
+        got["progress_view"] = bg.is_visible() and "scanning today" in page.locator("main").inner_text().lower()
+        got["pill_stays"] = day.is_visible() and day.get_attribute("data-next") == "building"
+        got["no_reader_on_progress"] = page.get_by_role("button", name="Reading mode").count() == 0
         day.click()
         page.wait_for_timeout(400)
         got["building_row"] = "scanning sources" in page.locator(".u-menu").inner_text().lower()
+        page.locator(".u-menu button").nth(1).click()             # the built day
+        page.wait_for_timeout(600)
+        got["day_back"] = bg.count() == 0 and page.get_by_role("button", name="Reading mode").is_visible()
+        got["strip"] = page.get_by_text("Still building your next lesson").is_visible()
+        day.click()
+        page.wait_for_timeout(400)
+        page.locator(".u-menu").get_by_role("button", name=GENERATE_ROW).click()
+        page.wait_for_timeout(600)
+        got["progress_again"] = bg.is_visible()
     finally:
         page.context.close()
     page, _ = new_page(browser, "light", "desktop")              # a fresh page: the stubbed run isn't polled any more
+    goto(page, "/feed")
+    _mark_all(page, "Read")
+    page.context.close()
+    assert all(got.values()), got
+
+
+ISO_ID = "ui-iso-project"
+
+
+def _with_second_project(page):
+    """Adds an empty stub project beside the account's real one."""
+    def projects(route):
+        real = json.loads(route.fetch().text())
+        fake = {**real[0], "project_id": ISO_ID, "name": "Iso Check", "insight_count": 0,
+                "last_insight_at": None, "last_package_headline": None}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(real + [fake]))
+
+    def iso(route):
+        url = route.request.url
+        if "/progression" in url:
+            route.fulfill(status=404, content_type="application/json", body="{}")
+        elif "/journey-preview" in url:
+            _ok({"planned": False})(route)
+        else:
+            _ok([])(route)
+    page.route(f"{API_URL}/projects", projects)
+    page.route(f"{API_URL}/projects/{ISO_ID}/**", iso)
+
+
+def test_a_run_stays_with_its_own_project(browser):
+    """A run in one project shows nothing in another (no progress view, strip
+    or Building pill), and when it lands there a toast offers to open it."""
+    page, _ = new_page(browser, "dark", "desktop")
+    _with_second_project(page)
+    status = {"v": "generating"}
+    page.route(f"{API_URL}/projects/*/insights/generate",
+               _ok({"id": 999999, "day_number": 99, "generated_at": "2026-10-03T00:00:00", "status": "generating"}))
+    page.route(f"{API_URL}/projects/*/insights/999999/status",
+               lambda r: _ok({"status": status["v"], "stage": "searching"})(r))
+    goto(page, "/feed")
+    got = {}
+    try:
+        _mark_all(page, "Mark as Read")
+        day = page.get_by_role("button", name=DAY_BUTTON).first
+        day.click()
+        page.wait_for_timeout(400)
+        page.locator(".u-menu").get_by_role("button", name=GENERATE_ROW).click()
+        page.locator(".u-menu").get_by_role("button", name="Yes").click()
+        page.wait_for_timeout(800)
+        got["running"] = page.get_by_role("button", name="Continue in background").is_visible()
+
+        page.locator("aside").get_by_text("Iso Check", exact=True).click()
+        page.wait_for_timeout(1500)
+        main = page.locator("main").inner_text()
+        got["other_is_idle"] = "Generate Day 1" in main and "Continue in background" not in main \
+            and "Still building" not in main
+
+        status["v"] = "done"
+        page.wait_for_timeout(6500)                               # one status poll
+        toast = page.get_by_role("status").filter(has_text="is ready")
+        got["toast"] = toast.is_visible() and "Byzantine Trade Routes" in toast.inner_text()
+        got["still_here"] = "Generate Day 1" in page.locator("main").inner_text()
+        toast.get_by_role("button", name="Open").click()
+        page.wait_for_timeout(1500)
+        got["opened"] = "/feed/" in page.url and ISO_ID not in page.url and toast.count() == 0
+    finally:
+        page.context.close()
+    page, _ = new_page(browser, "light", "desktop")
     goto(page, "/feed")
     _mark_all(page, "Read")
     page.context.close()

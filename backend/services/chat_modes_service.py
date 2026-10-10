@@ -40,7 +40,8 @@ _ASK_ABOUT_INSTRUCTION = (
     'they asked. A narrow question gets a narrow, exact answer; an open one ("explain this") gets '
     "the full teach-through. The blocks above are compressed notes — use their specifics (the "
     "named company, the mechanism, the number, the failure mode) instead of restating the summary "
-    "in more general words."
+    "in more general words. They have already read the card, so its value to them is what it leaves "
+    "unsaid."
 )
 
 _MD_IMAGE_RE     = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -195,10 +196,14 @@ def build_feed_context_note(feed_context: dict) -> str:
         # it matters" line, or the first line of its summary). It used to be
         # pasted again here AND again in the system prompt — up to four copies
         # of the same sentence in one prompt.
+        # "Keep the summary intact" read as "reword the summary": real answers
+        # restated the card's own numbers and comparison in plainer words.
         anchor = "the “Why it matters” line" if why else "the summary above"
         parts.append(
-            "The user wants this card explained in the simplest, most intuitive terms. Keep its "
-            f"core mechanism — {anchor} — intact: simplify the vocabulary, not the logic."
+            "The user has read this card and wants it explained in the simplest, most intuitive "
+            f"terms. Keep its core mechanism — {anchor} — intact, but explain what sits underneath "
+            "it (why it happens, what drives each side) rather than restating the card in plainer "
+            "words: simplify the vocabulary, not the logic."
         )
 
     return "\n".join(parts)

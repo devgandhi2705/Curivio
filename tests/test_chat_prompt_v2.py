@@ -70,20 +70,16 @@ class TestPersonaAndPrinciples:
     def test_principles_are_present_once(self):
         assert build_system_prompt(CONTEXT).count("RESPONSE PRINCIPLES:") == 1
 
-    def test_simple_tone_variant_drops_the_two_conflicting_rules(self):
-        full, simple = build_response_principles(False), build_response_principles(True)
-        assert "Decide length and depth" in full and "Decide length and depth" not in simple
-        assert "Decide the shape" in full and "Decide the shape" not in simple
-
     @pytest.mark.parametrize("fragment", [
-        "Lead with the actual answer", "Explain WHY, not just WHAT",
-        "never invent a source", "change your approach", "Continuity",
+        "Lead with the actual answer", "Explain WHY, not just WHAT", "Decide length and depth",
+        "Decide the shape", "never invent a source", "change your approach", "Continuity",
     ])
-    def test_simple_tone_variant_keeps_every_other_rule(self, fragment):
-        assert fragment in build_response_principles(True)
+    def test_simple_tone_keeps_every_rule(self, fragment):
+        # The model decides shape on a simple-tone turn too — no rule is dropped.
+        assert fragment in build_system_prompt(CONTEXT, simple_tone=True)
 
     def test_the_tension_rule_survived_as_a_principle(self):
-        assert "open tension" in build_response_principles(False)
+        assert "open tension" in build_response_principles()
 
 
 class TestSimpleTone:
@@ -91,17 +87,19 @@ class TestSimpleTone:
         assert "MECHANISM-PRESERVING SIMPLIFICATION" not in build_system_prompt(CONTEXT)
         assert "MECHANISM-PRESERVING SIMPLIFICATION" in build_system_prompt(CONTEXT, simple_tone=True)
 
-    def test_the_five_step_structure_survives(self):
+    def test_no_mandated_section_structure(self):
+        # A fixed CORE IDEA / ANALOGY / ... skeleton made every answer a form-fill.
         prompt = build_system_prompt(CONTEXT, simple_tone=True)
-        for step in ("THE CORE IDEA", "THE ANALOGY", "THE MECHANISM", "WHY IT EXISTS", "THE INSIGHT"):
-            assert step in prompt
+        for step in ("THE CORE IDEA", "THE MECHANISM", "WHY IT EXISTS", "THE INSIGHT",
+                     "Structure your response"):
+            assert step not in prompt
+        assert "Simplify the words, never the thinking" in prompt
 
-    def test_only_one_self_check_remains(self):
+    def test_no_self_check_checklists(self):
         prompt = build_system_prompt(CONTEXT, simple_tone=True)
         assert "ANALOGY QUALITY TEST" not in prompt
         assert "ABSTRACTION SELF-CHECK" not in prompt
         assert "STRATEGIC MEANING TEST" not in prompt
-        assert "Check once before finalising" in prompt
 
 
 class TestCrisisSection:

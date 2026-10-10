@@ -539,7 +539,8 @@ function SourceSection({ sourceLinks, cardTitle, aside = false }) {
 
 // ─── Inline note textarea (rendered below action bar when open) ───────────────
 
-function NoteArea({ draft, onChange, aside = false, autoFocus = true }) {
+// No autoFocus: focusing on open pops the phone keyboard over the card.
+function NoteArea({ draft, onChange, aside = false }) {
   return (
     <div className={aside ? "" : "px-3 py-2 md:px-5 md:py-3 border-t border-slate-800/80 bg-slate-800/20"}>
       {aside && <p className="u-read-label text-slate-500 mb-2">Your note</p>}
@@ -549,7 +550,6 @@ function NoteArea({ draft, onChange, aside = false, autoFocus = true }) {
         placeholder="Your thoughts on this card…"
         value={draft}
         onChange={onChange}
-        autoFocus={autoFocus}
       />
       <p className="text-[10px] text-slate-600 mt-1">
         {draft.trim() ? "Auto-saved" : "Start typing to save a note"}
@@ -881,7 +881,7 @@ export default function InsightCard({
             </div>
           </div>
           {showNote && (
-            <div className="u-rc-note"><NoteArea aside draft={noteDraft} onChange={handleNoteChange} autoFocus={noteOpen} /></div>
+            <div className="u-rc-note"><NoteArea aside draft={noteDraft} onChange={handleNoteChange} /></div>
           )}
         </aside>
       </article>

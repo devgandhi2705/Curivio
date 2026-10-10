@@ -13,7 +13,9 @@ export default function ProjectInsightView({
   genStage,
   genStageDetail,
   genDismissed,
+  genStartedAt,
   onDismissGenerating,
+  onShowGenerating,
   onOpenInChat,
   readKeys,
   onMarkRead,
@@ -38,7 +40,9 @@ export default function ProjectInsightView({
       genStage={genStage}
       genStageDetail={genStageDetail}
       genDismissed={genDismissed}
+      genStartedAt={genStartedAt}
       onDismissGenerating={onDismissGenerating}
+      onShowGenerating={onShowGenerating}
       onOpenInChat={onOpenInChat}
       readKeys={readKeys}
       onMarkRead={onMarkRead}

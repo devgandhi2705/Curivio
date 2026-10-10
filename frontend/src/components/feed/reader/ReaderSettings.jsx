@@ -7,8 +7,8 @@
  * loaded the first time the font dropdown opens.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { m, presets, useIsPhone } from "../../../lib/motion.jsx"
-import { THEMES, PRESETS, DEFAULTS, RANGE, SYSTEM_FONTS, CATEGORY_LABEL, ensureFont, fontStack } from "./readerPrefs.js"
+import { m, AnimatePresence, presets, useIsPhone } from "../../../lib/motion.jsx"
+import { THEMES, PRESETS, DEFAULTS, RANGE, SYSTEM_FONTS, CATEGORY_LABEL, ensureFont, fontStack, slideVariants, SLIDE_TRANSITION } from "./readerPrefs.js"
 
 const SECTION_IDS = ["presets", "theme", "layout", "text", "spacing", "slides"]
 const SECTION_STATE_KEY = "curivio.reader-settings-sections.v1"
@@ -18,8 +18,6 @@ const LINE_OPTIONS  = [1, 1.15, 1.3, 1.5, 1.6, 1.7, 1.8, 2, 2.2, 2.5, 3]
 const TRACK_OPTIONS = [-0.05, -0.02, 0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.1, 0.15, 0.2]
 const WORD_OPTIONS  = [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6]
 const BLOCK_OPTIONS = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
-const DIM_OPTIONS   = [100, 95, 90, 85, 80, 75, 70, 60, 50, 40]
-const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 function loadOpenSections(userKey) {
   try {
@@ -265,6 +263,41 @@ function Segmented({ label, value, options, onChange }) {
   )
 }
 
+// Two mock pages turning over with the chosen transition, on a loop. It
+// replays as soon as the choice changes, so the pick shows straight away.
+function TransitionPreview({ kind }) {
+  const [page, setPage] = useState(0)
+  useEffect(() => {
+    setPage(p => p + 1)
+    const id = setInterval(() => setPage(p => p + 1), 1800)
+    return () => clearInterval(id)
+  }, [kind])
+
+  const n = page % 2 + 1
+  return (
+    <div aria-hidden="true" className="relative h-24 rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden">
+      <AnimatePresence initial={false} custom={1}>
+        <m.div
+          key={page}
+          custom={1}
+          variants={slideVariants(kind)}
+          initial="enter" animate="center" exit="exit"
+          transition={kind === "none" ? { duration: 0 } : SLIDE_TRANSITION}
+          className="absolute inset-0 px-3.5 py-3 flex flex-col gap-1.5"
+        >
+          <span className="flex items-center gap-1.5 text-[10px] text-slate-500">
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--u-accent)" }} />Article {n}
+          </span>
+          <span className="h-2.5 rounded-full bg-slate-600" style={{ width: n === 1 ? "70%" : "55%" }} />
+          <span className="h-1.5 rounded-full bg-slate-800" style={{ width: "92%" }} />
+          <span className="h-1.5 rounded-full bg-slate-800" style={{ width: n === 1 ? "84%" : "88%" }} />
+          <span className="h-1.5 rounded-full bg-slate-800" style={{ width: n === 1 ? "60%" : "72%" }} />
+        </m.div>
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function Toggle({ label, checked, onChange }) {
   return (
     <label className="flex items-center justify-between gap-3 cursor-pointer">
@@ -380,7 +413,7 @@ export default function ReaderSettings({ prefs, set, onClose, userKey = "anonymo
               <Toggle label="Dark background" checked={prefs.custom.dark} onChange={v => set({ custom: { ...prefs.custom, dark: v } })} />
             </div>
           )}
-          <NumberCombo id="r-dim" label="Brightness" value={prefs.dim} options={DIM_OPTIONS} min={RANGE.dim[0]} max={RANGE.dim[1]} unit="%" onChange={v => set({ dim: v })} />
+          <Slider id="r-dim" label="Brightness" value={prefs.dim} min={RANGE.dim[0]} max={RANGE.dim[1]} step={5} format={v => `${v}%`} onChange={v => set({ dim: v })} />
         </Section>
 
         <Section id="layout" title="Layout" open={openSections.layout} onToggle={() => toggleSection("layout")}>
@@ -403,7 +436,7 @@ export default function ReaderSettings({ prefs, set, onClose, userKey = "anonymo
 
         <Section id="slides" title="Slides" open={openSections.slides} onToggle={() => toggleSection("slides")}>
           <Segmented label="Transition" value={prefs.transition} options={[["slide", "Slide"], ["fade", "Fade"], ["lift", "Lift"], ["none", "None"]]} onChange={v => set({ transition: v })} />
-          <NumberCombo id="r-speed" label="Transition time" value={prefs.speed} options={SPEED_OPTIONS} min={RANGE.speed[0]} max={RANGE.speed[1]} unit="×" decimals={2} onChange={v => set({ speed: v })} />
+          <TransitionPreview kind={prefs.transition} />
           <Toggle label="Hide toolbar while reading" checked={prefs.autoHide} onChange={v => set({ autoHide: v })} />
           <Toggle label="Side arrows" checked={prefs.arrows} onChange={v => set({ arrows: v })} />
         </Section>

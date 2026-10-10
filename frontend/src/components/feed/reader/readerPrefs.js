@@ -95,7 +95,6 @@ export const DEFAULTS = {
   custom: { bg: "#F6F4EB", text: "#1D1810", accent: "#3C5A32", dark: false },
   dim: 100,          // % brightness
   transition: "slide", // slide | fade | lift | none
-  speed: 1,          // × duration
   autoHide: true,    // tuck the toolbar away while reading
   arrows: true,      // side arrows on wide screens
 }
@@ -112,9 +111,27 @@ export const PRESETS = [
 const LIMITS = {
   size: [10, 48], lineHeight: [1, 3],
   tracking: [-0.05, 0.2], wordSpacing: [0, 0.6], paraSpacing: [0, 2], width: [480, 1200],
-  dim: [40, 100], speed: [0.5, 2],
+  dim: [40, 100],
 }
 export const RANGE = LIMITS
+
+// Slide transitions, shared by the slides and the settings preview.
+export const SLIDE_TRANSITION = { duration: 0.42, ease: [0.65, 0, 0.35, 1] }
+
+export function slideVariants(kind) {
+  if (kind === "fade") return { enter: { opacity: 0 }, center: { opacity: 1 }, exit: { opacity: 0 } }
+  if (kind === "lift") return {
+    enter: { opacity: 0, y: 28, scale: 0.985 },
+    center: { opacity: 1, y: 0, scale: 1 },
+    exit: { opacity: 0, y: -16, scale: 0.99 },
+  }
+  if (kind === "none") return { enter: {}, center: {}, exit: {} }
+  return {
+    enter: dir => ({ opacity: 0, x: dir > 0 ? "9%" : "-9%" }),
+    center: { opacity: 1, x: 0 },
+    exit: dir => ({ opacity: 0, x: dir > 0 ? "-9%" : "9%" }),
+  }
+}
 
 const HEX = /^#[0-9a-f]{6}$/i
 

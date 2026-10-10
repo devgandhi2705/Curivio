@@ -23,25 +23,10 @@ import InsightCard from "../InsightCard.jsx"
 import ReaderSettings from "./ReaderSettings.jsx"
 import { useAuth } from "../../../contexts/AuthContext.jsx"
 import { articleKeyFromTitle } from "../../../api/feed.js"
-import { loadPrefs, savePrefs, ensureFont, themeVars, typeVars } from "./readerPrefs.js"
+import { loadPrefs, savePrefs, ensureFont, themeVars, typeVars, slideVariants, SLIDE_TRANSITION } from "./readerPrefs.js"
 
 const keyOf = c => articleKeyFromTitle(c.title || "")
-const EASE = [0.65, 0, 0.35, 1]
-
-function slideVariants(kind) {
-  if (kind === "fade") return { enter: { opacity: 0 }, center: { opacity: 1 }, exit: { opacity: 0 } }
-  if (kind === "lift") return {
-    enter: { opacity: 0, y: 28, scale: 0.985 },
-    center: { opacity: 1, y: 0, scale: 1 },
-    exit: { opacity: 0, y: -16, scale: 0.99 },
-  }
-  if (kind === "none") return { enter: {}, center: {}, exit: {} }
-  return {
-    enter: dir => ({ opacity: 0, x: dir > 0 ? "9%" : "-9%" }),
-    center: { opacity: 1, x: 0 },
-    exit: dir => ({ opacity: 0, x: dir > 0 ? "-9%" : "9%" }),
-  }
-}
+const EASE = SLIDE_TRANSITION.ease
 
 // Arrow keys belong to whatever control has focus (a note, a slider) before the slides.
 function ownsKeys(el) {
@@ -230,7 +215,6 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
 
   const theme = themeVars(prefs)
   const style = { ...typeVars(prefs), ...(theme?.vars ?? {}) }
-  const dur = 0.42 * prefs.speed
   const variants = slideVariants(prefs.transition)
   // Same units at both ends (px), or Motion can't interpolate and jumps.
   const ox = origin?.x ?? window.innerWidth / 2, oy = origin?.y ?? 24
@@ -334,7 +318,7 @@ export default function ReadingMode({ pkg, cards, coreCount, startIndex = 0, ori
             custom={dir}
             variants={variants}
             initial="enter" animate="center" exit="exit"
-            transition={{ duration: prefs.transition === "none" ? 0 : dur, ease: EASE }}
+            transition={prefs.transition === "none" ? { duration: 0 } : SLIDE_TRANSITION}
             className="absolute inset-0 overflow-y-auto outline-none"
           >
             <m.div

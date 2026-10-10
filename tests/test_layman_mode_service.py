@@ -42,17 +42,17 @@ class TestAnalogyBankSelection:
         d = build_layman_directive(domain="Software Engineering")
         assert "standardised plug socket" in d
 
-    def test_unclassified_domain_falls_back_to_default_bank(self):
+    def test_unclassified_domain_gets_no_bank(self):
         d = build_layman_directive(domain="Underwater Basket Weaving")
-        assert "Match the analogy to the mechanism" in d
+        assert "ANALOGY DOMAIN BANK" not in d
+        assert "\n\n\n" not in d  # the empty slot leaves no gap
 
-    def test_empty_domain_falls_back_to_default_bank(self):
-        d = build_layman_directive(domain="")
-        assert "Match the analogy to the mechanism" in d
+    def test_empty_domain_gets_no_bank(self):
+        assert "ANALOGY DOMAIN BANK" not in build_layman_directive(domain="")
 
-    def test_topic_hint_anchors_the_analogy(self):
-        d = build_layman_directive(domain="ai", topic_hint="transformer attention")
-        assert 'Anchor the analogy to the specific topic: "transformer attention"' in d
+    def test_bank_is_calibration_not_a_mandate(self):
+        d = build_layman_directive(domain="finance")
+        assert "for calibration only" in d
 
     def test_known_concepts_prepend_anchor_block(self):
         d = build_layman_directive(domain="ai", known_concepts=["neural networks", "backpropagation"])

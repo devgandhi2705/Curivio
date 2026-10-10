@@ -9,7 +9,9 @@
  *   project           — project object
  *   packages          — list of package objects, newest first
  *   onGenerate()      — trigger next-day generation
- *   generating        — boolean
+ *   generating        — boolean, a run is building this project's next day
+ *   genDismissed      — the user left that run's progress view
+ *   onDismissGenerating() / onShowGenerating() — leave / return to it
  *   onOpenInChat(card, action, projectMeta) — open card in chat
  *   readKeys          — Set<articleKey> for the currently-viewed package
  *   onMarkRead(insightId, articleKey, articleTitle)
@@ -132,7 +134,8 @@ function buildContentMix(pkg) {
 // canGenerate={false}: there the menu only switches days.
 function DayDropdown({ packages, displayLabels, selectedId, onSelect, open, setOpen, next, canGenerate = true }) {
   const ref = useRef(null)
-  const currentLabel = displayLabels.get(selectedId) ?? `Day ?`
+  // Watching a run, the pill names the day being built.
+  const currentLabel = next.watching ? next.label : displayLabels.get(selectedId) ?? `Day ?`
   const labelChanges = useChangeCount(currentLabel)
 
   useEffect(() => {
@@ -150,7 +153,7 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect, open, setO
         onClick={() => setOpen(o => !o)}
         data-next={next.state}
         className={[
-          "relative inline-flex items-center gap-1.5 px-3 py-1 rounded-lg",
+          "relative inline-flex items-center gap-1.5 px-3 py-1 rounded-lg whitespace-nowrap",
           "text-[11px] font-semibold uppercase tracking-wider transition-colors select-none",
           open
             ? "bg-white/[0.12] border border-white/[0.16] text-slate-100"
@@ -184,7 +187,7 @@ function DayDropdown({ packages, displayLabels, selectedId, onSelect, open, setO
           )}
           {packages.map(pkg => {
             const label  = displayLabels.get(pkg.id)
-            const isSel  = pkg.id === selectedId
+            const isSel  = !next.watching && pkg.id === selectedId
             const failed = label === "Day 0"
             return (
               <button
@@ -309,10 +312,12 @@ function DayProgressBar({ readCount, totalCount, unlocked, onOpenNext }) {
 
 // ─── Generate row (first item of the Day menu) ────────────────────────────────
 
-// next: { label, state: "locked"|"ready"|"building", remaining, extraToday, stage, offline, onGenerate }
+// next: { label, state: "locked"|"ready"|"building", remaining, extraToday, stage, offline, onGenerate,
+//         watching, onShowProgress }
+// While building, the row is the day being built: it opens its progress view.
 function GenerateRow({ next, onDone }) {
   const [confirming, setConfirming] = useState(false)
-  const { label, state, remaining, extraToday, stage, offline, onGenerate } = next
+  const { label, state, remaining, extraToday, stage, offline, onGenerate, watching, onShowProgress } = next
 
   if (confirming) {
     return (
@@ -343,9 +348,9 @@ function GenerateRow({ next, onDone }) {
     : null
   return (
     <button
-      onClick={() => setConfirming(true)}
-      disabled={building || locked || offline}
-      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-slate-200 hover:text-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors"
+      onClick={() => { if (building) { onShowProgress?.(); onDone() } else setConfirming(true) }}
+      disabled={!building && (locked || offline)}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-slate-200 hover:text-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors ${watching ? "bg-white/[0.07]" : ""}`}
     >
       {building ? <SpinnerIcon />
         : locked ? <LockIcon className="w-3 h-3 flex-shrink-0" />
@@ -380,7 +385,7 @@ function CuriositySectionHeader() {
 }
 
 // A day of the feed, optionally scrolled to one article and/or in Reading mode.
-function feedUrl(projectId, dayId, articleKey = null, read = false) {
+export function feedUrl(projectId, dayId, articleKey = null, read = false) {
   return `/feed/${encodeURIComponent(projectId || "")}/${dayId}`
     + (articleKey ? `/${encodeURIComponent(articleKey)}` : "")
     + (read ? "?read=1" : "")
@@ -742,7 +747,9 @@ export default function DailyPackageView({
   genStage,
   genStageDetail,
   genDismissed,
+  genStartedAt,
   onDismissGenerating,
+  onShowGenerating,
   onOpenInChat,
   readKeys,
   onMarkRead,
@@ -760,7 +767,10 @@ export default function DailyPackageView({
   const [selectedId, setSelectedId] = useState(packages[0]?.id ?? null)
   const [dayMenuOpen, setDayMenuOpen] = useState(false)
   const frameRef = useRef(null)
-  const wide = useMainWidth(frameRef, packages.length > 0) >= RAILS_MIN_WIDTH
+  // A run's progress view stands in for a day's content until it's left —
+  // from its own button, the strip, or by picking any day in the Day menu.
+  const watching = generating && !genDismissed
+  const wide = useMainWidth(frameRef, packages.length > 0 && !watching) >= RAILS_MIN_WIDTH
   // Map<cardId, noteContent> for the currently-selected package
   const [notesMap, setNotesMap] = useState(new Map())
   // Set<articleKey> — synced from localStorage queue
@@ -776,6 +786,7 @@ export default function DailyPackageView({
   const nextPkg  = packages[packages.findIndex(p => p.id === selected?.id) - 1] ?? null
 
   const selectPackage = (id) => {
+    if (watching) onDismissGenerating?.()
     setSelectedId(id)
     navigate(feedUrl(project?.project_id, id, null, readParam))
   }
@@ -789,11 +800,14 @@ export default function DailyPackageView({
     return () => window.removeEventListener("queuechange", onQueueChange)
   }, [])
 
-  // Auto-select the newest package whenever packages[0] changes (new generation).
-  // This keeps the view, greeting, and sidebar all on the same day label.
+  // Auto-select the newest package whenever packages[0] changes (new generation,
+  // another project). A run that lands while the user reads another day leaves
+  // them there — a toast offers the new one — unless they were watching it.
+  const watchingRef = useRef(watching)
   useEffect(() => {
     const newest = packages[0]?.id
     if (!newest) return
+    if (!watchingRef.current && packages.some(p => p.id === selectedId)) return
     setSelectedId(newest)
     // A day picked from the dropdown is pinned in the URL, and the deep-link
     // effect below re-applies that pin on every packages change — so the pin has
@@ -803,6 +817,8 @@ export default function DailyPackageView({
       navigate(feedUrl(pid, newest, null, readParam), { replace: true })
     }
   }, [packages[0]?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // After the effect above, so it sees the value from before this render.
+  useEffect(() => { watchingRef.current = watching })
 
   // When navigating from queue: select the target package
   useEffect(() => {
@@ -889,6 +905,8 @@ export default function DailyPackageView({
     stage:      genStage,
     offline:    !isOnline,
     onGenerate,
+    watching,
+    onShowProgress: onShowGenerating,
   }
 
   // Expose export functions to parent whenever selection changes
@@ -936,7 +954,7 @@ export default function DailyPackageView({
   const [readerDayOpen, setReaderDayOpen] = useState(false)
   const readerCards = selected ? cardsInPageOrder(selected) : { core: [], cards: [] }
   // Wait for the URL's day to be selected, or it would open on another day.
-  const reading = readParam && !!selected && (!targetInsightId || selected.id === targetInsightId)
+  const reading = !watching && readParam && !!selected && (!targetInsightId || selected.id === targetInsightId)
   const readerStart = Math.max(0, readerCards.cards.findIndex(c => articleKeyFromTitle(c.title || "") === targetArticleKey))
   const readerUrl = (articleKey, read = true) => feedUrl(project?.project_id, selected.id, articleKey, read)
 
@@ -977,27 +995,31 @@ export default function DailyPackageView({
     queuedKeys, onToggleQueue: handleToggleQueue, isOnline, offlineIds, reader: true,
   })
 
+  const progress = (
+    <GeneratingPackageState
+      key={project?.project_id}
+      project={project}
+      nextLabel={nextLabel}
+      stage={genStage}
+      stageDetail={genStageDetail}
+      startedAt={genStartedAt}
+      onDismiss={onDismissGenerating}
+    />
+  )
+
   if (packages.length === 0) {
-    // Dismissed with nothing to read yet: the progress strip carries the run,
-    // so give the page the planned path to read instead of an empty column.
-    if (generating && genDismissed) return <JourneyPreviewPanel projectId={project?.project_id} nextLabel={nextLabel} />
-    if (generating) {
-      return (
-        <GeneratingPackageState
-          project={project}
-          nextLabel={nextLabel}
-          stage={genStage}
-          stageDetail={genStageDetail}
-          onDismiss={onDismissGenerating}
-        />
-      )
-    }
+    // Day 1: nothing else to show, so the progress view is the page. Dismissed,
+    // the progress strip carries the run and the page gets the planned path.
+    if (watching) return progress
+    if (generating) return <JourneyPreviewPanel projectId={project?.project_id} nextLabel={nextLabel} />
     return <EmptyPackageState project={project} onGenerate={onGenerate} isOnline={isOnline} />
   }
 
   return selected ? (
     <>
-      <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5">
+      {/* w-max: a fixed box at left-1/2 shrink-wraps to half the viewport, which
+          wrapped "Day N" and "Reading mode" onto two lines on phones. */}
+      <div className="fixed top-3.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 w-max">
         <DayDropdown
           packages={packages}
           displayLabels={displayLabels}
@@ -1007,7 +1029,7 @@ export default function DailyPackageView({
           setOpen={setDayMenuOpen}
           next={next}
         />
-        {!isFailedPackage(selected) && (
+        {!watching && !isFailedPackage(selected) && (
           <button
             type="button"
             onClick={openReading}
@@ -1022,6 +1044,7 @@ export default function DailyPackageView({
           </button>
         )}
       </div>
+      {watching ? progress : (
       <div ref={frameRef} className="relative isolate">
       {/* Graph plates down the page, behind the cards (the frame is isolated, so
           z -1 sits under its content): right ones fill the article list's column,
@@ -1069,6 +1092,7 @@ export default function DailyPackageView({
         offlineIds={offlineIds}
       />
       </div>
+      )}
       {createPortal(
         <AnimatePresence>
           {reading && (
@@ -1126,12 +1150,15 @@ function formatElapsed(seconds) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
 }
 
-function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDetail, onDismiss }) {
-  const [elapsed, setElapsed] = useState(0)
+// startedAt: when the run began, so leaving and coming back keeps the clock.
+function GeneratingPackageState({ project, nextLabel = "Day 1", stage, stageDetail, startedAt, onDismiss }) {
+  const [from] = useState(() => startedAt ?? Date.now())
+  const [now, setNow] = useState(Date.now)
   const [preview, setPreview] = useState(null)
+  const elapsed = Math.max(0, Math.floor((now - from) / 1000))
 
   useEffect(() => {
-    const id = setInterval(() => setElapsed(s => s + 1), 1000)
+    const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [])
 

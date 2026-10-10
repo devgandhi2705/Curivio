@@ -164,12 +164,14 @@ def format_for_mode(ctx: SharedLearningContext, mode: str) -> str:
         if not ctx.known_concepts:
             return ""
         lines = [
-            "ANALOGY ANCHORS  <- connect new ideas to what they already know",
-            f"Known concepts to use as bridges:",
+            "ANALOGY ANCHORS  <- concepts this user has already met in this project",
             _fmt_list(ctx.known_concepts[:5]),
             "",
-            "When explaining a new concept, reference one of these anchors first: "
-            "'Remember how [known concept] works? This is the same mechanism, one step upstream.'",
+            # Optional on purpose: "reference one first" forced an opener even
+            # when no anchor fit (a real one bridged from the fragment
+            # "Marketing Budget Allocation Is").
+            "If one of these genuinely shares the mechanism you're explaining, bridging from it "
+            "can help; ignore any that don't fit.",
         ]
         return "\n".join(lines)
 

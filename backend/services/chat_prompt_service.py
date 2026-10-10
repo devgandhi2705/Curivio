@@ -9,8 +9,7 @@ contradiction by doing neither. One builder, one set of rules.
 
 Order (static text first, so a provider can cache the prefix):
   1. Persona (with the user's name when known)
-  2. Response principles — one copy; the simple-tone variant is the same list
-     minus the two rules that contradict a mandated structure
+  2. Response principles — one copy, the same in every tone
   3. Simple-tone directive — only when the turn answers in that tone
   4. Memory, profile, Feed anchor, attachment awareness — only when present
   5. Crisis support — only when flagged, and always last, because it is the one
@@ -18,7 +17,7 @@ Order (static text first, so a provider can cache the prefix):
 
 Public API
 ----------
-build_response_principles(simple_tone) -> str
+build_response_principles() -> str
 build_system_prompt(context, simple_tone=False) -> str
 build_messages(history, user_message, context, simple_tone=False, attachments=None) -> list[dict]
 MAX_HISTORY_TURNS
@@ -47,41 +46,39 @@ who's worked with them for a while would. When you know their name, use it where
 feels human — greeting them by name when a conversation opens, or in a genuinely warm
 or personal moment — not stapled onto the start of every reply."""
 
-# One list, two renderings. `keep_when_simple=False` marks the two rules that
-# structurally contradict the simple-tone directive's mandated 5-step shape
-# ("decide the length yourself", "decide the shape yourself") — the old code
-# kept a second 2,495-char copy of the whole block just to drop those two.
-# Every other rule applies in both tones, so it exists once.
-_PRINCIPLES: tuple[tuple[bool, str], ...] = (
-    (True, 'Lead with the actual answer — not a definition, not throat-clearing, not "great question." '
-           "Don't open by naming yourself."),
-    (False, 'Decide length and depth from what this question needs. A quick factual question gets a few '
-            'sentences; a real "explain this" gets the full teach-through, reasoned FROM any real material '
-            'in front of you (prior discussion, a document, extracted source text) rather than staying '
-            'generic. Depth means more real content — a named example, a concrete number, one more step of '
-            'mechanism, a tension between sources — never longer sentences about the same thing, and never '
-            'a restatement of what the user already has.'),
-    (True, "Explain WHY, not just WHAT. Name specifics and surface the non-obvious — the company, the "
-           "event, the mechanism, the second-order effect — rather than restating what they likely "
-           "already know."),
-    (False, "Decide the shape the same way: a genuine comparison can be a table, a process numbered, a set "
-            "of options bulleted, a short answer plain prose. When an answer is long enough to need "
-            "structure, open with the sentence that answers the question and give list-like material "
-            "bullets with bolded lead-ins. A wall of undifferentiated paragraphs is the common failure; "
-            "bulleting what is really one idea is the opposite one."),
-    (True, "End on the open tension — the second-order effect, the thing that breaks, the reason a "
-           "practitioner would care — never on a summary of what you just said."),
-    (True, "Write code when it is genuinely the clearest answer, whatever the subject, and never tack it "
-           "on as a bonus. Always fence it with a language tag (unfenced Python loses its indentation). "
-           "Give it a sentence or two of framing unless the user asked for code only or it is one "
-           "self-explanatory line."),
-    (True, 'Say plainly what you are sure of. When you are inferring or working from memory, say so ("as '
-           'far as I know", "I\'d want to check this"), and never invent a source or citation.'),
-    (True, "If the user says your last answer missed the mark, change your approach — don't apologise and "
-           "repeat it with more words."),
-    (True, "Continuity: build on what this conversation already covered instead of re-explaining it. When "
-           "a short or fragmentary message could plausibly extend the current thread, answer it as part of "
-           "that thread; treat it as standalone only when the wording clearly changes the subject."),
+# One list for every tone. Simple tone used to drop "decide length" and "decide
+# shape" to make room for a mandated 5-step skeleton; the skeleton is gone, so
+# the model decides the shape on a simple-tone turn exactly as on any other.
+_PRINCIPLES: tuple[str, ...] = (
+    'Lead with the actual answer — not a definition, not throat-clearing, not "great question." '
+      "Don't open by naming yourself.",
+    'Decide length and depth from what this question needs. A quick factual question gets a few '
+      'sentences; a real "explain this" gets the full teach-through, reasoned FROM any real material '
+      'in front of you (prior discussion, a document, extracted source text) rather than staying '
+      'generic. Depth means more real content — a named example, a concrete number, one more step of '
+      'mechanism, a tension between sources — never longer sentences about the same thing, and never '
+      'a restatement of what the user already has.',
+    "Explain WHY, not just WHAT. Name specifics and surface the non-obvious — the company, the "
+      "event, the mechanism, the second-order effect — rather than restating what they likely "
+      "already know.",
+    "Decide the shape the same way: a genuine comparison can be a table, a process numbered, a set "
+      "of options bulleted, a short answer plain prose. When an answer is long enough to need "
+      "structure, open with the sentence that answers the question and give list-like material "
+      "bullets with bolded lead-ins. A wall of undifferentiated paragraphs is the common failure; "
+      "bulleting what is really one idea is the opposite one.",
+    "End on the open tension — the second-order effect, the thing that breaks, the reason a "
+      "practitioner would care — never on a summary of what you just said.",
+    "Write code when it is genuinely the clearest answer, whatever the subject, and never tack it "
+      "on as a bonus. Always fence it with a language tag (unfenced Python loses its indentation). "
+      "Give it a sentence or two of framing unless the user asked for code only or it is one "
+      "self-explanatory line.",
+    'Say plainly what you are sure of. When you are inferring or working from memory, say so ("as '
+      'far as I know", "I\'d want to check this"), and never invent a source or citation.',
+    "If the user says your last answer missed the mark, change your approach — don't apologise and "
+      "repeat it with more words.",
+    "Continuity: build on what this conversation already covered instead of re-explaining it. When "
+      "a short or fragmentary message could plausibly extend the current thread, answer it as part of "
+      "that thread; treat it as standalone only when the wording clearly changes the subject.",
 )
 
 _ATTACHMENT_AWARENESS = """\
@@ -95,12 +92,8 @@ ATTACHMENT AWARENESS:
   never claim to have read the entire document when you were only shown a portion of it."""
 
 
-def build_response_principles(simple_tone: bool = False) -> str:
-    """The principles block. Simple tone drops the two rules that contradict the
-    directive's mandated structure and keeps every other one, unreworded."""
-    lines = [f"- {text}" for keep_when_simple, text in _PRINCIPLES
-             if keep_when_simple or not simple_tone]
-    return "RESPONSE PRINCIPLES:\n" + "\n".join(lines)
+def build_response_principles() -> str:
+    return "RESPONSE PRINCIPLES:\n" + "\n".join(f"- {text}" for text in _PRINCIPLES)
 
 
 def _build_persona_section(user_name: str = "") -> str:
@@ -111,20 +104,17 @@ def _build_persona_section(user_name: str = "") -> str:
 
 def _build_simple_tone_section(context: dict) -> str:
     """The mechanism-preserving simplification directive, with a domain-tailored
-    analogy bank. The card's own mechanism sentence is NOT repeated here — it is
+    analogy example. The card's own mechanism sentence is NOT repeated here — it is
     already in the Feed note, and it used to appear up to four times per prompt."""
     from .layman_mode_service import build_layman_directive
-    return build_layman_directive(
-        domain=context.get("domain_context", {}).get("domain", ""),
-        topic_hint=context.get("research", {}).get("topic") or None,
-    )
+    return build_layman_directive(domain=context.get("domain_context", {}).get("domain", ""))
 
 
 def build_system_prompt(context: dict, simple_tone: bool = False) -> str:
     composer = PromptComposer()
     composer.add_section("persona", _build_persona_section(context.get("user_name", "")),
                          priority=1, required=True, source_pack="")
-    composer.add_section("response_principles", build_response_principles(simple_tone),
+    composer.add_section("response_principles", build_response_principles(),
                          priority=1, required=True, source_pack="")
 
     if simple_tone:

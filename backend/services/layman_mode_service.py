@@ -9,7 +9,7 @@ Builds the enhanced "Explain Simply" directive that:
 
 Public API
 ----------
-build_layman_directive(domain: str, topic_hint: str | None) -> str
+build_layman_directive(domain: str, known_concepts: list[str] | None) -> str
 """
 
 from __future__ import annotations
@@ -69,9 +69,8 @@ _ANALOGY_BANKS: dict[str, dict] = {
     },
 }
 
-_DEFAULT_ANALOGY_BANK: dict = {
-    "seed": "Match the analogy to the mechanism (why things happen), not the surface shape (what it looks like).",
-}
+# No domain match → no example (the directive already says what a good analogy does).
+_DEFAULT_ANALOGY_BANK: dict = {}
 
 
 # ── Directive template ─────────────────────────────────────────────────────────
@@ -85,25 +84,25 @@ _DEFAULT_ANALOGY_BANK: dict = {
 
 def build_layman_directive(
     domain: str = "",
-    topic_hint: str | None = None,
     known_concepts: list[str] | None = None,
 ) -> str:
     """
     Build the full mechanism-preserving simplification directive.
 
-    Injects a domain-specific analogy bank into the base template.
-    Falls back to the generic bank when domain is unclassified.
+    Injects a domain-specific analogy example into the base template; an
+    unclassified domain gets none.
 
     Parameters
     ----------
     domain         : Classified domain from domain_classifier_service (e.g. "Pharmaceutical").
-    topic_hint     : Current topic, used to anchor the analogy suggestion.
     known_concepts : User's known graph nodes — injected as explicit analogy anchors
                      so the simplification references what they've already learned.
     """
     key  = _normalise_domain(domain)
     bank = _ANALOGY_BANKS.get(key, _DEFAULT_ANALOGY_BANK)
-    directive = _DIRECTIVE_TEMPLATE.replace("{{ANALOGY_BANK}}", _format_bank(bank, topic_hint)).strip()
+    bank_text = _format_bank(bank)
+    directive = _DIRECTIVE_TEMPLATE.replace(
+        "{{ANALOGY_BANK}}\n\n", f"{bank_text}\n\n" if bank_text else "").strip()
 
     # Phase 4.6: prepend known-concept anchors when available
     if known_concepts:
@@ -134,10 +133,11 @@ def _normalise_domain(domain: str) -> str:
     return d
 
 
-def _format_bank(bank: dict, topic_hint: str | None) -> str:
-    lines = ["ANALOGY DOMAIN BANK:", f"- Seed example: {bank.get('seed', '')}"]
-    if topic_hint:
-        lines.append(
-            f'- Anchor the analogy to the specific topic: "{topic_hint}" — '
-            "a specific analogy sticks far better than a general one.")
-    return "\n".join(lines)
+def _format_bank(bank: dict) -> str:
+    # Framed as calibration, not a mandate: "anchor the analogy to <topic>"
+    # made the model force an analogy into every answer.
+    seed = bank.get("seed")
+    if not seed:
+        return ""
+    return ("ANALOGY DOMAIN BANK — one analogy that carries a mechanism, for calibration only "
+            f"(don't reuse it): {seed}")

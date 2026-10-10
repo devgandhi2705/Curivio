@@ -100,28 +100,23 @@ STRATEGIC MEANING TEST (confirm before finalising):
 
 # ── Full directives ───────────────────────────────────────────────────────────
 
+# No mandated section order on purpose. A fixed CORE IDEA / ANALOGY / MECHANISM /
+# WHY / INSIGHT skeleton made every answer the same labelled form-fill — the
+# model spent its effort filling slots (a stock analogy, a generic "why it
+# exists") instead of thinking about the idea. The bar is stated; the shape is
+# the model's call, same as every other turn.
 LAYMAN_SIMPLIFICATION_DIRECTIVE: str = """\
 ACTIVE RESPONSE MODE — MECHANISM-PRESERVING SIMPLIFICATION:
-Simplify vocabulary, abstraction and jargon. NEVER simplify the underlying mechanism. The user is smart but new to this domain: give them the full idea in words they already know.
+The user wants this in simple terms. Simplify the words, never the thinking. They are smart but new to this domain: give them the whole idea — the causal logic, what each actor wants and why, the part that isn't obvious — in language they already own. Simple is not the same as short or shallow.
 
-Simplify: jargon into plain English (define an unavoidable term inline, in parentheses); abbreviations into full names on first use; abstract structure into concrete analogies.
-Never simplify: causal logic (WHY A caused B), incentives (WHY actors chose what they chose), the strategic insight, or the hidden mechanism behind a surprising result.
-
-BAD:  "FDA helps exports because countries trust approved medicines."
-GOOD: "FDA approval works like a global trust certificate — buyers assume a company that passed strict inspections is less likely to fail them, and that assumption is worth more than a marketing budget because scrutiny earned it, money didn't."
-
-Structure your response in this sequence:
-1. THE CORE IDEA — one plain sentence: what is this, in the simplest honest terms?
-2. THE ANALOGY — carry the mechanism, not just the shape, then bridge back: "In the same way, [concept] works by [mechanism]…"
-3. THE MECHANISM — every step of the causal chain, in plain language.
-4. WHY IT EXISTS — what was broken or missing before it?
-5. THE INSIGHT — the one non-obvious thing that would surprise someone who just learned the basics. Never skip it.
+- Plain words over jargon. When a term can't be avoided, define it in passing; spell out an abbreviation the first time.
+- Use an analogy only when it carries the actual mechanism — who gains, who pays, and why — and say where it stops holding. A comparison that merely resembles the idea teaches nothing.
+- Prefer the specific over the general: the named company, the real number, the moment it went wrong.
+- Let the idea choose its shape. One lands best as a story, another as an argument built step by step, another around a single sharp example. Don't fall back on a template, labelled sections, or the same skeleton every time.
 
 {{ANALOGY_BANK}}
 
-Check once before finalising: every sentence reads without stopping; the analogy explains the mechanism — who benefits, who pays, and why — rather than just resembling it; the causal logic and the insight survived the simplification.
-
-Tone: speak like a brilliant friend explaining over coffee — direct, warm, not condescending. Never open with a definition."""
+Whatever material is in front of you, assume they have read it: what you add is what it leaves unsaid — the cause beneath the claim, a real case, where it overstates or breaks down. Aim for the moment the reader thinks "oh — so that's what's really going on": something they could now explain to someone else, and could not have worked out from the material alone. Speak like a brilliant friend over coffee — direct, warm, never condescending."""
 
 LAYMAN_SIMPLIFICATION_SIMPLE: str = """\
 ACTIVE RESPONSE MODE — EXPLAIN SIMPLY:

@@ -11,6 +11,8 @@
  *   On generate: refresh insights list + progression
  */
 import { useState, useEffect, useCallback, useRef } from "react"
+import { createPortal } from "react-dom"
+import { useNavigate } from "react-router-dom"
 import { m, AnimatePresence, presets, useDialogMotion } from "../../lib/motion.jsx"
 import {
   listProjects,
@@ -37,7 +39,7 @@ import CreateProjectModal from "./CreateProjectModal.jsx"
 import EditProjectModal from "./EditProjectModal.jsx"
 import IntentConfirmModal from "./IntentConfirmModal.jsx"
 import ProjectInsightView from "./ProjectInsightView.jsx"
-import { stageShortLabel } from "./DailyPackageView.jsx"
+import { stageShortLabel, computeDisplayLabels, feedUrl } from "./DailyPackageView.jsx"
 import NotesOnlyFeed from "./NotesOnlyFeed.jsx"
 import OnboardingModal, { hasCompletedOnboarding, markOnboardingDone } from "./OnboardingModal.jsx"
 import { useSidebarSubsection } from "../../contexts/SidebarSubsection.jsx"
@@ -141,9 +143,6 @@ function WorkspaceSkeleton() {
     </div>
   )
 }
-
-// ── Generation state persists across tab switches ─────────────────────────────
-const _generatingNow = new Set()
 
 // ── Greeting ──────────────────────────────────────────────────────────────────
 
@@ -282,6 +281,7 @@ export default function ProjectsPage({
   isOnline = true,
 }) {
   const { offlineIds } = useOfflineArticles()
+  const navigate = useNavigate()
   // Project list
   const [projects,       setProjects]       = useState([])
   const [loadingList,    setLoadingList]    = useState(true)
@@ -295,14 +295,19 @@ export default function ProjectsPage({
   const [insights,       setInsights]       = useState([])
   const [loadingContent, setLoadingContent] = useState(true)
 
-  // Generation
-  const [generating,     setGenerating]     = useState(false)
-  const [genStage,       setGenStage]       = useState(null) // backend pipeline phase, polled
-  const [genDetail,      setGenDetail]      = useState(null) // one line of live progress from that phase
-  const [genDismissed,   setGenDismissed]   = useState(false) // user left the progress screen; run continues
-  const [genReady,       setGenReady]       = useState(null)  // label of a package that landed while dismissed
+  // Generation runs, one per project: { [projectId]: { name, stubId, startedAt,
+  // stage, detail, dismissed } }. stubId is null until the generate call answers;
+  // stage/detail are the polled pipeline phase; dismissed = the user left the
+  // progress view, the run continues. ProjectsPage never unmounts, so runs
+  // outlive tab switches. Everything below reads the open project's run only.
+  const [runs,           setRuns]           = useState({})
+  const [genReady,       setGenReady]       = useState(null)  // toast: { projectId, insightId, text, failed }
   const [genError,       setGenError]       = useState(null)
-  const [pendingStub,    setPendingStub]    = useState(null) // {id, day_number, generated_at, projectId}
+  const run          = runs[activeId] ?? null
+  const generating   = !!run
+  const genStage     = run?.stage ?? null
+  const genDetail    = run?.detail ?? null
+  const genDismissed = !!run?.dismissed
 
   // Read state for the latest insight of the active project: Set<articleKey>
   const [readKeys,       setReadKeys]       = useState(new Set())
@@ -497,99 +502,97 @@ export default function ProjectsPage({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
-  // Restore generating UI if user switched tabs mid-generation
-  useEffect(() => {
-    if (!activeId) return
-    if (_generatingNow.has(activeId)) setGenerating(true)
-  }, [activeId])
-
-  // Each new run starts from an unknown stage, on the progress screen.
-  useEffect(() => {
-    if (generating) { setGenStage(null); setGenDetail(null); setGenDismissed(false) }
-  }, [generating])
-
   // Read inside the poll interval, which closes over its first render.
-  const genDismissedRef = useRef(false)
-  useEffect(() => { genDismissedRef.current = genDismissed }, [genDismissed])
+  const runsRef = useRef(runs)
+  runsRef.current = runs
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
+  const isFeedViewRef = useRef(isFeedView)
+  isFeedViewRef.current = isFeedView
 
-  // The "it's ready" note is a nudge, not a task — it clears itself.
+  const patchRun = useCallback((pid, patch) => {
+    setRuns(prev => prev[pid] ? { ...prev, [pid]: { ...prev[pid], ...patch } } : prev)
+  }, [])
+  const endRun = useCallback((pid) => {
+    setRuns(prev => { const { [pid]: _, ...rest } = prev; return rest })
+  }, [])
+
+  // A failed run reports where the user is: inline on its own project, as a
+  // toast from anywhere else.
+  const failRun = useCallback((pid, name, message) => {
+    endRun(pid)
+    if (pid === activeIdRef.current && isFeedViewRef.current) setGenError(message)
+    else setGenReady({ projectId: pid, text: `${name}: ${message}`, failed: true })
+  }, [endRun])
+
+  // The toast is a nudge, not a task — it clears itself.
   useEffect(() => {
     if (!genReady) return
     const id = setTimeout(() => setGenReady(null), 12000)
     return () => clearTimeout(id)
   }, [genReady])
 
-  // When generation finishes in background, refresh insights
+  // One interval polls every run that has a stub, whichever project is open.
+  const polling = Object.values(runs).some(r => r.stubId)
   useEffect(() => {
-    if (!activeId) return
-    function onDone(e) {
-      if (e.detail.projectId !== activeId) return
-      setGenerating(false)
-      listProjectInsights(activeId)
-        .then(data => { setInsights(data); cacheInsightsOffline(data) })
-        .catch(() => {})
-    }
-    window.addEventListener('feed-generation-done', onDone)
-    return () => window.removeEventListener('feed-generation-done', onDone)
-  }, [activeId])
+    if (!polling) return
+    const POLL_MS    = 5000   // stage changes should surface promptly; 12 req/min sits under the 30/min cap
+    const GIVE_UP_MS = 8 * 60 * 1000
+    const inFlight   = new Set()
 
-  // Poll for background generation completion
-  useEffect(() => {
-    if (!pendingStub) return
-    const POLL_MS     = 5000   // stage changes should surface promptly; 12 req/min sits under the 30/min cap
-    const GIVE_UP_MS  = 8 * 60 * 1000
-    const startedAt   = Date.now()
-    const { id: stubId, projectId: pid } = pendingStub
-
-    const timerId = setInterval(async () => {
-      if (Date.now() - startedAt > GIVE_UP_MS) {
-        clearInterval(timerId)
-        setPendingStub(null)
-        _generatingNow.delete(pid)
-        setGenerating(false)
-        setGenError("Generation is taking longer than expected. Please try again.")
+    async function poll(pid, r) {
+      if (Date.now() - r.startedAt > GIVE_UP_MS) {
+        failRun(pid, r.name, "Generation is taking longer than expected. Please try again.")
         return
       }
+      let status, stage, stage_detail, fresh
       try {
-        const { status, stage, stage_detail } = await getInsightStatus(pid, stubId)
-        if (stage) { setGenStage(stage); setGenDetail(stage_detail || null) }
-        if (status === 'done') {
-          clearInterval(timerId)
-          const freshInsights = await listProjectInsights(pid)
-          const pkg = freshInsights.find(p => p.id === stubId)
-          setInsights(freshInsights)
-          if (pkg) {
-            setProjects(prev => prev.map(p =>
-              p.project_id === pid
-                ? { ...p, insight_count: pkg.day_number, last_insight_at: pkg.generated_at, last_package_headline: pkg.package_headline ?? p.last_package_headline }
-                : p
-            ))
-          }
-          setReadKeys(new Set())
-          setRelatedChatsMap(new Map())
-          getProgression(pid)
-            .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
-            .catch(() => {})
-          _generatingNow.delete(pid)
-          setGenerating(false)
-          setPendingStub(null)
-          if (genDismissedRef.current) setGenReady(`Day ${pkg?.day_number ?? ''}`.trim())
-          window.dispatchEvent(new CustomEvent('feed-generation-done', { detail: { projectId: pid } }))
-        } else if (status === 'failed') {
-          clearInterval(timerId)
-          setPendingStub(null)
-          _generatingNow.delete(pid)
-          setGenerating(false)
-          setGenError("Generation failed. Please try again.")
-        }
-        // status === 'generating': keep polling
+        ({ status, stage, stage_detail } = await getInsightStatus(pid, r.stubId))
+        if (status === 'done') fresh = await listProjectInsights(pid)
       } catch (_) {
-        // network error — keep polling, will time out eventually
+        return   // network error — next tick retries, the give-up above ends it
+      }
+      if (stage) patchRun(pid, { stage, detail: stage_detail || null })
+      if (status === 'failed') { failRun(pid, r.name, "Generation failed. Please try again."); return }
+      if (status !== 'done') return
+
+      const pkg = fresh.find(p => p.id === r.stubId)
+      cacheInsightsOffline(fresh)
+      const open = pid === activeIdRef.current
+      if (open) {
+        setInsights(fresh)
+        setReadKeys(new Set())
+        setRelatedChatsMap(new Map())
+      }
+      if (pkg) {
+        setProjects(prev => prev.map(p =>
+          p.project_id === pid
+            ? { ...p, insight_count: pkg.day_number, last_insight_at: pkg.generated_at, last_package_headline: pkg.package_headline ?? p.last_package_headline }
+            : p
+        ))
+      }
+      getProgression(pid)
+        .then(prog => setProgressions(prev => ({ ...prev, [pid]: prog })))
+        .catch(() => {})
+      // Watching its progress view, the new day simply replaces it; anywhere
+      // else (another day, project or tab) a toast says it's ready.
+      const watching = open && isFeedViewRef.current && !runsRef.current[pid]?.dismissed
+      endRun(pid)
+      if (!watching) {
+        const label = computeDisplayLabels(fresh).get(r.stubId) ?? "The next day"
+        setGenReady({ projectId: pid, insightId: r.stubId, text: `${label} of ${r.name} is ready.` })
+      }
+    }
+
+    const timerId = setInterval(() => {
+      for (const [pid, r] of Object.entries(runsRef.current)) {
+        if (!r.stubId || inFlight.has(pid)) continue
+        inFlight.add(pid)
+        poll(pid, r).finally(() => inFlight.delete(pid))
       }
     }, POLL_MS)
-
     return () => clearInterval(timerId)
-  }, [pendingStub])
+  }, [polling, patchRun, endRun, failRun])
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -599,39 +602,35 @@ export default function ProjectsPage({
     setVisitedOrder(prev => [project.project_id, ...prev.filter(id => id !== project.project_id)])
   }, [activeId])
 
+  // Opens a run for one project; the poll above takes it from the stub on.
+  // `before` runs first (Regenerate deletes the failed day).
+  const startRun = useCallback(async (pid, name, failMessage, before) => {
+    setRuns(prev => ({ ...prev, [pid]: { name, stubId: null, startedAt: Date.now(), stage: null, detail: null, dismissed: false } }))
+    setGenError(null)
+    try {
+      await before?.()
+      const stub = await generateProjectInsight(pid)
+      patchRun(pid, { stubId: stub.id })
+    } catch (e) {
+      failRun(pid, name, e.message || failMessage)
+    }
+  }, [patchRun, failRun])
+
+  const activeName = projects.find(p => p.project_id === activeId)?.name ?? ""
+
   const handleGenerate = useCallback(async () => {
     if (!activeId || generating) return
-    _generatingNow.add(activeId)
-    setGenerating(true)
-    setGenError(null)
-    const pid = activeId
-    try {
-      const stub = await generateProjectInsight(pid)
-      setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
-    } catch (e) {
-      setGenError(e.message || "Generation failed. Please try again.")
-      _generatingNow.delete(pid)
-      setGenerating(false)
-    }
-  }, [activeId, generating])
+    await startRun(activeId, activeName, "Generation failed. Please try again.")
+  }, [activeId, activeName, generating, startRun])
 
   const handleRegenerate = useCallback(async (insightId) => {
     if (!activeId || generating) return
-    _generatingNow.add(activeId)
-    setGenerating(true)
-    setGenError(null)
     const pid = activeId
-    try {
+    await startRun(pid, activeName, "Regeneration failed. Please try again.", async () => {
       await deleteProjectInsight(pid, insightId)
-      setInsights(prev => prev.filter(p => p.id !== insightId))
-      const stub = await generateProjectInsight(pid)
-      setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
-    } catch (e) {
-      setGenError(e.message || "Regeneration failed. Please try again.")
-      _generatingNow.delete(pid)
-      setGenerating(false)
-    }
-  }, [activeId, generating])
+      if (pid === activeIdRef.current) setInsights(prev => prev.filter(p => p.id !== insightId))
+    })
+  }, [activeId, activeName, generating, startRun])
 
   const handleCreate = useCallback(async (fields) => {
     setCreating(true)
@@ -640,21 +639,10 @@ export default function ProjectsPage({
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
       setShowCreate(false)
-      const pid = project.project_id
-      _generatingNow.add(pid)
-      setGenerating(true)
-      setGenError(null)
-      try {
-        const stub = await generateProjectInsight(pid)
-        setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
-      } catch (e) {
-        setGenError(e.message || "Generation failed. Please try again.")
-        _generatingNow.delete(pid)
-        setGenerating(false)
-      }
+      startRun(project.project_id, project.name, "Generation failed. Please try again.")
     } catch (_) {}
     finally { setCreating(false) }
-  }, [])
+  }, [startRun])
 
   const handleSavePersona = useCallback(async (editedProfile) => {
     if (!activeId) return
@@ -674,20 +662,10 @@ export default function ProjectsPage({
       setProjects(prev => [project, ...prev])
       setActiveId(project.project_id)
       onOnboardingDone(project.project_id)
-      _generatingNow.add(project.project_id)
-      setGenerating(true)
-      const pid = project.project_id
-      try {
-        const stub = await generateProjectInsight(pid)
-        setPendingStub({ id: stub.id, day_number: stub.day_number, generated_at: stub.generated_at, projectId: pid })
-      } catch (e) {
-        setGenError(e.message || "Generation failed. Please try again.")
-        _generatingNow.delete(pid)
-        setGenerating(false)
-      }
+      startRun(project.project_id, project.name, "Generation failed. Please try again.")
     } catch (_) {}
     finally { setCreating(false) }
-  }, [onOnboardingDone])
+  }, [onOnboardingDone, startRun])
 
   const handleDeleteRequest = useCallback((projectId) => {
     const project = projects.find(p => p.project_id === projectId)
@@ -824,24 +802,10 @@ export default function ProjectsPage({
                 <span className="text-[12px] text-slate-500">{stageShortLabel(genStage)}</span>
                 <button
                   type="button"
-                  onClick={() => setGenDismissed(false)}
+                  onClick={() => patchRun(activeId, { dismissed: false })}
                   className="ml-auto text-[12px] text-slate-400 hover:text-slate-100 underline underline-offset-2 transition-colors"
                 >
                   Show progress
-                </button>
-              </div>
-            )}
-
-            {genReady && (
-              <div className="mb-5 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.07]">
-                <span className="text-[13px] text-slate-200">{genReady} is ready to read.</span>
-                <button
-                  type="button"
-                  onClick={() => setGenReady(null)}
-                  aria-label="Dismiss"
-                  className="ml-auto text-[12px] text-slate-500 hover:text-slate-200 transition-colors"
-                >
-                  Dismiss
                 </button>
               </div>
             )}
@@ -858,7 +822,9 @@ export default function ProjectsPage({
                 genStage={genStage}
                 genStageDetail={genDetail}
                 genDismissed={genDismissed}
-                onDismissGenerating={() => setGenDismissed(true)}
+                genStartedAt={run?.startedAt}
+                onDismissGenerating={() => patchRun(activeId, { dismissed: true })}
+                onShowGenerating={() => patchRun(activeId, { dismissed: false })}
                 targetInsightId={targetInsightId}
                 targetArticleKey={targetArticleKey}
                 onClearQueueTarget={onClearQueueTarget}
@@ -889,6 +855,44 @@ export default function ProjectsPage({
           </>
         )}
       </div>
+
+      {/* A run finished away from its progress view. On <body>, so it shows over
+          any tab and over Reading mode. */}
+      {createPortal(
+        <AnimatePresence>
+          {genReady && (
+            <div key="gen-toast" className="fixed inset-x-0 z-[70] flex justify-center px-4 pointer-events-none" style={{ top: "calc(env(safe-area-inset-top) + 4rem)" }}>
+              <m.div
+                {...presets.palette}
+                role="status"
+                className="pointer-events-auto flex items-center gap-3 max-w-md pl-4 pr-2 py-2 rounded-xl bg-slate-900 border border-white/[0.09]"
+                style={{ boxShadow: "var(--u-modal-shadow)" }}
+              >
+                <span aria-hidden className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: genReady.failed ? "rgb(248 113 113)" : "var(--u-accent)" }} />
+                <span className="text-[13px] text-slate-200 leading-snug">{genReady.text}</span>
+                {!genReady.failed && (
+                  <button
+                    type="button"
+                    onClick={() => { navigate(feedUrl(genReady.projectId, genReady.insightId)); setGenReady(null) }}
+                    className="flex-shrink-0 px-2.5 py-1 rounded-lg text-[12px] font-medium text-slate-100 bg-white/[0.07] hover:bg-white/[0.12] transition-colors"
+                  >
+                    Open
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setGenReady(null)}
+                  aria-label="Dismiss"
+                  className="flex-shrink-0 w-7 h-7 grid place-items-center rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="m4 4 8 8M12 4l-8 8" /></svg>
+                </button>
+              </m.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       <AnimatePresence>
       {onboardingActive && (
